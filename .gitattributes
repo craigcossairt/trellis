@@ -1,0 +1,4 @@
+# Shell scripts must check out with LF everywhere — CRLF breaks bash ("\r: command not found").
+* text=auto
+*.sh text eol=lf
+brain/bin/qmd text eol=lf
