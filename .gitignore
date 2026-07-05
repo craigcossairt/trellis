@@ -1,0 +1,32 @@
+# Secrets — never commit real values
+.env
+.env.*
+!.env.example
+.mcp.json
+*.pem
+*.key
+
+# Dependencies / build output (extend per stack)
+node_modules/
+dist/
+build/
+.dart_tool/
+__pycache__/
+target/
+
+# Local agent state
+.claude/settings.local.json
+
+# Brain: corpus and generated state are local-only
+brain/raw/*
+!brain/raw/.gitkeep
+brain/summaries/*
+!brain/summaries/.gitkeep
+brain/.last-ingest
+brain/log.md
+brain/index.md
+brain/hooks/debug.log
+
+# OS noise
+.DS_Store
+Thumbs.db

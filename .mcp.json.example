@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "_example-stdio-server": {
+      "command": "node",
+      "args": ["C:/absolute/path/to/server/index.js"],
+      "env": {
+        "API_TOKEN": "fill-from-password-manager"
+      }
+    },
+    "_example-remote-server": {
+      "type": "http",
+      "url": "https://example.com/mcp"
+    }
+  }
+}

@@ -1,0 +1,16 @@
+#!/bin/bash
+# Wrapper for @tobilu/qmd. On Windows, bun's global-bin wrapper can't execute the
+# tool's #!/bin/sh shebang, so we invoke the package's bin script directly via bash.
+# Works unchanged on Mac/Linux too.
+#
+# Usage: bash brain/bin/qmd <args>
+
+QMD_BIN="$HOME/.bun/install/global/node_modules/@tobilu/qmd/bin/qmd"
+
+if [ ! -f "$QMD_BIN" ]; then
+  echo "qmd not found at $QMD_BIN" >&2
+  echo "Install with: bun install -g @tobilu/qmd" >&2
+  exit 1
+fi
+
+exec bash "$QMD_BIN" "$@"
