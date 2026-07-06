@@ -22,7 +22,7 @@ Any two of these and it's time:
 ├── AGENTS.md                  # workspace-level: company context, cross-repo conventions
 ├── CLAUDE.md                  # thin: @AGENTS.md
 ├── Files/                     # non-code life of the venture (file-sync'd, not git)
-│   ├── Context Files/         # working docs, decision log moves here
+│   ├── Context Files/         # working docs — see "What Context Files holds" below
 │   ├── Legal/
 │   ├── Marketing/
 │   └── Images/
@@ -42,6 +42,22 @@ Division of labor between the two AGENTS.md levels:
 Nothing appears at both levels. The workspace file points down ("each repo has its own
 AGENTS.md"); repo files never point up (they must work standalone for tools that can't see the
 parent directory).
+
+## What Context Files holds
+
+The canonical set that a venture-stage `Files/Context Files/` grows into. Each is one file with
+one owner-topic; agents read the relevant ones per task instead of loading everything always:
+
+- **about-me.md** — founder background and working style (graduates up from the repo's
+  `docs/about-me.md`)
+- **company-brief.md** — investor-facing context: business model, target customer, go-to-market,
+  fundraising posture. Deliberately does NOT exist at repo stage — until then it would just
+  duplicate AGENTS.md's Project section.
+- **decision-log.md** — graduates up from the repo once decisions stop being purely technical
+- **voice-and-style.md** — brand voice and content principles, read before any external writing
+
+Rule of thumb for any new context file: one topic, one owner file, and ask "does every session
+need this?" — if not, it's a context file agents read on demand, not AGENTS.md content.
 
 ## Mechanics and caveats
 
@@ -65,9 +81,9 @@ parent directory).
 
 1. Create `<Venture>/` with `Files/` and `Code/`, move the existing repo into `Code/`.
 2. Write the workspace AGENTS.md (skeleton below) + a thin CLAUDE.md (`@AGENTS.md`).
-3. Move venture-level content out of the repo: decision log usually graduates from
-   `docs/decision-log.md` to `Files/Context Files/` once decisions stop being purely technical.
-   Leave repo gotchas and methodology docs in the repo.
+3. Move venture-level content out of the repo: `docs/about-me.md` and (usually) the decision
+   log graduate to `Files/Context Files/` once decisions stop being purely technical. Leave
+   repo gotchas and methodology docs in the repo.
 4. Set up file sync for the workspace; verify the repo still pushes/pulls normally from its new
    path (update any IDE/terminal shortcuts and scheduled tasks that hardcode the old path).
 5. Start the second repo from project-starter into `Code/`.

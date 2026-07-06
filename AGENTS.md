@@ -11,6 +11,7 @@
 - **What it is:** <!-- FILL IN: one-line description -->
 - **Owner:** <!-- FILL IN: name — email -->
 - **Stage:** <!-- FILL IN: idea / prototype / MVP / production -->
+- For the owner's background and working style, see `docs/about-me.md`
 
 ## What I Need From Agents
 

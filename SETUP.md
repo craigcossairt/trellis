@@ -9,6 +9,8 @@ Work top to bottom. Delete this file when done (or keep it until the project has
 - [ ] `AGENTS.md` § Delegation — fill in the current model names for each tier (they turn over
       every few months; the tier structure is the stable part).
 - [ ] Decide the em-dash rule (keep or delete the optional content rule).
+- [ ] `docs/about-me.md` — fill in your background, technical level, and working style. Five
+      minutes here upgrades every piece of advice agents give you.
 
 ## 2. Tracker + docs (2 min)
 
