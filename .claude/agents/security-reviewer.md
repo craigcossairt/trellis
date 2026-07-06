@@ -1,6 +1,6 @@
 ---
 name: security-reviewer
-description: Reviews code for security vulnerabilities — authorization boundaries, auth flows, input validation, storage access, and OWASP risks. Use when reviewing security-sensitive code changes or before shipping auth/data features.
+description: Reviews code for security vulnerabilities - authorization boundaries, auth flows, input validation, storage access, and OWASP risks. Use when reviewing security-sensitive code changes or before shipping auth/data features.
 tools: Read, Grep, Glob
 ---
 
@@ -48,10 +48,10 @@ When invoked, systematically review the following areas:
 
 Report findings grouped by severity:
 
-**CRITICAL** — Exploitable now, data breach risk
-**HIGH** — Security weakness, needs fix before launch
-**MEDIUM** — Defense-in-depth improvement
-**LOW** — Best practice suggestion
+**CRITICAL** - Exploitable now, data breach risk
+**HIGH** - Security weakness, needs fix before launch
+**MEDIUM** - Defense-in-depth improvement
+**LOW** - Best practice suggestion
 
 For each finding:
 - **File**: `path/to/file:line`

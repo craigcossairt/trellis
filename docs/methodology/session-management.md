@@ -1,11 +1,11 @@
 # AI Session Management
 
 Habits for keeping agent sessions effective. Context quality degrades well before the context
-window is technically full — every turn is a branching point. These are the defaults; AGENTS.md
+window is technically full - every turn is a branching point. These are the defaults; AGENTS.md
 carries the summary version.
 
 - **Prefer rewinding over mid-session correction.** When you read files, try an approach, and it
-  flops — jump back to just after the reads and re-prompt with what you learned. Don't pile
+  flops - jump back to just after the reads and re-prompt with what you learned. Don't pile
   corrections on top of a bad chain; it multiplies context rot. (Claude Code: `/rewind` or
   esc esc. Other tools: start a fresh session and paste the learnings.)
 

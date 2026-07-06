@@ -2,7 +2,7 @@
 
 This template starts you with **one repo = one project**. That's right for a side project,
 hackathon, or single app. But if the project becomes a venture, it accumulates things that don't
-belong in a code repo — legal docs, marketing assets, photos, investor materials — and usually a
+belong in a code repo - legal docs, marketing assets, photos, investor materials - and usually a
 second repo (marketing site, admin tool). This doc is the graduation path.
 
 ## When to graduate
@@ -18,11 +18,11 @@ Any two of these and it's time:
 ## Target layout
 
 ```
-<Venture>/                     # workspace root — NOT a git repo
+<Venture>/                     # workspace root - NOT a git repo
 ├── AGENTS.md                  # workspace-level: company context, cross-repo conventions
 ├── CLAUDE.md                  # thin: @AGENTS.md
 ├── Files/                     # non-code life of the venture (file-sync'd, not git)
-│   ├── Context Files/         # working docs — see "What Context Files holds" below
+│   ├── Context Files/         # working docs - see "What Context Files holds" below
 │   ├── Legal/
 │   ├── Marketing/
 │   └── Images/
@@ -48,16 +48,16 @@ parent directory).
 The canonical set that a venture-stage `Files/Context Files/` grows into. Each is one file with
 one owner-topic; agents read the relevant ones per task instead of loading everything always:
 
-- **about-me.md** — founder background and working style (graduates up from the repo's
+- **about-me.md** - founder background and working style (graduates up from the repo's
   `docs/about-me.md`)
-- **company-brief.md** — investor-facing context: business model, target customer, go-to-market,
-  fundraising posture. Deliberately does NOT exist at repo stage — until then it would just
+- **company-brief.md** - investor-facing context: business model, target customer, go-to-market,
+  fundraising posture. Deliberately does NOT exist at repo stage - until then it would just
   duplicate AGENTS.md's Project section.
-- **decision-log.md** — graduates up from the repo once decisions stop being purely technical
-- **voice-and-style.md** — brand voice and content principles, read before any external writing
+- **decision-log.md** - graduates up from the repo once decisions stop being purely technical
+- **voice-and-style.md** - brand voice and content principles, read before any external writing
 
 Rule of thumb for any new context file: one topic, one owner file, and ask "does every session
-need this?" — if not, it's a context file agents read on demand, not AGENTS.md content.
+need this?" - if not, it's a context file agents read on demand, not AGENTS.md content.
 
 ## Mechanics and caveats
 
@@ -66,10 +66,10 @@ need this?" — if not, it's a context file agents read on demand, not AGENTS.md
   inside a git repo, and don't put `Files/` (binary-heavy, private) under git.
 - **Cloud-sync eviction warning:** if the sync tool does placeholder/on-demand files
   (iCloud "Optimize Storage", OneDrive Files On-Demand), exclude anything a search index or
-  agent tooling reads — evicted stubs cause hangs and phantom-missing files.
+  agent tooling reads - evicted stubs cause hangs and phantom-missing files.
 - **Parent-directory context is harness-specific.** Claude Code launched inside
   `Code/<app-repo>/` also reads the workspace CLAUDE.md above it; Cursor/Codex/Gemini opened at
-  the repo root do not. That's why repo-level AGENTS.md must stand alone — the workspace level
+  the repo root do not. That's why repo-level AGENTS.md must stand alone - the workspace level
   is enrichment, not a dependency.
 - **Run business sessions at the workspace root, code sessions at the repo root.** The working
   directory picks the context level for you.
@@ -91,15 +91,15 @@ need this?" — if not, it's a context file agents read on demand, not AGENTS.md
 ## Workspace AGENTS.md skeleton
 
 ```markdown
-# AGENTS.md — <Venture Name> (workspace)
+# AGENTS.md - <Venture Name> (workspace)
 
-> Workspace-level context. Each repo under Code/ has its own AGENTS.md for code conventions —
+> Workspace-level context. Each repo under Code/ has its own AGENTS.md for code conventions -
 > read that one for code work. This file owns what's true across the whole venture.
 
 ## Company
 name, one-liner, stage, owner
 
-## Current State — Source of Truth Pointers
+## Current State - Source of Truth Pointers
 - Priorities: <tracker URL>
 - Decisions: Files/Context Files/decision-log.md
 - This file owns stable conventions only ("true in 6 months?")

@@ -1,13 +1,13 @@
 # About Me
 
 Who the founder/owner is, so agents calibrate their advice and explanations. An agent should
-advise a first-time technical founder very differently than a 20-year engineer — it can only do
+advise a first-time technical founder very differently than a 20-year engineer - it can only do
 that if you tell it which one you are. Referenced from AGENTS.md; update as your situation
 changes. If the project grows into a workspace, this file graduates to `Files/Context Files/`.
 
 ## Background
 
-<!-- FILL IN: what you've done before — roles, industries, companies, education. 2-5 bullets. -->
+<!-- FILL IN: what you've done before - roles, industries, companies, education. 2-5 bullets. -->
 
 ## Technical level
 
@@ -28,5 +28,5 @@ options not consensus". -->
 
 ## Current constraints
 
-<!-- FILL IN: time (nights/weekends? full-time?), budget posture, runway, other commitments —
+<!-- FILL IN: time (nights/weekends? full-time?), budget posture, runway, other commitments -
 anything that should shape "what should I do this week" advice. -->

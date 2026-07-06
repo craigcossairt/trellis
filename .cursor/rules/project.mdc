@@ -1,9 +1,9 @@
 ---
-description: Project conventions — canonical source is AGENTS.md
+description: Project conventions - canonical source is AGENTS.md
 alwaysApply: true
 ---
 
-Read `AGENTS.md` at the repo root and follow it — it is the canonical instruction file for all
+Read `AGENTS.md` at the repo root and follow it - it is the canonical instruction file for all
 AI agents on this project. Full methodology docs live in `docs/methodology/` (TDD workflow,
 bug-fix protocol, session habits). Append bug patterns to `docs/common-gotchas.md` and decisions
 to `docs/decision-log.md` as described in AGENTS.md § Autonomous Housekeeping.

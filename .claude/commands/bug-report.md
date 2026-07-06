@@ -2,7 +2,7 @@
 description: Structured bug-fix protocol per docs/methodology/bug-protocol.md. Use when asked to '/bug-report', 'I found a bug', 'something is broken', 'fix this bug', 'report a bug', 'this is broken'.
 ---
 
-Follow the full protocol in `docs/methodology/bug-protocol.md` — read it now if it isn't already
+Follow the full protocol in `docs/methodology/bug-protocol.md` - read it now if it isn't already
 in context.
 
 Non-negotiables (details in the doc):

@@ -37,11 +37,11 @@ git pull origin main
 
 ## Rules
 
-1. **Each worktree gets its own agent session** — don't share sessions
-2. **Only for truly independent work** — different files, different features
-3. **Always clean up** — remove worktrees after merge to avoid stale branches
-4. **Start small** — try 2 parallel sessions before scaling up
-5. **Main stays clean** — the main worktree stays on the main branch
+1. **Each worktree gets its own agent session** - don't share sessions
+2. **Only for truly independent work** - different files, different features
+3. **Always clean up** - remove worktrees after merge to avoid stale branches
+4. **Start small** - try 2 parallel sessions before scaling up
+5. **Main stays clean** - the main worktree stays on the main branch
 
 ## Tips
 
