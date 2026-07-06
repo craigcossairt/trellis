@@ -13,7 +13,8 @@ already in place. Extracted and generalized from a production solo-founder setup
 | `docs/common-gotchas.md` | Empty scaffold for the symptom → root cause → fix table. Agents append to it after every bug fix. |
 | `docs/decision-log.md` | Empty scaffold for one-line decision history. |
 | `.claude/` | Claude Code adapter: hooks (session context, sensitive-file block, format-on-edit), slash commands (`/tdd`, `/bug-report`, `/worktree`), skills (`/learn`, `/write-a-prd`, `/prd-to-issues`, `/launch-check`, `/review-dependency-updates`), and a security-reviewer agent. |
-| `.cursor/` | Cursor adapter pointing at AGENTS.md. |
+| `.cursor/`, `GEMINI.md`, `.github/copilot-instructions.md` | Thin adapters pointing at AGENTS.md for Cursor, Gemini CLI, and GitHub Copilot. Codex reads AGENTS.md natively — no adapter needed. |
+| `docs/growing-into-a-workspace.md` | The graduation path for when the project becomes a venture: workspace root with `Files/` + `Code/<repos>`, two-level AGENTS.md, migration steps. |
 | `brain/` | Optional local knowledge base: BM25 search over your project corpus, auto-injected into every prompt via hook. Off by default until you initialize it. |
 
 ## Quick start

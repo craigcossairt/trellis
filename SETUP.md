@@ -36,7 +36,8 @@ Work top to bottom. Delete this file when done (or keep it until the project has
 Everything is optional. Delete what this project won't use:
 
 - [ ] Skills you won't need (`.claude/skills/*`) — e.g. `launch-check` is for user-facing apps.
-- [ ] `.cursor/` if nobody on the project uses Cursor.
+- [ ] Harness adapters nobody on the project uses: `.cursor/`, `GEMINI.md`,
+      `.github/copilot-instructions.md`.
 - [ ] `brain/` if the project is small enough to not need a knowledge base (you can add it back
       later — it's self-contained).
 

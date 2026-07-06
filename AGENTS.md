@@ -74,6 +74,9 @@ If no, it goes in the issue tracker, not here.
 └── brain/                   # optional local knowledge base (see brain/README.md)
 ```
 
+If this project outgrows a single repo (second repo, non-code assets piling up), see
+`docs/growing-into-a-workspace.md` for the graduation path.
+
 ## Rules
 
 ### Working Methodology
