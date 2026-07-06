@@ -40,13 +40,19 @@ Everything is optional. Delete what this project won't use:
 - [ ] `brain/` if the project is small enough to not need a knowledge base (you can add it back
       later — it's self-contained).
 
-## 6. Brain (optional, 10 min)
+## 6. Third-party tooling (optional, 5 min)
+
+- [ ] Skim `docs/recommended-tooling.md` — curated third-party skill packs (engineering
+      discipline, frontend design, persona commands) with install commands and collision
+      warnings. All user-level; install once per machine.
+
+## 7. Brain (optional, 10 min)
 
 Only if you want prompt-time context injection from a local corpus. Follow `brain/README.md`:
 install QMD, configure `brain/config.sh` sources, run the ingest, wire the hook. Skip on day 1;
 it earns its keep once the project has real docs and history.
 
-## 7. Sanity check
+## 8. Sanity check
 
 - [ ] Start an agent session in the repo root and ask: *"What are the working methodology rules
       for this project?"* — it should answer from AGENTS.md.
