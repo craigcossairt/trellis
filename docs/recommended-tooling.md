@@ -63,7 +63,8 @@ Source: https://github.com/garrytan/gstack
 The service stack that earned its keep in the production setup this template was extracted
 from. Rules of this list: one pick per category (not a directory), each entry says when it
 *earns its place*, and the default is always free/built-in until you feel the pain it solves.
-You need none of these on day 1.
+Most of these can wait - the entries marked "day 1" (a password manager above all) are the
+exceptions.
 
 | Category | Pick | When it earns its place |
 |---|---|---|
@@ -81,7 +82,9 @@ You need none of these on day 1.
 | Codebase audits | **AuditBuffet** | Pre-launch, or whenever you suspect the AI has quietly accumulated slop. Audit prompts run locally inside your coding agent (your code never leaves your machine); free basic scan, ~$9/mo for the full catalog at time of writing. |
 | Design & visuals | Your coding agent + a design skill to start; **Claude Design** for visuals beyond the app; **Figma** when a designer joins | Most solo founders need less design tooling than they think - the Impeccable skill above covers in-app UI. Claude Design (Anthropic, research preview) earns its place for decks, one-pagers, and landing mockups. Figma when you collaborate with an actual designer. |
 
-Pricing and free-tier limits change - verify current terms before committing to a paid plan.
+Product offerings, pricing, and free-tier limits change regularly. Treat this list as
+exemplary, not definitive: it shows what one real setup uses and why, but do your own research
+and pick the tool that fits your needs before committing - especially to a paid plan.
 
 ## Adding to this list
 
