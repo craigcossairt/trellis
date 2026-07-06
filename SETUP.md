@@ -46,6 +46,8 @@ Everything is optional. Delete what this project won't use:
       `.github/copilot-instructions.md`.
 - [ ] `brain/` if the project is small enough to not need a knowledge base (you can add it back
       later - it's self-contained).
+- [ ] `examples/` once you've filled in your own AGENTS.md (it's a reference sample, nothing
+      points to it).
 
 ## 6. Third-party tooling (optional, 5 min)
 
@@ -56,8 +58,9 @@ Everything is optional. Delete what this project won't use:
 ## 7. Brain (optional, 10 min)
 
 Only if you want prompt-time context injection from a local corpus. Follow `brain/README.md`:
-install QMD, configure `brain/config.sh` sources, run the ingest, wire the hook. Skip on day 1;
-it earns its keep once the project has real docs and history.
+install QMD, configure `brain/config.sh` sources, run the ingest, wire the hook. Skip on day 1.
+Rule of thumb: enable it once the project has roughly 15-20 real docs/decisions or a few weeks
+of commit history - before that there's nothing worth searching.
 
 ## 8. Sanity check
 

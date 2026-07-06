@@ -9,4 +9,4 @@ Include a commit SHA and issue reference when known.
 
 | Symptom | Root Cause | Fix | Date | Ref |
 |---|---|---|---|---|
-| | | | | |
+| (Example - delete me) Login form submits twice on slow connections | Submit button stays enabled while the request is in flight | Disable the button on submit; added a regression test | 2026-07-01 | #42 |

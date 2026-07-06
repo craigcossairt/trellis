@@ -7,8 +7,9 @@ Based on the "Second Brain" pattern: a `raw/` corpus of copied source material, 
 [QMD](https://www.npmjs.com/package/@tobilu/qmd), searched at prompt time in ~1-2 seconds.
 
 **Off by default.** The hook exits silently until you initialize (it checks for `.last-ingest`).
-If this project doesn't need a knowledge base yet, delete this directory - nothing else depends
-on it.
+Rule of thumb for when it's worth enabling: roughly 15-20 real docs/decisions or a few weeks of
+commit history - before that there's nothing worth searching. If this project doesn't need a
+knowledge base yet, delete this directory - nothing else depends on it.
 
 ## Setup
 

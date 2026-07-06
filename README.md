@@ -1,5 +1,7 @@
 # trellis
 
+![License: MIT](https://img.shields.io/badge/license-MIT-4ECDC4) ![Works with](https://img.shields.io/badge/works%20with-Claude%20Code%20%C2%B7%20Cursor%20%C2%B7%20Codex%20%C2%B7%20Gemini%20%C2%B7%20Copilot-FF7A6B)
+
 A trellis is the structure a plant grows on. This one is for projects: a ready-to-use template
 for building with AI coding agents - extracted from the real, daily-driven setup of a production
 startup, then stripped of everything company-specific.
