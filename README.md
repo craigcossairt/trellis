@@ -18,12 +18,12 @@ that prevents that - before the chaos starts.
 | Piece | What it does for you |
 |---|---|
 | `AGENTS.md` | One instruction file that every major AI tool reads (Claude Code, Cursor, Codex, Gemini CLI, Copilot). Your conventions, methodology, and project facts live here once - not re-explained every session. |
-| `SETUP.md` | A 15-minute day-1 checklist. Fill in the blanks, delete what you don't need. |
+| `SETUP.md` | A day-1 checklist: about 15 minutes for the core steps, plus a couple of optional extras. Fill in the blanks, delete what you don't need. |
 | `docs/methodology/` | Battle-tested working rules: test-first development, a disciplined bug-fix protocol, and habits for keeping AI sessions sharp. Plain markdown, works with any tool. |
 | `docs/common-gotchas.md` | A running "symptom, cause, fix" table. Your AI appends to it after every bug fix, so the same bug never costs you twice. |
 | `docs/decision-log.md` | One line per decision. Six months from now you'll know what you decided and why. |
 | `docs/about-me.md` | Tell the AI who you are (technical level, working style) so its advice actually fits you. |
-| `.claude/` | Claude Code extras: guardrail hooks (blocks edits to secrets, auto-formats code, injects context on session start), slash commands, and skills for planning features and reviewing dependencies safely. |
+| `.claude/` | Claude Code extras: guardrail hooks (blocks edits to secrets, auto-formats code, injects context on session start), slash commands, and skills - a ranked daily brief, feature planning, safe dependency reviews, a pre-demo audit. |
 | Harness adapters | Thin pointer files for Cursor, Gemini CLI, and GitHub Copilot. Codex reads AGENTS.md natively. Use any tool, or several. |
 | `brain/` | Optional: a local search index over your project's docs and history that feeds relevant context into every prompt. Off by default; 10 minutes to enable when the project has real history. |
 | `docs/growing-into-a-workspace.md` | The graduation path for when your project becomes a company: where legal docs, brand assets, and a second repo go, and how the AI context scales with you. |

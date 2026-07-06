@@ -2,6 +2,10 @@
 
 Work top to bottom. Delete this file when done (or keep it until the project has real shape).
 
+> **Shortcut:** open your AI coding tool and say *"walk me through SETUP.md"* - it will ask you
+> the fill-in questions conversationally and make the edits for you. Recommended if you're not
+> used to editing config files by hand.
+
 ## 1. Identity (5 min)
 
 - [ ] `AGENTS.md` - fill every `<!-- FILL IN -->` slot: project name, owner, stage, tech stack
