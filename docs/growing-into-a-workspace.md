@@ -27,7 +27,7 @@ Any two of these and it's time:
 │   ├── Marketing/
 │   └── Images/
 └── Code/
-    ├── <app-repo>/            # git repo, started from project-starter
+    ├── <app-repo>/            # git repo, started from trellis
     │   └── AGENTS.md          # repo-level: stack, commands, code conventions
     └── <website-repo>/        # git repo, its own AGENTS.md
 ```
@@ -86,7 +86,7 @@ need this?" - if not, it's a context file agents read on demand, not AGENTS.md c
    repo gotchas and methodology docs in the repo.
 4. Set up file sync for the workspace; verify the repo still pushes/pulls normally from its new
    path (update any IDE/terminal shortcuts and scheduled tasks that hardcode the old path).
-5. Start the second repo from project-starter into `Code/`.
+5. Start the second repo from trellis into `Code/`.
 
 ## Workspace AGENTS.md skeleton
 

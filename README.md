@@ -1,7 +1,8 @@
-# project-starter
+# trellis
 
-A ready-to-use template for building a project with AI coding agents - extracted from the
-real, daily-driven setup of a production startup, then stripped of everything company-specific.
+A trellis is the structure a plant grows on. This one is for projects: a ready-to-use template
+for building with AI coding agents - extracted from the real, daily-driven setup of a production
+startup, then stripped of everything company-specific.
 
 **Who this is for:** founders and builders who are new to AI-assisted development ("vibe-coding")
 and want to start with good habits instead of discovering them the hard way. You don't need to
@@ -30,7 +31,7 @@ that prevents that - before the chaos starts.
 ## Quick start
 
 1. Click **Use this template** on GitHub (or run
-   `gh repo create my-project --template craigcossairt/project-starter`).
+   `gh repo create my-project --template craigcossairt/trellis`).
 2. Open your new repo and work through **SETUP.md** - a 15-minute checklist.
 3. Delete what you don't need. Every piece is independent; nothing breaks if you remove a
    skill, the brain, or an adapter you don't use.
