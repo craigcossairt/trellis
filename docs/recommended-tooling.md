@@ -12,11 +12,11 @@ zoom out before architecting. (`/grill-me`, `/grill-with-docs`, `/diagnose`, `/z
 `/improve-codebase-architecture`, `/to-prd`, `/to-issues`, `/caveman`, `/write-a-skill`, ...)
 
 ```bash
-npx skills@latest add mattpocock/skills --yes --global
+npx skills@latest add mattpocock/skills
 ```
 
-Or install individual skills as Claude Code plugins:
-`/plugin marketplace add mattpocock/skills` then `/plugin install <name>@skills-by-mattpocock`.
+The installer is interactive — pick the skills you want and which coding agents to install them
+for, then run `/setup-matt-pocock-skills` inside your agent.
 
 **Collision warning:** his `tdd` and `implement` skills overlap with this template's `/tdd`
 command and methodology docs. Pick one TDD authority — either skip installing his `tdd`, or
