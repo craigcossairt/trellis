@@ -56,7 +56,32 @@ cd ~/.claude/skills/gstack && ./setup
 
 Source: https://github.com/garrytan/gstack
 
+---
+
+# Services & integrations
+
+The service stack that earned its keep in the production setup this template was extracted
+from. Rules of this list: one pick per category (not a directory), each entry says when it
+*earns its place*, and the default is always free/built-in until you feel the pain it solves.
+You need none of these on day 1.
+
+| Category | Pick | When it earns its place |
+|---|---|---|
+| Issue tracking | GitHub Issues to start; **Linear** when the backlog outgrows it | Day 1 for Issues (free, zero setup, agents read/write via `gh`). Move to Linear when you're juggling priorities across many issues and need cycles/projects - it has an MCP server, so agents work the backlog directly. |
+| Automated PR review | **CodeRabbit** | As soon as you're merging AI-written code you can't fully review yourself - an automated second reader catches real bugs. Free for public repos. Caveat: treat it as a reviewer, not a gate; question its premise before applying a remedy, and never merge on its check status alone - read the actual comments. |
+| Error tracking | **Sentry** | The day real users touch the product. Before that, local logs are enough. Free tier is generous for a small app; agents can triage straight from its MCP server. |
+| Uptime monitoring | **UptimeRobot** | The day something is deployed that users depend on. Free tier covers a small site. |
+| Product analytics | **PostHog** | When you start making product decisions and need evidence instead of vibes. Free tier is generous. |
+| CI | **GitHub Actions** | First time a broken push costs you an evening. Start with lint + test on PR; it's free for public repos and cheap for private ones. |
+| Secrets | A password manager (**Bitwarden**, 1Password) | Day 1, non-negotiable. Real values live there; repos get `.example` files only. The template's hooks enforce the repo side. |
+
+Pricing and free-tier limits change - verify current terms before committing to a paid plan.
+
 ## Adding to this list
 
-Criteria for an entry: actively maintained, installable from source with one command, and worth
-recommending to a teammate on day 1. Note any collisions with this template's commands/skills.
+Criteria for a skill-pack entry: actively maintained, installable from source with one command,
+and worth recommending to a teammate on day 1. Note any collisions with this template's
+commands/skills.
+
+Criteria for a service entry: it earned its keep in a real project, has a usable free tier or
+clear pricing, and ideally has an MCP server or CLI so agents can operate it, not just humans.

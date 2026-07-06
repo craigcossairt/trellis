@@ -35,7 +35,8 @@ that prevents that - before the chaos starts.
 3. Delete what you don't need. Every piece is independent; nothing breaks if you remove a
    skill, the brain, or an adapter you don't use.
 4. Optional but recommended: skim `docs/recommended-tooling.md` for curated third-party
-   skill packs worth installing alongside this.
+   skill packs and the service stack (issue tracking, PR review, error tracking) that
+   earned its keep in the setup this template came from.
 
 ## Design principles
 
