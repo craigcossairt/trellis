@@ -1,0 +1,84 @@
+#!/bin/bash
+# Real git pre-push hook: refuses to send a commit whose tree has no green marker
+# from bin/verify-green.sh. Because it runs inside `git push` itself, it gates
+# every push the same way - typed in a terminal or made by an AI agent - and it
+# reads the ACTUAL refs being pushed from stdin rather than predicting them.
+#
+# OFF by default: until GREEN_COMMANDS in bin/verify-green.sh is filled in, every
+# push is allowed (with a one-line reminder). Once configured, the gate fails
+# CLOSED: anything it cannot resolve blocks. A gate that opens when confused is
+# not a gate.
+#
+# Wiring: git only runs this once `core.hooksPath=.githooks` is set - see
+# bin/install-git-hooks.sh (session-start runs it, so agent sessions self-heal).
+# This file must be executable, or git skips it SILENTLY.
+#
+# Bypass: PROJECT_SKIP_VERIFY=1 git push ...   (or --no-verify)
+#
+# git feeds one line per ref: <local ref> <local sha> <remote ref> <remote sha>
+set -uo pipefail
+
+if [ "${PROJECT_SKIP_VERIFY:-0}" = "1" ]; then
+  echo "pre-push: bypassed via PROJECT_SKIP_VERIFY=1" >&2
+  exit 0
+fi
+
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || printf '%s' "$PWD")
+VERIFY="$REPO_ROOT/bin/verify-green.sh"
+
+if [ ! -f "$VERIFY" ] || ! bash "$VERIFY" --check-configured 2>/dev/null; then
+  echo "pre-push: green gate not configured (GREEN_COMMANDS in bin/verify-green.sh) - pushing unchecked" >&2
+  exit 0
+fi
+
+GIT_DIR_PATH=$(git rev-parse --git-dir 2>/dev/null) || {
+  echo "pre-push: BLOCKED - cannot resolve the git dir, so the marker location is" >&2
+  echo "unknown. Refusing to guess. Bypass: PROJECT_SKIP_VERIFY=1 git push ..." >&2
+  exit 1
+}
+
+blocked=0
+# shellcheck disable=SC2034  # remote_sha is consumed on purpose: `read` assigns the
+# rest of the line to its LAST variable, so dropping the fourth name would glue the
+# remote sha onto remote_ref and corrupt the branch name in the block message.
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [ -n "${local_sha:-}" ] || continue
+
+  # A deletion (`git push origin :branch`) sends an all-zero LOCAL sha - nothing
+  # is being sent, so there is nothing to vouch for. Matched on "only zeros"
+  # rather than a fixed length so it holds under SHA-256 repos too.
+  case "$local_sha" in
+    *[!0]*) ;;
+    *) continue ;;
+  esac
+
+  # </dev/null on git calls inside this loop: stdin here IS the ref list, and a
+  # command that consumed it would swallow the remaining refs unchecked.
+  # An annotated tag resolves through to the tagged commit's tree, so tag pushes
+  # are gated against the commit the tag points at.
+  tree=$(git rev-parse --verify --quiet "${local_sha}^{tree}" 2>/dev/null </dev/null)
+  if [ -z "$tree" ]; then
+    echo "BLOCKED: cannot resolve $local_ref ($local_sha) to a tree, so the hook" >&2
+    echo "cannot tell what is being pushed. Bypass: PROJECT_SKIP_VERIFY=1" >&2
+    blocked=1
+    continue
+  fi
+
+  if [ ! -f "$GIT_DIR_PATH/green/$tree" ]; then
+    cat >&2 <<EOF
+
+BLOCKED: pushing ${local_ref#refs/heads/} -> ${remote_ref#refs/heads/} with no green verification.
+
+Nothing has vouched for the commit you are about to push (tree ${tree:0:12}). Run:
+
+    bash "$VERIFY"
+
+That runs the project's checks and records a marker only if they pass.
+
+Emergency / docs-only bypass:  PROJECT_SKIP_VERIFY=1 git push ...
+EOF
+    blocked=1
+  fi
+done
+
+exit "$blocked"

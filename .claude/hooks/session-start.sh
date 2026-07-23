@@ -30,7 +30,12 @@ if [ -d "$ROOT/.git" ] || [ -f "$ROOT/.git" ]; then
   fi
 fi
 
-# 2. Quick references
+# 2. Self-heal the git pre-push hook wiring (silent no-op when already set)
+if [ -f "$ROOT/bin/install-git-hooks.sh" ]; then
+  bash "$ROOT/bin/install-git-hooks.sh" "$ROOT"
+fi
+
+# 3. Quick references
 echo "## Quick References"
 echo "- Known issues: docs/common-gotchas.md"
 echo "- Decision history: docs/decision-log.md"

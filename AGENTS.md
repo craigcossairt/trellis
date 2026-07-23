@@ -86,6 +86,8 @@ If this project outgrows a single repo (second repo, non-code assets piling up),
   confirm before implementing. If something goes wrong mid-implementation, STOP and re-plan.
 - **Verify before marking done** - never claim a task is complete without proving it works. Run
   tests, check logs, demonstrate correctness. Ask: "Would a staff engineer approve this?"
+  If the push gate is configured (`bin/verify-green.sh`), record the proof with
+  `bash bin/verify-green.sh` before pushing - unverified pushes are blocked.
 - **Autonomous bug fixing** - when given a bug report, follow `docs/methodology/bug-protocol.md`
   automatically. If details are missing, ask for them.
 - **TDD by default** - for code work, follow `docs/methodology/tdd.md`. Write failing tests first,

@@ -36,6 +36,11 @@ Work top to bottom. Delete this file when done (or keep it until the project has
       (e.g. `*.g.dart` for Flutter, `*_pb2.py` for protobuf).
 - [ ] Hooks run through `.claude/settings.json` with `$CLAUDE_PROJECT_DIR` paths - nothing to
       edit there unless you add hooks.
+- [ ] Optional push gate: fill in `GREEN_COMMANDS` in `bin/verify-green.sh` (your lint/test
+      commands). Once non-empty, `git push` refuses any commit whose checks were never seen
+      passing - run `bash bin/verify-green.sh` before pushing to record the proof. The wiring
+      (`core.hooksPath=.githooks`) self-installs at session start; bypass with
+      `PROJECT_SKIP_VERIFY=1` for docs-only pushes. Leave the array empty to keep the gate off.
 
 ## 5. Prune (2 min)
 
