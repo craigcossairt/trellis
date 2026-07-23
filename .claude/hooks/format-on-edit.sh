@@ -2,11 +2,15 @@
 # PostToolUse hook (Edit|Write): auto-format the edited file, dispatching by extension.
 # Silently no-ops when the formatter isn't installed — safe to leave all branches in place.
 #
+# The payload arrives on STDIN as JSON (not in $TOOL_INPUT - see hook-file-path.sh).
+#
 # Customize: add or remove languages for your stack. Keep each branch's output short
 # (tail) so hook noise stays out of the conversation.
+set -uo pipefail
 
-# POSIX sed, not grep -P: BSD grep (macOS) has no -P, and GNU grep -P breaks on non-UTF-8 locales.
-file_path=$(printf '%s' "${TOOL_INPUT:-}" | sed -n 's/.*"file_path"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
+HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+file_path=$(bash "$HOOK_DIR/hook-file-path.sh")
 [ -z "$file_path" ] && exit 0
 [ -f "$file_path" ] || exit 0
 

@@ -2,12 +2,26 @@
 # PreToolUse hook (Edit|Write): blocks edits to secrets, lock files, and generated files.
 # Exit code 2 = block the tool call and surface the message to the model.
 #
+# The payload arrives on STDIN as JSON (not in $TOOL_INPUT - see hook-file-path.sh for
+# the history of that bug). This hook fails CLOSED: if a payload arrives but no file
+# path can be parsed from it, the edit is blocked rather than waved through. It exists
+# to stop secret writes; silently allowing on a parse failure was exactly the old bug.
+#
 # Customize: add project-specific generated-file patterns to GENERATED below
 # (e.g. '\.g\.dart$|\.freezed\.dart$' for Flutter, '_pb2\.py$' for protobuf).
+set -uo pipefail
 
-# POSIX sed, not grep -P: BSD grep (macOS) has no -P, and GNU grep -P breaks on non-UTF-8 locales.
-file_path=$(printf '%s' "${TOOL_INPUT:-}" | sed -n 's/.*"file_path"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
-[ -z "$file_path" ] && exit 0
+HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+PAYLOAD=$(cat 2>/dev/null || true)
+[ -n "$PAYLOAD" ] || exit 0
+
+file_path=$(printf '%s' "$PAYLOAD" | bash "$HOOK_DIR/hook-file-path.sh")
+
+if [ -z "$file_path" ]; then
+  echo 'BLOCKED: could not parse the target file path from the hook payload, so the sensitive-file check could not run. Confirm with the user before editing.' >&2
+  exit 2
+fi
 
 # Templates for secrets files are fine to edit (.env.example, config.sample, ...)
 if echo "$file_path" | grep -qiE '\.(example|sample|template)$'; then
