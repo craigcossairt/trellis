@@ -51,6 +51,22 @@ RIGHT (vertical):    test1 → impl1   then   test2 → impl2   then   test3 →
 
 5. **Report** - Summarize: what was built, what tests cover, what edge cases were handled.
 
+## A passing suite is not evidence - mutate it
+
+For a suite that guards a safety control (a git hook, a permission check, an auth rule, RLS),
+a green run only proves the tests didn't complain - not that they *can* complain. A case that
+looks right can assert nothing: a helper that maps any failure onto the expected one, a regex
+that still matches with the fix reverted, an assertion built the same way the code is.
+
+Before trusting such a suite, break the thing under test on purpose - revert the fix, flip the
+condition, disable the hook - and confirm the *specific* cases fail. Then restore it. State the
+mutation and its result when reporting: "reverting X fails N cases" is the claim that makes a
+suite trustworthy. (One production day surfaced three separate vacuous-case sets in a single
+hook suite; reading the tests had caught none of them, the mutations caught all three.)
+
+This is the suite-level form of step 2's "confirm it FAILS (red)" - a test you have never seen
+fail has never been tested.
+
 ## Key Rules
 
 - NEVER write implementation before its test

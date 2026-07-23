@@ -1,6 +1,7 @@
 #!/bin/bash
 # Brain configuration — sourced by scripts/ingest.sh.
 # Edit this file to control what goes into the corpus. Everything else is generic.
+# shellcheck disable=SC2034  # every variable here is consumed by the sourcing scripts
 
 # Collection name used with QMD (also appears in qmd:// result URIs).
 BRAIN_COLLECTION="project"

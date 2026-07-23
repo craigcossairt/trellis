@@ -72,3 +72,6 @@ Ideas that earned their keep in the setup this was extracted from, in rough orde
    broken cross-references before each monthly summary refresh.
 4. **External sources** - issue-tracker exports and knowledge-base pages copied into `raw/` by an
    agent with the relevant MCP access (they can't be fetched by a plain shell script).
+5. **A skill registry** - once you accumulate 15+ skills across sources, a generated catalog
+   (name, provenance, trigger phrases, usage counts) plus a weekly pass that drafts new skills
+   from recurring multi-step procedures in session transcripts. Only worth it at real scale.

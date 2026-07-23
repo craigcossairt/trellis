@@ -77,6 +77,22 @@ need this?" - if not, it's a context file agents read on demand, not AGENTS.md c
   (all repos' docs + Files/Context Files) is usually more valuable once the venture has real
   history. Keep the brain OUT of cloud-synced folders (see eviction warning).
 
+## Parallel sessions: park the main checkout
+
+Once several agent sessions (or you plus an agent) work the same machine, the main checkout of
+each repo becomes shared state: session A switching branches yanks the tree out from under
+session B mid-edit. The pattern that survives this:
+
+- **The main checkout stays parked on the default branch.** Nobody switches it, ever.
+- **All branch work happens in linked worktrees** - `git worktree add ../<repo>-wt-<task> -b
+  <branch>` - one worktree per task, one session per worktree, removed when the branch merges.
+- `git pull` on the main checkout is fine. `git switch`, `git checkout <branch>`, and
+  `git reset --hard` there are not - each moves HEAD or rewrites the shared tree.
+- **Enforce it, don't just document it.** A PreToolUse hook that blocks branch-switching
+  commands in the main checkout turns the rule from etiquette into a guardrail - the same
+  fail-closed philosophy as the push gate, whose relative `core.hooksPath` already covers
+  every linked worktree.
+
 ## Migration steps (about an hour)
 
 1. Create `<Venture>/` with `Files/` and `Code/`, move the existing repo into `Code/`.

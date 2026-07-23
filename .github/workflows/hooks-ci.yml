@@ -1,0 +1,57 @@
+# Lint gate for the guardrails themselves. Every hook and helper script here is
+# safety infrastructure: a script that dies on CRLF, a syntax error, or a missing
+# exec bit fails SILENTLY (git skips a non-executable hook without a word), and a
+# guardrail that no-ops is indistinguishable from one that passes. So the scripts
+# get their own CI. Runs in seconds.
+name: hooks-ci
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '**/*.sh'
+      - '.githooks/**'
+      - 'brain/bin/qmd'
+      - '.github/workflows/hooks-ci.yml'
+  pull_request:
+    paths:
+      - '**/*.sh'
+      - '.githooks/**'
+      - 'brain/bin/qmd'
+      - '.github/workflows/hooks-ci.yml'
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: No CRLF line endings (breaks bash at the first line)
+        run: |
+          bad=$(git ls-files '*.sh' '.githooks/*' 'brain/bin/qmd' | xargs -r grep -lI $'\r' || true)
+          if [ -n "$bad" ]; then
+            echo "CRLF line endings found (see .gitattributes):"
+            echo "$bad"
+            exit 1
+          fi
+
+      - name: bash -n (syntax) on every script
+        run: |
+          git ls-files '*.sh' '.githooks/*' 'brain/bin/qmd' | while read -r f; do
+            bash -n "$f" || exit 1
+          done
+
+      - name: shellcheck
+        run: |
+          command -v shellcheck >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck; }
+          git ls-files '*.sh' '.githooks/*' | xargs -r shellcheck -S warning -x
+
+      - name: Exec bits on git hooks (git skips non-executable hooks silently)
+        run: |
+          git ls-files -s '.githooks/*' 'bin/*' | while read -r mode _ _ f; do
+            if [ "$mode" != "100755" ]; then
+              echo "FAIL: $f has mode $mode - must be 100755."
+              echo "Fix: git update-index --chmod=+x '$f'"
+              exit 1
+            fi
+          done
