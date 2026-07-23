@@ -1,0 +1,20 @@
+# Project config for Grok Build. Loaded when the session cwd is inside this
+# project; the folder must be trusted first (/hooks-trust on first open).
+
+[compat.claude]
+# Reuse the Claude Code skills, commands, and agents in .claude/ as-is.
+skills = true
+commands = true
+agents = true
+# Do NOT auto-run the .claude/settings.json hooks under Grok: they invoke bare
+# `bash` (which on Windows can resolve to WSL) and would double-fire alongside
+# the adapters wired in .grok/hooks/hooks.json. The adapters run the exact same
+# canonical scripts, safely, via bin/run-claude-hook.sh.
+hooks = false
+
+# MCP servers (optional). Same services as .mcp.json, but auth is per-harness -
+# expect a one-time login per product. Example:
+#
+# [mcp_servers.example]
+# url = "https://mcp.example.com/mcp"
+# enabled = true

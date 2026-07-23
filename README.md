@@ -1,6 +1,6 @@
 # trellis
 
-![License: MIT](https://img.shields.io/badge/license-MIT-4ECDC4) ![Works with](https://img.shields.io/badge/works%20with-Claude%20Code%20%C2%B7%20Cursor%20%C2%B7%20Codex%20%C2%B7%20Gemini%20%C2%B7%20Copilot-FF7A6B)
+![License: MIT](https://img.shields.io/badge/license-MIT-4ECDC4) ![Works with](https://img.shields.io/badge/works%20with-Claude%20Code%20%C2%B7%20Cursor%20%C2%B7%20Grok%20Build%20%C2%B7%20Codex%20%C2%B7%20Gemini%20%C2%B7%20Copilot-FF7A6B)
 
 A trellis is the structure a plant grows on. This one is for projects: a ready-to-use template
 for building with AI coding agents - extracted from the real, daily-driven setup of a production
@@ -27,7 +27,7 @@ that prevents that - before the chaos starts.
 | `docs/about-me.md` | Tell the AI who you are (technical level, working style) so its advice actually fits you. |
 | `.claude/` | Claude Code extras: guardrail hooks (blocks edits to secrets, auto-formats code, injects context on session start), slash commands, and skills - a ranked daily brief, feature planning, safe dependency reviews, a pre-demo audit. |
 | `.githooks/` + `bin/verify-green.sh` | An optional push gate that works for humans AND agents: once you fill in your lint/test commands, `git push` refuses any commit whose checks were never seen passing. Off by default; self-installs its wiring at session start. |
-| Harness adapters | Thin pointer files for Cursor, Gemini CLI, and GitHub Copilot. Codex reads AGENTS.md natively. Use any tool, or several. |
+| Harness adapters | Cursor and Grok Build run the same guardrail hooks as Claude Code through one shared adapter (`bin/run-claude-hook.sh`) - plus pointer files for Gemini CLI and GitHub Copilot. Codex reads AGENTS.md natively. Use any tool, or several; the guardrails follow you. |
 | `brain/` | Optional: a local search index over your project's docs and history that feeds relevant context into every prompt. Off by default; 10 minutes to enable when the project has real history. |
 | `docs/growing-into-a-workspace.md` | The graduation path for when your project becomes a company: where legal docs, brand assets, and a second repo go, and how the AI context scales with you. |
 | `docs/writing-your-own-skills.md` | The 10-minute guide to teaching your AI a repeatable procedure, plus a six-question hardening checklist for making skills that survive contact with reality. |

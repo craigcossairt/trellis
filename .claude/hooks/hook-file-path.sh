@@ -12,8 +12,9 @@
 #
 # Parsing: jq when available; otherwise POSIX sed. Never grep -P - BSD grep (macOS)
 # has no -P, and GNU grep -P dies on non-UTF-8 locales (seen in Git Bash on Windows).
-# Both key spellings are checked: Claude Code sends snake_case (file_path), other
-# harnesses routed through the adapter may send camelCase (filePath).
+# All the shapes seen in the wild are checked: Claude Code nests snake_case under
+# tool_input; Grok Build nests camelCase under toolInput; Cursor sends file_path at
+# the payload's top level (routed here via bin/run-claude-hook.sh).
 set -uo pipefail
 
 PAYLOAD=$(cat 2>/dev/null || true)
@@ -23,7 +24,8 @@ if command -v jq >/dev/null 2>&1; then
   printf '%s' "$PAYLOAD" | jq -r '
     .tool_input.file_path // .tool_input.filePath //
     .toolInput.file_path  // .toolInput.filePath  //
-    .tool_response.filePath // .tool_input.path // empty' 2>/dev/null
+    .tool_response.filePath // .tool_input.path //
+    .file_path // .filePath // empty' 2>/dev/null
 else
   OUT=$(printf '%s' "$PAYLOAD" | sed -n 's/.*"file_path"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
   [ -n "$OUT" ] || OUT=$(printf '%s' "$PAYLOAD" | sed -n 's/.*"filePath"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)

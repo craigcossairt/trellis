@@ -78,6 +78,23 @@ If no, it goes in the issue tracker, not here.
 If this project outgrows a single repo (second repo, non-code assets piling up), see
 `docs/growing-into-a-workspace.md` for the graduation path.
 
+## Harness Wiring (summary)
+
+The knowledge in this file and `docs/` is harness-agnostic; each tool gets only a thin adapter:
+
+| Harness | Wiring |
+|---|---|
+| Claude Code | `CLAUDE.md` (imports this file) + hooks via `.claude/settings.json` |
+| Cursor | `.cursor/rules/project.mdc` (always-on rule) + `.cursor/hooks.json` (guardrail parity) |
+| Grok Build | `.grok/config.toml` (reuses `.claude/` skills and commands) + `.grok/hooks/hooks.json` |
+| Codex | reads this file natively - no adapter needed |
+| Gemini CLI | `GEMINI.md` pointer |
+| GitHub Copilot | `.github/copilot-instructions.md` pointer |
+
+Claude, Cursor, and Grok all run the SAME hook scripts (via `bin/run-claude-hook.sh` for the
+latter two) - guardrail logic exists once. Where a harness runs no hooks at all, agents must
+still honor the rules the hooks enforce (don't edit secrets, verify before push).
+
 ## Rules
 
 ### Working Methodology

@@ -47,8 +47,9 @@ Work top to bottom. Delete this file when done (or keep it until the project has
 Everything is optional. Delete what this project won't use:
 
 - [ ] Skills you won't need (`.claude/skills/*`) - e.g. `launch-check` is for user-facing apps.
-- [ ] Harness adapters nobody on the project uses: `.cursor/`, `GEMINI.md`,
-      `.github/copilot-instructions.md`.
+- [ ] Harness adapters nobody on the project uses: `.cursor/`, `.grok/`, `GEMINI.md`,
+      `.github/copilot-instructions.md`. (If you keep `.cursor/` or `.grok/`, keep
+      `bin/run-claude-hook.sh` too - it's their shared hook adapter.)
 - [ ] `brain/` if the project is small enough to not need a knowledge base (you can add it back
       later - it's self-contained).
 - [ ] `examples/` once you've filled in your own AGENTS.md (it's a reference sample, nothing

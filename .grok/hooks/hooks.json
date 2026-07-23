@@ -1,0 +1,51 @@
+{
+  "$schema_comment": "Grok Build hooks. Canonical guardrail logic lives in .claude/hooks/ and brain/hooks/; bin/run-claude-hook.sh only adapts payload and verdict shapes - never fork hook logic into a Grok-only copy. WINDOWS: replace `bash` in each command with Git Bash's full path (e.g. \"C:/Program Files/Git/bin/bash.exe\") - a bare bash can resolve to WSL, where HOME and every path are wrong. If your harness does not run hooks from the project root, make the script path absolute too.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash bin/run-claude-hook.sh grok session-start",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash bin/run-claude-hook.sh grok brain-enrich",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit|search_replace",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash bin/run-claude-hook.sh grok block-sensitive-files",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit|search_replace",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash bin/run-claude-hook.sh grok format-on-edit",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}

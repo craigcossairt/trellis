@@ -1,0 +1,32 @@
+{
+  "$schema_comment": "Cursor hooks. Canonical guardrail logic lives in .claude/hooks/ and brain/hooks/; bin/run-claude-hook.sh only adapts payload and verdict shapes - never fork hook logic into a Cursor-only copy. Trust the workspace so project hooks load; check the Hooks output channel if nothing fires. WINDOWS: replace `bash` with Git Bash's full path (e.g. \"C:/Program Files/Git/bin/bash.exe\"). Note: Cursor cannot inject prompt context from beforeSubmitPrompt yet, so brain enrichment is best-effort there - agents should query the brain MCP or search it directly on substantive prompts.",
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "command": "bash bin/run-claude-hook.sh cursor session-start",
+        "timeout": 15
+      }
+    ],
+    "beforeSubmitPrompt": [
+      {
+        "command": "bash bin/run-claude-hook.sh cursor brain-enrich",
+        "timeout": 15
+      }
+    ],
+    "preToolUse": [
+      {
+        "command": "bash bin/run-claude-hook.sh cursor block-sensitive-files",
+        "matcher": "Write|StrReplace|Delete",
+        "timeout": 10,
+        "failClosed": true
+      }
+    ],
+    "afterFileEdit": [
+      {
+        "command": "bash bin/run-claude-hook.sh cursor format-on-edit",
+        "timeout": 30
+      }
+    ]
+  }
+}

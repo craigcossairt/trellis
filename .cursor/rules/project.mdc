@@ -7,3 +7,8 @@ Read `AGENTS.md` at the repo root and follow it - it is the canonical instructio
 AI agents on this project. Full methodology docs live in `docs/methodology/` (TDD workflow,
 bug-fix protocol, session habits). Append bug patterns to `docs/common-gotchas.md` and decisions
 to `docs/decision-log.md` as described in AGENTS.md § Autonomous Housekeeping.
+
+Guardrail hooks for Cursor are wired in `.cursor/hooks.json` (same scripts Claude Code runs;
+trust the workspace so they load). Honor the rules they enforce even if hooks aren't firing:
+never edit secrets or lock files, and run `bash bin/verify-green.sh` before pushing when the
+push gate is configured.
