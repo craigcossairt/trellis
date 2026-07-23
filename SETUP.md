@@ -50,6 +50,9 @@ Everything is optional. Delete what this project won't use:
 - [ ] Harness adapters nobody on the project uses: `.cursor/`, `.grok/`, `GEMINI.md`,
       `.github/copilot-instructions.md`. (If you keep `.cursor/` or `.grok/`, keep
       `bin/run-claude-hook.sh` too - it's their shared hook adapter.)
+- [ ] The push gate (`.githooks/`, `bin/verify-green.sh`, `bin/install-git-hooks.sh`) if you
+      never want push-time verification. It's inert until configured, so keeping it costs
+      nothing.
 - [ ] `brain/` if the project is small enough to not need a knowledge base (you can add it back
       later - it's self-contained).
 - [ ] `examples/` once you've filled in your own AGENTS.md (it's a reference sample, nothing
@@ -73,4 +76,7 @@ of commit history - before that there's nothing worth searching.
 - [ ] Start an agent session in the repo root and ask: *"What are the working methodology rules
       for this project?"* - it should answer from AGENTS.md.
 - [ ] Edit any source file and confirm the formatter hook ran.
-- [ ] Try to edit `.env` via the agent and confirm the block hook refuses.
+- [ ] Try to edit `.env` via the agent and confirm the block hook refuses. A guardrail that
+      no-ops looks identical to one that passes - only a deliberate violation proves it's alive.
+- [ ] If you configured the push gate: commit a trivial change and `git push` WITHOUT running
+      `bin/verify-green.sh` first - confirm the push is blocked, then verify and push for real.

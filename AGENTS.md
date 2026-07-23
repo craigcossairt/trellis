@@ -71,7 +71,10 @@ If no, it goes in the issue tracker, not here.
 │   ├── decision-log.md      # one line per decision
 │   └── methodology/         # TDD workflow, bug protocol, session habits
 ├── .claude/                 # Claude Code adapter (hooks, commands, skills, agents)
-├── .cursor/                 # Cursor adapter
+├── .cursor/                 # Cursor adapter (rules + hooks)
+├── .grok/                   # Grok Build adapter (config + hooks)
+├── .githooks/               # real git pre-push hook (opt-in push gate)
+├── bin/                     # verify-green, git-hook installer, harness hook adapter
 └── brain/                   # optional local knowledge base (see brain/README.md)
 ```
 
