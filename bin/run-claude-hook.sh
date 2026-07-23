@@ -52,17 +52,22 @@ allow_json() {
   esac
 }
 
-deny_json() {
-  # $1 = reason. JSON-escape via jq when available; otherwise flatten to one
-  # safe line. The full reason always also goes to stderr.
-  local reason_json
+json_string() {
+  # JSON-escape $1 via jq when available; otherwise flatten to one safe line.
   if command -v jq >/dev/null 2>&1; then
-    reason_json=$(printf '%s' "$1" | jq -Rs .)
+    printf '%s' "$1" | jq -Rs .
   else
-    reason_json="\"$(printf '%s' "$1" | tr '\n' ' ' | sed 's/\\/\\\\/g; s/"/\\"/g')\""
+    printf '"%s"' "$(printf '%s' "$1" | tr '\n' ' ' | sed 's/\\/\\\\/g; s/"/\\"/g')"
   fi
+}
+
+deny_json() {
+  # $1 = reason (also always goes to stderr). Key names per each harness's
+  # hook docs: Cursor wants snake_case user_message/agent_message.
+  local reason_json
+  reason_json=$(json_string "$1")
   case "$HARNESS" in
-    cursor) printf '{"permission":"deny","userMessage":%s}' "$reason_json" ;;
+    cursor) printf '{"permission":"deny","user_message":%s,"agent_message":%s}' "$reason_json" "$reason_json" ;;
     grok)   printf '{"decision":"deny","reason":%s}' "$reason_json" ;;
   esac
 }
@@ -97,13 +102,29 @@ case "$HOOK_ID" in
     exit 0
     ;;
   brain-enrich)
-    # Emit the enrichment block once on stdout. (Cursor cannot inject prompt
-    # context yet; harmless there, and ready the day it can.)
-    [ -n "$OUT" ] && printf '%s\n' "$OUT"
+    # Grok injects UserPromptSubmit stdout directly - emit the block once.
+    # Cursor's beforeSubmitPrompt schema is {"continue": bool} and cannot
+    # inject context - always let the prompt through.
+    if [ "$HARNESS" = "cursor" ]; then
+      printf '{"continue":true}'
+    else
+      [ -n "$OUT" ] && printf '%s\n' "$OUT"
+    fi
+    exit 0
+    ;;
+  session-start)
+    # Cursor's sessionStart schema delivers context via additional_context;
+    # raw stdout would be ignored. Grok surfaces plain stdout.
+    if [ "$HARNESS" = "cursor" ]; then
+      [ -n "$OUT" ] && printf '{"additional_context":%s}' "$(json_string "$OUT")"
+    else
+      [ -n "$OUT" ] && printf '%s' "$OUT"
+    fi
+    [ -n "$ERR" ] && printf '%s\n' "$ERR" >&2
     exit 0
     ;;
   *)
-    # session-start / format-on-edit: passive passthrough.
+    # format-on-edit: afterFileEdit has no output fields - passive passthrough.
     [ -n "$OUT" ] && printf '%s' "$OUT"
     [ -n "$ERR" ] && printf '%s\n' "$ERR" >&2
     exit 0
