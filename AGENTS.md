@@ -179,6 +179,10 @@ Refresh the model names when the model family turns over; the tier structure is 
 **After making or discovering a project decision:**
 - Append a one-line entry to `docs/decision-log.md`
   (format: `- **YYYY-MM-DD** - Decision description. See <issue-ref>.`)
+- **Date entries in machine-local time, not the session-context date.** The "today's date" an
+  agent sees in its context is often UTC-derived and rolls over during the local evening, so
+  evening sessions get tomorrow's date. Run `date +%Y-%m-%d` before dating any log entry or
+  dated doc. (This future-dated real log entries twice in the project this template came from.)
 
 **After fixing a recurring issue or learning a new codebase pattern:**
 - Update this file if it's a convention agents need every session
