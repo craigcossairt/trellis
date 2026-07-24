@@ -40,14 +40,24 @@ Things to SKIP:
 
 1. **Read the conversation above.** Identify 0-5 capture candidates. Don't force it - if nothing's
    worth saving, say so and exit.
-2. **Check for duplicates** before writing. Grep `common-gotchas.md` and memory for the same
-   symptom/topic. If already documented, skip (or propose an update instead of a new entry).
+2. **Supersession pass (write-time invalidation).** Before writing each capture, search for what
+   it touches: grep `common-gotchas.md` and memory for the same symptom/topic (and query the
+   project brain, if initialized). Three outcomes:
+   - **Already documented and still true** - skip, or fold new detail into the existing entry.
+   - **Documented but now contradicted or outdated** - update the OLD artifact in the same
+     session. Correct it in place, or when the old fact has historical value, mark it superseded
+     instead: if your memory format supports metadata, add `superseded_by: <successor>` and keep
+     the file; for gotchas/docs, edit in place - git history preserves the old text. Never write
+     the new fact and leave the contradicted one live; retrieval and future greps will keep
+     serving it.
+   - **Net-new** - write fresh.
 3. **For auto-apply categories** (bug patterns, tool gotchas, cross-session knowledge): make the
    edits, then list them in the output.
 4. **For propose-first categories** (conventions): show the proposed diff and ask for approval
    before editing.
 5. **At the end**, output a short summary:
    - **Captured:** X entries applied (list files + one-line descriptions)
+   - **Superseded:** entries invalidated/updated by this session's captures (list old -> new)
    - **Proposed:** Y edits waiting on approval
    - **Drift flagged:** Z (list files that look stale)
    - **Nothing worth capturing:** if that was the outcome, say so plainly.

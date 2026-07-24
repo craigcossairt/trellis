@@ -184,6 +184,13 @@ Refresh the model names when the model family turns over; the tier structure is 
 - Update this file if it's a convention agents need every session
 - Update `docs/common-gotchas.md` if it's a symptom-to-fix pattern
 
+**When new knowledge contradicts recorded knowledge (write-time invalidation):**
+- Update or supersede the old entry in the SAME session you write the new one - never write a
+  new fact and leave the contradicted one live for retrieval or future greps to keep serving.
+  Periodic lint passes are backstops, not the mechanism.
+- Supersede, don't delete: memory entries with metadata support get `superseded_by: <successor>`
+  and stay on disk; gotchas/docs get edited in place (git history preserves the old text).
+
 **When context files get stale:**
 - If this file drifts on stable conventions, flag it and suggest updates
 - If the issue tracker is out of date based on something that just happened, flag it - do not
