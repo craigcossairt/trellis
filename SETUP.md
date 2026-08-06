@@ -47,9 +47,13 @@ Work top to bottom. Delete this file when done (or keep it until the project has
 Everything is optional. Delete what this project won't use:
 
 - [ ] Skills you won't need (`.claude/skills/*`) - e.g. `launch-check` is for user-facing apps.
+      Delete the matching Cursor router (`.cursor/skills/<name>/`) in the same commit; hooks CI
+      fails a router left pointing at a file you removed.
 - [ ] Harness adapters nobody on the project uses: `.cursor/`, `.grok/`, `GEMINI.md`,
       `.github/copilot-instructions.md`. (If you keep `.cursor/` or `.grok/`, keep
-      `bin/run-claude-hook.sh` too - it's their shared hook adapter.)
+      `bin/run-claude-hook.sh` too - it's their shared hook adapter. Keeping `.cursor/` also
+      means keeping one router per skill and command - that is what makes them reachable
+      there, and CI checks the pair both ways.)
 - [ ] The push gate (`.githooks/`, `bin/verify-green.sh`, `bin/install-git-hooks.sh`) if you
       never want push-time verification. It's inert until configured, so keeping it costs
       nothing.
