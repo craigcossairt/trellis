@@ -71,7 +71,7 @@ If no, it goes in the issue tracker, not here.
 │   ├── decision-log.md      # one line per decision
 │   └── methodology/         # TDD workflow, bug protocol, session habits
 ├── .claude/                 # Claude Code adapter (hooks, commands, skills, agents)
-├── .cursor/                 # Cursor adapter (rules + hooks)
+├── .cursor/                 # Cursor adapter (rules + hooks + skill routers)
 ├── .grok/                   # Grok Build adapter (config + hooks)
 ├── .githooks/               # real git pre-push hook (opt-in push gate)
 ├── bin/                     # verify-green, git-hook installer, harness hook adapter
@@ -88,7 +88,7 @@ The knowledge in this file and `docs/` is harness-agnostic; each tool gets only 
 | Harness | Wiring |
 |---|---|
 | Claude Code | `CLAUDE.md` (imports this file) + hooks via `.claude/settings.json` |
-| Cursor | `.cursor/rules/project.mdc` (always-on rule) + `.cursor/hooks.json` (guardrail parity) |
+| Cursor | `.cursor/rules/project.mdc` (always-on rule) + `.cursor/hooks.json` (guardrail parity) + `.cursor/skills/*` (routers) |
 | Grok Build | `.grok/config.toml` (reuses `.claude/` skills and commands) + `.grok/hooks/hooks.json` |
 | Codex | reads this file natively - no adapter needed |
 | Gemini CLI | `GEMINI.md` pointer |
@@ -97,6 +97,12 @@ The knowledge in this file and `docs/` is harness-agnostic; each tool gets only 
 Claude, Cursor, and Grok all run the SAME hook scripts (via `bin/run-claude-hook.sh` for the
 latter two) - guardrail logic exists once. Where a harness runs no hooks at all, agents must
 still honor the rules the hooks enforce (don't edit secrets, verify before push).
+
+Skills and command protocols work the same way: one canonical body under `.claude/`, and thin
+routers elsewhere. Cursor does not auto-load Claude Code skills, so each one gets a router at
+`.cursor/skills/<name>/SKILL.md` that names the canonical file and nothing else. **A new skill
+or command needs its router in the same commit** - hooks CI fails a canonical procedure that no
+router points at, and a router pointing at a file that no longer exists.
 
 ## Rules
 
@@ -108,6 +114,24 @@ still honor the rules the hooks enforce (don't edit secrets, verify before push)
   tests, check logs, demonstrate correctness. Ask: "Would a staff engineer approve this?"
   If the push gate is configured (`bin/verify-green.sh`), record the proof with
   `bash bin/verify-green.sh` before pushing - unverified pushes are blocked.
+- **Grade every claim on the certainty ladder, and say where it stopped.** Five levels:
+  (1) *you said so* - worthless on its own; (2) *you pointed at the line* - a real `file:line`,
+  or the dependency's own source; (3) *you showed the bad case can't reach* - you walked the
+  failure path step by step and it doesn't get there; (4) *you ran it* - a script or test that
+  calls the real code and fails loud if you're wrong; (5) *you reproduced it in the running
+  app*. Get each claim as far down as is cheap and **name the level out loud**. A claim you
+  can't get to 4 is reported as unproven, never written up as settled, and never rounded up.
+  Two habits come with it:
+  - **Find the one fact the work is safe because of.** Most alarming-looking changes are safe
+    because of a single fact ("this only drops already-dead cache entries"). Proving that one
+    fact kills the whole list of maybes, so spend the effort there rather than enumerating
+    risks.
+  - **A writeup that sounds right is worthless.** It reads as convincing whether or not it is
+    true, which is exactly the trap. Prose is not evidence; a run is.
+
+  This is the vocabulary the rest of these rules use. "Mutate the suite"
+  (`docs/methodology/tdd.md`) is what makes a level-4 claim trustworthy, and the push gate
+  records level 4 for a whole tree.
 - **Autonomous bug fixing** - when given a bug report, follow `docs/methodology/bug-protocol.md`
   automatically. If details are missing, ask for them.
 - **TDD by default** - for code work, follow `docs/methodology/tdd.md`. Write failing tests first,
@@ -165,6 +189,23 @@ Refresh the model names when the model family turns over; the tier structure is 
   copy, user-facing UI text, emails to outside parties, public posts). Use hyphens, commas,
   parentheses, or separate sentences. Em dashes are fine in internal docs, code comments, and
   commit messages.
+- <!-- OPTIONAL, keep or delete: --> **Writing rules for prose (Orwell, 1946).** Scope: the
+  externally-facing content above, plus PR descriptions and commit messages. Prose only, never
+  code, identifiers, or established technical terms; swap in everyday words only where
+  precision survives.
+  1. Never use a metaphor or figure of speech you are used to seeing in print.
+  2. Never use a long word where a short one will do.
+  3. If it is possible to cut a word out, cut it out.
+  4. Never use the passive where you can use the active.
+  5. Never use jargon or a scientific word where everyday English will do.
+  6. Break any of these rules sooner than write something clumsy.
+- <!-- OPTIONAL, keep or delete: --> **Banned in that same scope**, as a mechanical check like
+  the em-dash rule: *comprehensive, robust, seamless, leverage* (as a verb), *delve, utilize,
+  game-changer*; the "it's not just X, it's Y" construction; rule-of-three padding ("faster,
+  smarter, better"); achievement language in commits and PRs ("significantly improved",
+  "greatly enhanced"), which should state what changed and why in plain words. This is a
+  starter list. Extend it as new tells show up, and consider wiring it into a lint script so
+  it fails rather than relying on memory.
 
 ### Autonomous Housekeeping (do these WITHOUT being asked)
 
