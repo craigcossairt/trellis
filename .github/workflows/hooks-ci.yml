@@ -3,6 +3,12 @@
 # exec bit fails SILENTLY (git skips a non-executable hook without a word), and a
 # guardrail that no-ops is indistinguishable from one that passes. So the scripts
 # get their own CI. Runs in seconds.
+#
+# The config files get the same treatment for the same reason. A trailing comma in
+# .claude/settings.json does not fail loudly - Claude Code declines to load the file
+# and every hook it wires stops firing, which means the sensitive-file block and the
+# push gate are simply gone. A skill with malformed frontmatter is not an error
+# either, it is silently skipped, so the skill never runs and nothing says so.
 name: hooks-ci
 
 on:
@@ -12,12 +18,18 @@ on:
       - '**/*.sh'
       - '.githooks/**'
       - 'brain/bin/qmd'
+      - '.claude/**'
+      - '.cursor/**'
+      - '.grok/**'
       - '.github/workflows/hooks-ci.yml'
   pull_request:
     paths:
       - '**/*.sh'
       - '.githooks/**'
       - 'brain/bin/qmd'
+      - '.claude/**'
+      - '.cursor/**'
+      - '.grok/**'
       - '.github/workflows/hooks-ci.yml'
 
 jobs:
@@ -28,18 +40,37 @@ jobs:
 
       - name: No CRLF line endings (breaks bash at the first line)
         run: |
-          bad=$(git ls-files '*.sh' '.githooks/*' 'brain/bin/qmd' | xargs -r grep -lI $'\r' || true)
-          if [ -n "$bad" ]; then
-            echo "CRLF line endings found (see .gitattributes):"
-            echo "$bad"
-            exit 1
-          fi
+          # grep exits 0 on match, 1 on no-match, and 2 on ERROR. Both the old
+          # `xargs grep -l ... || true` and a plain `if grep -q ...` collapse the
+          # error case into "clean", so a scan that never ran reads exactly like a
+          # scan that found nothing - here that means an unreadable or missing file
+          # is reported as LF. Unknown must never resolve to green, and that
+          # applies to the checks themselves, not only to what they check. So all
+          # three exit codes are handled separately.
+          # `rc=0; cmd || rc=$?` and not `cmd; rc=$?`: this runs under `bash -e`,
+          # where a bare non-zero simple command kills the step. Written the naive
+          # way, the FIRST clean file (grep exit 1) aborts the run - and the step
+          # then fails for every tree, which looks like a working check until you
+          # notice it can never pass.
+          fail=0
+          while read -r f; do
+            rc=0
+            grep -qU $'\r' "$f" || rc=$?
+            case $rc in
+              0) echo "::error file=$f::contains CRLF line endings (see .gitattributes)"; fail=1 ;;
+              1) ;;
+              *) echo "::error file=$f::could not be scanned for CRLF (grep exit $rc) - tracked but missing or unreadable"; fail=1 ;;
+            esac
+          done < <(git ls-files '*.sh' '.githooks/*' 'brain/bin/qmd')
+          exit $fail
 
       - name: bash -n (syntax) on every script
         run: |
-          git ls-files '*.sh' '.githooks/*' 'brain/bin/qmd' | while read -r f; do
-            bash -n "$f" || exit 1
-          done
+          fail=0
+          while read -r f; do
+            bash -n "$f" || { echo "::error file=$f::bash -n failed"; fail=1; }
+          done < <(git ls-files '*.sh' '.githooks/*' 'brain/bin/qmd')
+          exit $fail
 
       - name: shellcheck
         run: |
@@ -55,3 +86,161 @@ jobs:
               exit 1
             fi
           done
+
+      - name: Agent, skill and command definitions (frontmatter + LF)
+        run: |
+          # None of the steps above read these files at all. A malformed definition
+          # is not an error - the harness silently skips it, so the skill, command
+          # or agent simply never fires. Same invisible failure, different file type.
+          fail=0
+          shopt -s nullglob
+
+          # check <file> <expected-name-or-empty> <required keys...>
+          check() {
+            local f="$1" expect="$2" fm key declared
+            shift 2
+            # A bare `if grep -q` is fine HERE and not in the step above: these
+            # paths come from a glob over the working tree, so the file provably
+            # exists and grep's error case is not reachable. Where the list comes
+            # from git rather than the disk, the exit code has to be split.
+            if grep -qU $'\r' "$f"; then
+              echo "::error file=$f::contains CRLF line endings"
+              fail=1
+            fi
+            # Frontmatter must open on line 1; anything else and the whole block is
+            # read as body text.
+            if [ "$(head -n 1 "$f")" != "---" ]; then
+              echo "::error file=$f::must start with '---' frontmatter"
+              fail=1
+              return
+            fi
+            # END{exit !found} is the point. Without it a file whose frontmatter
+            # never closes prints its entire body as the frontmatter block, and
+            # every key check below then passes on body text.
+            if ! fm=$(awk 'NR>1 && /^---$/{found=1; exit} NR>1{print} END{exit !found}' "$f"); then
+              echo "::error file=$f::frontmatter is missing a closing '---'"
+              fail=1
+              return
+            fi
+            for key in "$@"; do
+              if ! printf '%s\n' "$fm" | grep -qE "^$key:[[:space:]]*[^[:space:]]"; then
+                echo "::error file=$f::frontmatter missing '$key:'"
+                fail=1
+              fi
+            done
+            # The name is the handle the harness dispatches on. One that disagrees
+            # with its file or directory is invoked by one string and found under
+            # another.
+            if [ -n "$expect" ]; then
+              declared=$(printf '%s\n' "$fm" | sed -n 's/^name:[[:space:]]*//p' | head -n 1)
+              if [ "$declared" != "$expect" ]; then
+                echo "::error file=$f::frontmatter name '$declared' != '$expect'"
+                fail=1
+              fi
+            fi
+          }
+
+          agents=(.claude/agents/*.md)
+          skills=(.claude/skills/*/SKILL.md)
+          commands=(.claude/commands/*.md)
+          # "Not present" and "present but empty" are different, and only one of
+          # them is a problem. SETUP.md § 5 says to delete skills and agents a
+          # project does not need, so an absent directory is a deliberate prune and
+          # this check simply does not apply. A directory that exists with nothing
+          # in it is a rename or a half-finished delete, which must not read as a
+          # pass - that is the failure mode this whole workflow is about.
+          for d in .claude/agents .claude/skills .claude/commands; do
+            [ -d "$d" ] || continue
+            case "$d" in
+              .claude/agents)   [ ${#agents[@]}   -gt 0 ] || { echo "::error::$d exists but holds no definitions - renamed or half-deleted"; fail=1; } ;;
+              .claude/skills)   [ ${#skills[@]}   -gt 0 ] || { echo "::error::$d exists but holds no SKILL.md - renamed or half-deleted"; fail=1; } ;;
+              .claude/commands) [ ${#commands[@]} -gt 0 ] || { echo "::error::$d exists but holds no protocols - renamed or half-deleted"; fail=1; } ;;
+            esac
+          done
+
+          for f in "${agents[@]}"; do check "$f" "$(basename "$f" .md)" name description; done
+          for f in "${skills[@]}"; do check "$f" "$(basename "$(dirname "$f")")" name description; done
+          # Commands carry `description` only - they are protocol documents, not
+          # dispatchable agents, and none of them declares a `name`. Requiring one
+          # here would fail all three for a key the format does not use.
+          for f in "${commands[@]}"; do check "$f" "" description; done
+
+          echo "checked ${#agents[@]} agent(s), ${#skills[@]} skill(s), ${#commands[@]} command(s)"
+          exit $fail
+
+      - name: Cursor routers point at something, and cover everything
+        run: |
+          # Cursor does not auto-load Claude Code skills, so `.cursor/skills/*` are
+          # thin routers at the canonical procedure. Two ways that rots, and both
+          # are invisible without a check:
+          #
+          #  1. A router pointing at a renamed or deleted file still parses, still
+          #     loads, and sends the agent somewhere that is not there. Renaming a
+          #     skill does not touch its router.
+          #  2. A new skill with no router is exactly as unreachable from Cursor as
+          #     a malformed one. A rule with no check behind it is the failure mode
+          #     this workflow exists to prevent, so both directions are checked.
+          fail=0
+          shopt -s nullglob
+
+          # A project that deleted the whole Cursor adapter (SETUP.md § 5) is not
+          # broken, it just has nothing to check here. Keeping the adapter is what
+          # opts you into keeping it complete.
+          if [ ! -d .cursor ]; then
+            echo "no Cursor adapter in this project - nothing to check"
+            exit 0
+          fi
+
+          routers=(.cursor/skills/*/SKILL.md)
+          if [ ${#routers[@]} -eq 0 ]; then
+            echo "::error::.cursor/ is present but has no skill routers - every skill and command is unreachable from Cursor. Add routers under .cursor/skills/, or delete .cursor/ entirely."
+            exit 1
+          fi
+
+          covered=""
+          for f in "${routers[@]}"; do
+            targets=$(grep -oE '`\.claude/[^`]+`' "$f" | tr -d '`')
+            if [ -z "$targets" ]; then
+              echo "::error file=$f::names no .claude/ target, so it routes nowhere"
+              fail=1
+              continue
+            fi
+            while read -r target; do
+              [ -z "$target" ] && continue
+              if [ ! -e "$target" ]; then
+                echo "::error file=$f::points at '$target', which does not exist"
+                fail=1
+              fi
+            done <<< "$targets"
+            covered="$covered$targets"$'\n'
+          done
+
+          for canon in .claude/skills/*/SKILL.md .claude/commands/*.md; do
+            [ -e "$canon" ] || continue
+            if ! printf '%s' "$covered" | grep -qxF "$canon"; then
+              echo "::error file=$canon::no Cursor router points at this - add one under .cursor/skills/"
+              fail=1
+            fi
+          done
+
+          echo "checked ${#routers[@]} Cursor router(s)"
+          exit $fail
+
+      - name: JSON config is parseable
+        run: |
+          # settings.json wires every hook in this repo, and hooks.json does the
+          # same for Cursor and Grok. A trailing comma in any of them is not an
+          # error the harness reports - it declines to load the file and the
+          # guardrails silently cease to exist.
+          fail=0
+          for f in .claude/settings.json .cursor/hooks.json .grok/hooks/hooks.json .mcp.json.example; do
+            [ -f "$f" ] || continue
+            if node -e "JSON.parse(require('fs').readFileSync('$f','utf8'))" 2>/dev/null; then
+              echo "ok $f"
+            else
+              echo "::error file=$f::not valid JSON - the harness will silently decline to load it"
+              node -e "JSON.parse(require('fs').readFileSync('$f','utf8'))" || true
+              fail=1
+            fi
+          done
+          exit $fail

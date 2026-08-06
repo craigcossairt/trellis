@@ -3,3 +3,12 @@
 *.sh text eol=lf
 brain/bin/qmd text eol=lf
 .githooks/* text eol=lf
+
+# Agent definitions are asserted LF by hooks CI. Without these lines a Windows
+# checkout (core.autocrlf=true) writes them CRLF, so the same tree that passes on
+# the runner fails when the check is run locally - and `---\r` also stops matching
+# the opening frontmatter fence, which reads as "no frontmatter" rather than as a
+# line-ending problem.
+.claude/**/*.md text eol=lf
+.cursor/**/*.md text eol=lf
+.claude/settings.json text eol=lf
