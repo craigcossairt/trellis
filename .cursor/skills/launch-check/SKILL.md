@@ -1,9 +1,7 @@
 ---
 name: launch-check
-description: Pre-demo or pre-launch audit of the app - test data, broken screens, missing error states, brand consistency. Use when asked for a 'demo check', 'launch check', 'pre-demo audit', 'check before the user interview'.
+description: Run a pre-demo/pre-launch audit of the app - test data, broken screens, missing error states, brand consistency. Use when asked to 'demo check', 'launch check', 'pre-demo audit', 'check before user interview', 'audit before demo'.
 ---
 
-Cursor does not auto-load Claude Code skills, so this is a router. The procedure lives in one
-place and every harness points at it - never fork the body into this file.
-
-Read `.claude/skills/launch-check/SKILL.md` and follow it.
+Router, not a procedure. Cursor does not auto-load Claude Code skills, so this file exists
+only to point at the canonical one. Read `.claude/skills/launch-check/SKILL.md` and follow it.

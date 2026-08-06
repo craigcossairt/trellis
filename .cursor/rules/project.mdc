@@ -13,7 +13,11 @@ trust the workspace so they load). Honor the rules they enforce even if hooks ar
 never edit secrets or lock files, and run `bash bin/verify-green.sh` before pushing when the
 push gate is configured.
 
-Skills in `.cursor/skills/` are routers, not procedures - each one names a canonical file under
-`.claude/`. Read that file when a router matches the task, and never fork its body into the
-router. When you add a skill or command under `.claude/`, add its router in the same commit;
-CI fails either half of that pair going missing.
+Skills in `.cursor/skills/` are routers, not procedures. Each is frontmatter plus one sentence
+naming a canonical file under `.claude/` - read that file when a router matches the task, and
+never fork its body into the router. Copy the canonical `description` verbatim: in Cursor it is
+the trigger, so a reworded one silently stops matching phrases the canonical skill answers to.
+
+While this directory exists, adding a skill or command under `.claude/` means adding its router
+in the same commit; hooks CI fails either half of that pair going missing. If the project drops
+Cursor support, delete `.cursor/` outright and the rule no longer applies.

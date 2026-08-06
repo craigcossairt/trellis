@@ -70,12 +70,14 @@ is level 1 and a mutated run is level 4.
 
 ### Four ways a mutation still lies to you
 
-- **Check N against the number of fixtures.** A red mutation vindicates the *case*, not each
-  assertion inside it. One suite had three fixtures; two of them contained characters that
-  failed the regex under test before the code under test ever ran, so breaking the code failed
-  3 cases and read as green. Corrected fixtures made the same mutation fail 6. If fewer cases
-  go red than the fixture count implies, the rest are passing for the wrong reason - read
-  *which* cases went red, not just that some did.
+- **Name the cases that must fail before you run the mutation, then compare.** A red mutation
+  vindicates the *case*, not each assertion inside it, and it only has to fail the cases that
+  exercise the behavior you broke - so a raw count on its own proves nothing in either
+  direction. Predict the set, then read *which* cases went red. One suite had three fixtures
+  for a single regex, all three of which should have failed; two contained characters that
+  failed that regex before the code under test ever ran, so breaking the code failed 3 cases
+  and read as covered. Corrected fixtures made the same mutation fail 6. When a case you
+  predicted stays green, it is passing for a reason you have not accounted for.
 
 - **Mutate against the actual historical bug, not a synthetic one.** A CI grep guard written
   for a specific defect passed its synthetic mutation and still could not see the real one,

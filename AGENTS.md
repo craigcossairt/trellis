@@ -98,11 +98,11 @@ Claude, Cursor, and Grok all run the SAME hook scripts (via `bin/run-claude-hook
 latter two) - guardrail logic exists once. Where a harness runs no hooks at all, agents must
 still honor the rules the hooks enforce (don't edit secrets, verify before push).
 
-Skills and command protocols work the same way: one canonical body under `.claude/`, and thin
-routers elsewhere. Cursor does not auto-load Claude Code skills, so each one gets a router at
-`.cursor/skills/<name>/SKILL.md` that names the canonical file and nothing else. **A new skill
-or command needs its router in the same commit** - hooks CI fails a canonical procedure that no
-router points at, and a router pointing at a file that no longer exists.
+Skills and command protocols work the same way: one canonical body under `.claude/`, and a thin
+router for any harness that cannot load it directly. **While an adapter is present, a new skill
+or command needs its router in the same commit** - a procedure the harness cannot reach looks
+exactly like one that was never written. Each adapter's own directory documents its router
+format; delete the adapter and the rule goes with it.
 
 ## Rules
 

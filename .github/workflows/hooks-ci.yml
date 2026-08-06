@@ -87,7 +87,7 @@ jobs:
             fi
           done
 
-      - name: Agent, skill and command definitions (frontmatter + LF)
+      - name: Agent, skill, command and router definitions (frontmatter + LF + targets)
         run: |
           # None of the steps above read these files at all. A malformed definition
           # is not an error - the harness silently skips it, so the skill, command
@@ -166,13 +166,17 @@ jobs:
           for f in "${commands[@]}"; do check "$f" "" description; done
 
           echo "checked ${#agents[@]} agent(s), ${#skills[@]} skill(s), ${#commands[@]} command(s)"
-          exit $fail
 
-      - name: Cursor routers point at something, and cover everything
-        run: |
-          # Cursor does not auto-load Claude Code skills, so `.cursor/skills/*` are
-          # thin routers at the canonical procedure. Two ways that rots, and both
-          # are invisible without a check:
+          # ---- Cursor routers -------------------------------------------------
+          # Same step, deliberately: a router is a definition too, and it has to
+          # clear the same frontmatter bar before its target is worth reading. A
+          # router with a broken fence never loads in Cursor, yet it can still
+          # contain a backticked path that satisfies a target check - so target
+          # coverage alone would pass a file the harness ignores. Steps do not
+          # share shell state, so validating them anywhere else means a second
+          # copy of check(), which is the drift this workflow exists to catch.
+          #
+          # Two more ways routers rot, both invisible without a check:
           #
           #  1. A router pointing at a renamed or deleted file still parses, still
           #     loads, and sends the agent somewhere that is not there. Renaming a
@@ -180,15 +184,13 @@ jobs:
           #  2. A new skill with no router is exactly as unreachable from Cursor as
           #     a malformed one. A rule with no check behind it is the failure mode
           #     this workflow exists to prevent, so both directions are checked.
-          fail=0
-          shopt -s nullglob
-
+          #
           # A project that deleted the whole Cursor adapter (SETUP.md § 5) is not
-          # broken, it just has nothing to check here. Keeping the adapter is what
-          # opts you into keeping it complete.
+          # broken, it just has nothing to check. Keeping the adapter is what opts
+          # you into keeping it complete.
           if [ ! -d .cursor ]; then
             echo "no Cursor adapter in this project - nothing to check"
-            exit 0
+            exit $fail
           fi
 
           routers=(.cursor/skills/*/SKILL.md)
@@ -199,7 +201,20 @@ jobs:
 
           covered=""
           for f in "${routers[@]}"; do
-            targets=$(grep -oE '`\.claude/[^`]+`' "$f" | tr -d '`')
+            check "$f" "$(basename "$(dirname "$f")")" name description
+            # `rc=0; cmd || rc=$?` and not `x=$(cmd | tr ...)`: today the pipeline
+            # ends in tr, so grep's exit 1 is masked and `bash -e` lets a
+            # no-target router reach its error branch. That is luck, not design -
+            # adding `set -o pipefail` would kill the step instead. Split the
+            # three exit codes explicitly, so a grep that ERRORS is also not
+            # silently read as "no targets".
+            rc=0
+            targets=$(grep -oE '`\.claude/[^`]+`' "$f") || rc=$?
+            case $rc in
+              0) targets=$(printf '%s\n' "$targets" | tr -d '`') ;;
+              1) targets="" ;;
+              *) echo "::error file=$f::could not be scanned for targets (grep exit $rc)"; fail=1; continue ;;
+            esac
             if [ -z "$targets" ]; then
               echo "::error file=$f::names no .claude/ target, so it routes nowhere"
               fail=1
