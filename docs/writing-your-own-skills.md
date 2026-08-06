@@ -23,6 +23,11 @@ session already knows it. This page is the 10-minute guide to writing one that a
   and file paths. Say what "done" looks like. Say what to do when a step fails.
 - **Test it in a fresh session.** If a clean session with no context can follow it, it works.
   If you had to explain something extra, that explanation belongs in the skill.
+- **Add the Cursor router in the same commit.** Cursor does not auto-load Claude Code skills,
+  so a skill without a router at `.cursor/skills/<name>/SKILL.md` is invisible there - and an
+  unreachable skill looks exactly like one that was never written. The router is frontmatter
+  plus one sentence naming the canonical `.claude/` file; never a second copy of the body.
+  Hooks CI checks the pair in both directions. (Skip this if you deleted `.cursor/`.)
 
 ## The hardening checklist
 

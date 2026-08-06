@@ -65,7 +65,42 @@ suite trustworthy. (One production day surfaced three separate vacuous-case sets
 hook suite; reading the tests had caught none of them, the mutations caught all three.)
 
 This is the suite-level form of step 2's "confirm it FAILS (red)" - a test you have never seen
-fail has never been tested.
+fail has never been tested. In the language of the certainty ladder in `AGENTS.md`, a green run
+is level 1 and a mutated run is level 4.
+
+### Four ways a mutation still lies to you
+
+- **Name the cases that must fail before you run the mutation, then compare.** A red mutation
+  vindicates the *case*, not each assertion inside it, and it only has to fail the cases that
+  exercise the behavior you broke - so a raw count on its own proves nothing in either
+  direction. Predict the set, then read *which* cases went red. One suite had three fixtures
+  for a single regex, all three of which should have failed; two contained characters that
+  failed that regex before the code under test ever ran, so breaking the code failed 3 cases
+  and read as covered. Corrected fixtures made the same mutation fail 6. When a case you
+  predicted stays green, it is passing for a reason you have not accounted for.
+
+- **Mutate against the actual historical bug, not a synthetic one.** A CI grep guard written
+  for a specific defect passed its synthetic mutation and still could not see the real one,
+  because the real one lived a hop away (in a variable assignment) from the site a grep can
+  reach. A guard that cannot see the bug it is named after reads as coverage while catching
+  nothing. Delete it rather than keep it.
+
+- **A guard must distinguish "clean" from "failed to run".** `grep` exits 1 on no-match but 2
+  on error, so `|| true` collapses a broken scan into a passing one. Unknown must never resolve
+  to green, and that applies to the checks themselves, not only to the code they check.
+  The inverse is just as real and easier to miss: a check that treats *zero results* as "the
+  scan must be broken" will block everything the day an empty result becomes legitimate.
+  Separate *could not run* (missing input, missing required file) from *ran and found nothing*
+  (fatal vs clean). Guarding the extractor is the unit suite's job, not an arbitrary
+  "at least one result" floor in the checker.
+
+- **A check on LLM behavior needs a fixture where the misbehavior is the naively-faithful
+  output.** One containment check stayed green with its containment rules stripped from the
+  prompt, because the surrounding schema steered the model away from the bad output anyway -
+  the check could not tell the instruction from the schema. It only went red once the fixture
+  made the bad output the *semantically correct* answer to the question asked. If the guarded
+  misbehavior is not the natural output on your fixture, a passing check proves the fixture,
+  not the guard.
 
 ## Key Rules
 

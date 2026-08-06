@@ -12,3 +12,12 @@ Guardrail hooks for Cursor are wired in `.cursor/hooks.json` (same scripts Claud
 trust the workspace so they load). Honor the rules they enforce even if hooks aren't firing:
 never edit secrets or lock files, and run `bash bin/verify-green.sh` before pushing when the
 push gate is configured.
+
+Skills in `.cursor/skills/` are routers, not procedures. Each is frontmatter plus one sentence
+naming a canonical file under `.claude/` - read that file when a router matches the task, and
+never fork its body into the router. Copy the canonical `description` verbatim: in Cursor it is
+the trigger, so a reworded one silently stops matching phrases the canonical skill answers to.
+
+While this directory exists, adding a skill or command under `.claude/` means adding its router
+in the same commit; hooks CI fails either half of that pair going missing. If the project drops
+Cursor support, delete `.cursor/` outright and the rule no longer applies.
