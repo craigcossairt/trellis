@@ -33,7 +33,7 @@ the ones worth the read - `blast-radius`, where this template's certainty ladder
 `create-verification-skill` and `maintain-verification-skill`, which write and then maintain a
 skill that teaches your agent to drive your actual app.
 
-```
+```text
 /add-plugin pstack     # inside Cursor
 ```
 
