@@ -1,9 +1,10 @@
 # Recommended third-party tooling
 
-Optional, battle-tested third-party skill packs worth installing alongside this template. These
+Optional, battle-tested third-party skill packs worth installing alongside this template. Most
 are **user-level installs** (they live in `~/.claude`, shared across all your projects) - install
-them once per machine, not per project. They are referenced here rather than vendored so they
-update from source and their licensing stays clean.
+those once per machine, not per project. Two are not: pstack is a Cursor plugin, and Impeccable
+installs per project. Each entry states its own scope. They are referenced here rather than
+vendored so they update from source and their licensing stays clean.
 
 ## Matt Pocock's skills - engineering discipline
 
