@@ -34,7 +34,7 @@ trap 'rm -rf "$SANDBOX"' EXIT
 
 git init --quiet --bare "$SANDBOX/origin.git"
 git init --quiet "$SANDBOX/work"
-cd "$SANDBOX/work"
+cd "$SANDBOX/work" || exit 1
 git config user.email "me@example.com"
 git config user.name  "Me"
 git config commit.gpgsign false
@@ -118,7 +118,7 @@ else bad "--quiet prints nothing" "got: $out"; fi
 # 'main' would make every branch here look like it had no commits.
 git init --quiet --bare "$SANDBOX/origin2.git"
 git init --quiet "$SANDBOX/work2"
-cd "$SANDBOX/work2"
+cd "$SANDBOX/work2" || exit 1
 git config user.email "me@example.com"
 git config user.name "Me"
 git config commit.gpgsign false
