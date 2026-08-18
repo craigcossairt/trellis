@@ -82,7 +82,7 @@ cd ~/.claude/skills/gstack && ./setup
 
 Source: https://github.com/garrytan/gstack
 
-## anydoc - documents into markdown so your knowledge base can read them
+## anydoc - documents into Markdown so your knowledge base can read them
 
 Converts Word, PowerPoint, Excel, OpenDocument, RTF, EPUB, CSV and PDF into GitHub-flavored
 markdown. Pure Rust, runs locally, no API key and no upload. It earns its place the day you turn
