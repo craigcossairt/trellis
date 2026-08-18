@@ -1,9 +1,10 @@
 # Recommended third-party tooling
 
-Optional, battle-tested third-party skill packs worth installing alongside this template. These
+Optional, battle-tested third-party skill packs worth installing alongside this template. Most
 are **user-level installs** (they live in `~/.claude`, shared across all your projects) - install
-them once per machine, not per project. They are referenced here rather than vendored so they
-update from source and their licensing stays clean.
+those once per machine, not per project. Two are not: pstack is a Cursor plugin, and Impeccable
+installs per project. Each entry states its own scope. They are referenced here rather than
+vendored so they update from source and their licensing stays clean.
 
 ## Matt Pocock's skills - engineering discipline
 
@@ -23,6 +24,32 @@ command and methodology docs. Pick one TDD authority - either skip installing hi
 delete this template's version. Running both gives the agent two conflicting workflows.
 
 Source: https://github.com/mattpocock/skills
+
+## pstack - engineering rigor, worth reading even if you never install it
+
+Lauren Tan's skill library (poteto, Cursor and React core): 44 skills behind one sticky router,
+`/poteto-mode`, which picks a playbook for the task and calls the other skills as its steps need
+them. 21 of the 44 are standalone principles rather than procedures. The proof-standard skills are
+the ones worth the read - `blast-radius`, where this template's certainty ladder came from, plus
+`create-verification-skill` and `maintain-verification-skill`, which write and then maintain a
+skill that teaches your agent to drive your actual app.
+
+```text
+/add-plugin pstack     # inside Cursor
+```
+
+**Cursor only.** It ships as a Cursor plugin and has no official Claude Code install. Unofficial
+ports and mirrors exist but are not the author's, so if you are not on Cursor, read the source
+and graft what you want rather than trusting a fork to stay current.
+
+**Collision warning.** Its principles are opinions, and some argue against this template's rules:
+`principle-never-block-on-the-human` against pausing for a human decision, `no-comments` against
+the doc comments some languages expect. Its `tdd`, `reflect` and `interrogate` overlap this
+template's `/tdd`, `/learn`, and whatever automated reviewer you run. Read its principles against
+your own AGENTS.md before installing all 44 - an agent holding two rule sets has no way to pick
+between them.
+
+Source: https://github.com/cursor/plugins/tree/main/pstack
 
 ## Impeccable - frontend design quality
 
@@ -55,6 +82,32 @@ cd ~/.claude/skills/gstack && ./setup
 ```
 
 Source: https://github.com/garrytan/gstack
+
+## anydoc - documents into Markdown so your knowledge base can read them
+
+Converts Word, PowerPoint, Excel, OpenDocument, RTF, EPUB, CSV and PDF into GitHub-flavored
+markdown. Pure Rust, runs locally, no API key and no upload. It earns its place the day you turn
+on `brain/` or any other markdown-indexed knowledge base: the index reads markdown, so a spec in
+`.docx` or a PDF report sits in your docs tree unsearchable until something converts it.
+
+```bash
+npx skills add firecrawl/anydoc
+```
+
+It registers under the name **`convert-documents-to-markdown`**, not "anydoc" - searching your
+skill list for "anydoc" finds nothing. There is also a plain CLI (`npx @firecrawl/anydoc`) and
+Node, Python and Rust bindings if you would rather script it than call it from an agent.
+
+**Check every PDF against the source before you keep the output.** Office formats convert
+reliably. PDFs have two failure modes and only one of them is safe: an image-based PDF fails
+loudly and writes nothing, but a design-heavy PDF can convert silently wrong - exit 0, confident
+and plausible markdown, with digits dropped from numbers, words broken mid-token, and in one real
+case a strikethrough inverted so a tagline claimed the opposite of the source. Do not let the
+"text-based PDFs need no OCR" line reassure you here; the corrupted case was text-based. Never
+point it at a whole folder in one pass either - use an allowlist, so nothing private or
+deliberately kept out of the corpus gets converted back into it through a side door.
+
+Source: https://github.com/firecrawl/anydoc
 
 ---
 
