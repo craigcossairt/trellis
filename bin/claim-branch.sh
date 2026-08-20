@@ -1,13 +1,24 @@
 #!/usr/bin/env bash
 # =============================================================================
-# claim-branch.sh - is anyone already working this branch?
+# claim-branch.sh - has someone else already worked this branch?
 # =============================================================================
-# If you run more than one coding-agent session at a time (Claude Code, Cursor,
-# Grok, a teammate), they all authenticate as the same git identity and nothing
-# tells them apart. `.claude/commands/worktree.md` stops two sessions sharing a
-# CHECKOUT. Nothing stops them sharing a BRANCH: both fetch it clean, both
-# commit, and the second push either clobbers or leaves the branch
-# 1-ahead/1-behind to untangle by hand.
+# `.claude/commands/worktree.md` stops two sessions sharing a CHECKOUT. Nothing
+# stops them sharing a BRANCH: both fetch it clean, both commit, and the second
+# push either clobbers or leaves the branch 1-ahead/1-behind to untangle by hand.
+#
+# WHAT THIS DETECTS: commits ALREADY PUSHED to the branch under a DIFFERENT git
+# author email. That is the teammate case, and it is worth checking before you
+# start on a branch you did not create.
+#
+# WHAT IT CANNOT DETECT - do not rely on it for either:
+#   - Two agent sessions running under YOUR identity. They stamp the same
+#     user.email, so the other session's commits are indistinguishable from
+#     your own and the branch reports free. Read the exit-0 line literally:
+#     "all yours" means "all under your email", not "all written by you".
+#   - Work nobody has pushed yet. A branch absent from the remote is free for
+#     every caller at once. This reads the remote; it reserves nothing.
+# Closing either gap needs a lease published where both sessions can see it,
+# which this script deliberately does not do.
 #
 # A clean fast-forward is NOT permission. That is what a collision looks like
 # from the inside, which is why "it merged fine" is not evidence of anything.
@@ -16,7 +27,8 @@
 #   bin/claim-branch.sh <branch> --quiet    # exit code only
 #
 # Exit codes are the contract:
-#   0  free            - no remote branch, or every commit on it is yours
+#   0  free            - no remote branch, or every commit on it is under your
+#                        own user.email (see the limits above)
 #   1  CLAIMED         - remote branch carries commits by another author
 #   2  could not tell  - no network, bad args, not a git repo
 #

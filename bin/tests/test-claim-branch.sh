@@ -17,9 +17,25 @@ set -uo pipefail
 SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/claim-branch.sh"
 [ -f "$SCRIPT" ] || { echo "cannot find claim-branch.sh next to this test" >&2; exit 1; }
 
+# The fixture must not inherit the host's git configuration. A global
+# core.hooksPath runs the host's hooks during fixture commits, and a global
+# user.email would keep the "unset user.email" case passing for the wrong
+# reason. Neutralise both for the whole suite rather than per-case.
+export GIT_CONFIG_GLOBAL=/dev/null
+export GIT_CONFIG_NOSYSTEM=1
+
 PASS=0; FAIL=0
 ok()   { PASS=$((PASS+1)); printf '  ok   %s\n' "$1"; }
 bad()  { FAIL=$((FAIL+1)); printf '  FAIL %s\n     %s\n' "$1" "$2"; }
+
+# Fixture commands must fail CLOSED. Without this the suite runs on against a
+# half-built sandbox and reports whatever that broken state happens to produce -
+# which is green often enough to be dangerous. `set -e` would do it too, but it
+# also aborts on the deliberate non-zero exits this suite is built around, so
+# guard the setup explicitly instead of arming errexit over the assertions.
+must() {
+  "$@" || { echo "FIXTURE FAILED: $*" >&2; exit 1; }
+}
 
 # expect <label> <expected-exit> <args...>
 expect() {
@@ -32,44 +48,52 @@ expect() {
 SANDBOX="$(mktemp -d 2>/dev/null || mktemp -d -t claimbranch)"
 trap 'rm -rf "$SANDBOX"' EXIT
 
-git init --quiet --bare "$SANDBOX/origin.git"
-git init --quiet "$SANDBOX/work"
+must git init --quiet --bare "$SANDBOX/origin.git"
+# Point the bare repo's HEAD at the branch this fixture actually pushes. With
+# the host's config neutralised there is no init.defaultBranch, so git picks its
+# built-in default and `git remote set-head -a` below cannot resolve a HEAD that
+# names a branch nobody ever creates. That failure used to be swallowed by a
+# 2>&1 redirect, leaving the script to fall through to its candidate loop - so
+# the "default branch is not hardcoded" case was passing without ever exercising
+# the symbolic-ref path it exists to cover.
+must git -C "$SANDBOX/origin.git" symbolic-ref HEAD refs/heads/main
+must git init --quiet "$SANDBOX/work"
 cd "$SANDBOX/work" || exit 1
-git config user.email "me@example.com"
-git config user.name  "Me"
-git config commit.gpgsign false
-git config core.autocrlf false
-git remote add origin "$SANDBOX/origin.git"
+must git config user.email "me@example.com"
+must git config user.name  "Me"
+must git config commit.gpgsign false
+must git config core.autocrlf false
+must git remote add origin "$SANDBOX/origin.git"
 
 echo base > f.txt
-git add f.txt
-git commit --quiet -m base
-git branch -M main
-git push --quiet -u origin main
-git remote set-head origin -a >/dev/null 2>&1
+must git add f.txt
+must git commit --quiet -m base
+must git branch -M main
+must git push --quiet -u origin main
+must git remote set-head origin -a >/dev/null
 
 # A branch carrying someone else's commit.
-git switch --quiet -c feature/theirs
+must git switch --quiet -c feature/theirs
 echo x >> f.txt
-git -c user.email="other@example.com" -c user.name="Other Dev" commit --quiet -am "their work"
-git push --quiet -u origin feature/theirs
+must git -c user.email="other@example.com" -c user.name="Other Dev" commit --quiet -am "their work"
+must git push --quiet -u origin feature/theirs
 
 # A branch carrying only mine.
-git switch --quiet main
-git switch --quiet -c feature/mine
+must git switch --quiet main
+must git switch --quiet -c feature/mine
 echo y >> f.txt
-git commit --quiet -am "my work"
-git push --quiet -u origin feature/mine
+must git commit --quiet -am "my work"
+must git push --quiet -u origin feature/mine
 
 # A branch with mine on top of theirs - the shallow-fetch trap. An older commit
 # by someone else must still be found under newer commits of yours.
-git switch --quiet feature/theirs
-git switch --quiet -c feature/mixed
+must git switch --quiet feature/theirs
+must git switch --quiet -c feature/mixed
 echo z >> f.txt
-git commit --quiet -am "my later work"
-git push --quiet -u origin feature/mixed
+must git commit --quiet -am "my later work"
+must git push --quiet -u origin feature/mixed
 
-git switch --quiet main
+must git switch --quiet main
 
 echo "claim-branch.sh"
 
@@ -100,7 +124,25 @@ git config --local --unset user.email >/dev/null 2>&1 || true
 out="$(GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null bash "$SCRIPT" feature/mine 2>&1)" || rc=$?
 if [ "$rc" -eq 2 ]; then ok "unset user.email is 2, not 0"
 else bad "unset user.email is 2, not 0" "got $rc: $out"; fi
-git config user.email "me@example.com"
+must git config user.email "me@example.com"
+
+# An origin that cannot be reached at all. Until this case existed, every other
+# test could pass with the script's `ls-remote` error branch rewritten to
+# `exit 0` - the suite had no way to tell "no such branch" from "could not ask",
+# which is the single collapse the header above says half these cases defend.
+BROKEN="$SANDBOX/broken"
+must git clone --quiet "$SANDBOX/origin.git" "$BROKEN"
+must git -C "$BROKEN" config user.email "me@example.com"
+must git -C "$BROKEN" remote set-url origin "$SANDBOX/no-such-repo.git"
+rc=0; out="$(cd "$BROKEN" && bash "$SCRIPT" feature/theirs 2>&1)" || rc=$?
+if [ "$rc" -eq 2 ]; then ok "unreachable origin is 2, not 0"
+else bad "unreachable origin is 2, not 0" "got $rc: $out"; fi
+
+# The same answer under --quiet. A hook calls the quiet form, so a collapse that
+# only happened on that path would be invisible to every case above.
+rc=0; out="$(cd "$BROKEN" && bash "$SCRIPT" feature/theirs --quiet 2>&1)" || rc=$?
+if [ "$rc" -eq 2 ]; then ok "unreachable origin under --quiet is 2, not 0"
+else bad "unreachable origin under --quiet is 2, not 0" "got $rc: $out"; fi
 
 # --- reporting ------------------------------------------------------------
 out="$(bash "$SCRIPT" feature/theirs 2>&1)" || true
@@ -109,30 +151,36 @@ case "$out" in
   *) bad "CLAIMED output names the other author" "got: $out" ;;
 esac
 
-out="$(bash "$SCRIPT" feature/theirs --quiet 2>&1)" || true
+# Assert the EXIT CODE here as well as the silence. Checking output alone lets
+# a --quiet that short-circuits the whole check and returns 0 pass this case:
+# silent and wrong looks identical to silent and right.
+rc=0; out="$(bash "$SCRIPT" feature/theirs --quiet 2>&1)" || rc=$?
 if [ -z "$out" ]; then ok "--quiet prints nothing"
 else bad "--quiet prints nothing" "got: $out"; fi
+if [ "$rc" -eq 1 ]; then ok "--quiet still exits 1 on a CLAIMED branch"
+else bad "--quiet still exits 1 on a CLAIMED branch" "got $rc"; fi
 
 # --- default branch is not hardcoded --------------------------------------
 # A repo whose default branch is 'master' must work identically. Hardcoding
 # 'main' would make every branch here look like it had no commits.
-git init --quiet --bare "$SANDBOX/origin2.git"
-git init --quiet "$SANDBOX/work2"
+must git init --quiet --bare "$SANDBOX/origin2.git"
+must git -C "$SANDBOX/origin2.git" symbolic-ref HEAD refs/heads/master
+must git init --quiet "$SANDBOX/work2"
 cd "$SANDBOX/work2" || exit 1
-git config user.email "me@example.com"
-git config user.name "Me"
-git config commit.gpgsign false
-git config core.autocrlf false
-git remote add origin "$SANDBOX/origin2.git"
-echo base > f.txt; git add f.txt; git commit --quiet -m base
-git branch -M master
-git push --quiet -u origin master
-git remote set-head origin -a >/dev/null 2>&1
-git switch --quiet -c feature/theirs2
+must git config user.email "me@example.com"
+must git config user.name "Me"
+must git config commit.gpgsign false
+must git config core.autocrlf false
+must git remote add origin "$SANDBOX/origin2.git"
+echo base > f.txt; must git add f.txt; must git commit --quiet -m base
+must git branch -M master
+must git push --quiet -u origin master
+must git remote set-head origin -a >/dev/null
+must git switch --quiet -c feature/theirs2
 echo x >> f.txt
-git -c user.email="other@example.com" -c user.name="Other Dev" commit --quiet -am "their work"
-git push --quiet -u origin feature/theirs2
-git switch --quiet master
+must git -c user.email="other@example.com" -c user.name="Other Dev" commit --quiet -am "their work"
+must git push --quiet -u origin feature/theirs2
+must git switch --quiet master
 expect "master-default repo still detects CLAIMED" 1 feature/theirs2
 
 echo
