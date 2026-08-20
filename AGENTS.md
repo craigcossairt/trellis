@@ -108,6 +108,12 @@ format; delete the adapter and the rule goes with it.
 
 ### Working Methodology
 
+- **Claim the branch before you start.** If more than one agent session can run against this
+  repo, they all authenticate as the same git identity and nothing tells them apart. Run
+  `bin/claim-branch.sh <branch>` before creating a worktree and before pushing to a branch you
+  did not create. Exit **0** free, **1** claimed, **2** could not tell - and **2 never means
+  free**. **A clean fast-forward is not permission**: that is what a collision looks like from
+  the inside. See `.claude/commands/worktree.md`.
 - **Plan first for non-trivial tasks** (3+ steps or architectural decisions) - write the plan,
   confirm before implementing. If something goes wrong mid-implementation, STOP and re-plan.
 - **Verify before marking done** - never claim a task is complete without proving it works. Run
@@ -121,13 +127,21 @@ format; delete the adapter and the rule goes with it.
   calls the real code and fails loud if you're wrong; (5) *you reproduced it in the running
   app*. Get each claim as far down as is cheap and **name the level out loud**. A claim you
   can't get to 4 is reported as unproven, never written up as settled, and never rounded up.
-  Two habits come with it:
+  Four habits come with it:
   - **Find the one fact the work is safe because of.** Most alarming-looking changes are safe
     because of a single fact ("this only drops already-dead cache entries"). Proving that one
     fact kills the whole list of maybes, so spend the effort there rather than enumerating
     risks.
   - **A writeup that sounds right is worthless.** It reads as convincing whether or not it is
     true, which is exactly the trap. Prose is not evidence; a run is.
+  - **Look where grep stops.** Levels 1-3 are bounded by what you thought to search for. Read
+    the dependency's own source *at the version you actually have pinned*, work out *when*
+    things run (microtasks, teardown, unmount), and follow what a symbol search cannot see:
+    the JSON an endpoint returns, a database column, a wire format another language reads, a
+    feature flag, code three hops downstream.
+  - **Report what you cleared, not only what you found.** End with a `Cleared` line naming what
+    you checked and why it was fine. A findings-only writeup is indistinguishable from a shallow
+    one, and gives a reviewer nothing to re-check.
 
   This is the vocabulary the rest of these rules use. "Mutate the suite"
   (`docs/methodology/tdd.md`) is what makes a level-4 claim trustworthy, and the push gate
@@ -136,6 +150,15 @@ format; delete the adapter and the rule goes with it.
   automatically. If details are missing, ask for them.
 - **TDD by default** - for code work, follow `docs/methodology/tdd.md`. Write failing tests first,
   then implement.
+- **"This can't be unit tested" is a claim about the layer you are looking at, not about the
+  code.** Before recording that something is reachable only by a device run, a live service, or
+  a harness that does not exist, ask whether the *invariant* can be lifted out of the
+  *mechanism*. A race between two components is untestable; the ordering rule that race
+  violates usually is not. The lifting move is nearly always the same - take whatever varies
+  (a clock, a scheduler, a client, a random source, an environment flag) as an argument, and
+  what is left is a pure function you can assert on directly. This does not replace the
+  end-to-end check: a green suite over a feature that does not work at all is a real and
+  different failure. It removes the excuse for having no test at all.
 - **Simplicity first** - make every change as simple as possible. Minimize code impact. No
   temporary fixes - find root causes.
 
