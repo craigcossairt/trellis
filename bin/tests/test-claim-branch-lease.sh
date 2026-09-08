@@ -207,6 +207,24 @@ must git -C "$TMP/a" checkout -q main
 run A feat/notabot --me "$ME" --now "$NOW"
 want 1 "a human address merely CONTAINING 'bot' is still CLAIMED"
 
+# The near miss that makes the -x in `grep -qxF` load-bearing: an address that
+# is a strict SUBSTRING of a real allowlist entry. Without -x the allowlist line
+# "41898282+github-actions[bot]@users.noreply.github.com" contains this one, so
+# it would be matched and silently ignored - a collision detector waving through
+# an address nobody vetted. The case above does not cover it: "robotham@" is not
+# a substring of anything in the list, so dropping -x leaves it green. Measured
+# before this case existed: the -x mutation produced 0 red across 66 cases.
+must git -C "$TMP/a" checkout -q -b feat/substringbot
+printf 's\n' > "$TMP/a/s.txt"
+must git -C "$TMP/a" add s.txt
+must git -C "$TMP/a" -c user.email='actions[bot]@users.noreply.github.com' \
+  -c user.name='Not The Actions Bot' commit -qm 'not the actions bot'
+must git -C "$TMP/a" push -q origin feat/substringbot
+must git -C "$TMP/a" checkout -q main
+
+run A feat/substringbot --me "$ME" --now "$NOW"
+want 1 "an address that is a strict SUBSTRING of the bot's is NOT exempt"
+
 # --- the actual race --------------------------------------------------------
 # Everything above exits on the PRE-CHECK: lease_read sees HELD and returns
 # before the push happens, so none of it exercises the compare-and-swap on the

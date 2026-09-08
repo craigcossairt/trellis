@@ -282,7 +282,7 @@ jobs:
 
       - name: Suite - claim-branch (lease)
         run: |
-          # Mutation ledger, measured 2026-09-08 over 66 cases:
+          # Mutation ledger, measured 2026-09-08 over 67 cases:
           #
           #   --force-with-lease -> --force                   2 -> 2 red
           #     Only the "moved BEFORE the push" pair goes red. The two
@@ -301,11 +301,14 @@ jobs:
           #     bot" case matched the substring "github-actions", which appears
           #     in the CLAIMED report too, so it was green either way. It now
           #     matches the free path's own wording.
-          #   grep -qxF -> grep -qF (drop -x only)            0 -> 0 red
-          #     Predicted zero and recorded rather than hidden: each allowlist
-          #     entry is a superset of the other spelling, so a substring match
-          #     still finds it. -x defends against a FUTURE entry that contains
-          #     a real person's address, which these two do not.
+          #   grep -qxF -> grep -qF (drop -x only)            1 -> 1 red
+          #     This one was 0 red until the fixture was fixed, and the reason
+          #     is worth keeping: the existing near-miss address ("robotham@")
+          #     is not a SUBSTRING of any allowlist entry, so dropping -x left
+          #     it green. The case that bites is an address the allowlist line
+          #     contains - "actions[bot]@users.noreply.github.com" sits inside
+          #     "41898282+github-actions[bot]@users.noreply.github.com" - which
+          #     a substring match waves through.
           bash bin/tests/test-claim-branch-lease.sh
 
       - name: Suite - push gate (pre-push hook + verify-green)
