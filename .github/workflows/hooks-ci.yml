@@ -282,7 +282,22 @@ jobs:
 
       - name: Suite - claim-branch (lease)
         run: |
-          # Mutation ledger, measured 2026-09-08 over 70 cases:
+          # Mutation ledger, measured 2026-09-08 over 77 cases:
+          #
+          #   count_lines call-site status check removed      3 -> 5 red
+          #     Predicted 3 and got 5, and the extra two are the point: this
+          #     one check is the single gate BOTH awk failure classes flow
+          #     through, so it subsumes the shape check below. The fail-open it
+          #     closes is what the awk rewrite left behind - swapping out
+          #     `grep -c . || true` fixed the construct, and an unchecked
+          #     assignment still let a blank count reach a FREE verdict.
+          #   numeric shape check inside count_lines removed  2 -> 2 red
+          #     Only the silent-awk pair. An awk that exits 0 printing nothing
+          #     satisfies the status check, so shape has to be read too.
+          #   collide shim never matches `fetch` (FIXTURE)    2 -> 2 red
+          #     A mutation of the fixture rather than the code, because the
+          #     poison case's verdict is ALSO what correct code produces when
+          #     the poison never lands. Only the two sanity assertions move.
           #
           #   tmpref reverted to a FIXED ref name             1 -> 2 red
           #     The poison case fired on `git log` until review pointed out

@@ -696,7 +696,24 @@ is_bot() { printf '%s\n' "$BOT_EMAILS" | grep -qxF "$1"; }
 # which cannot run must not read as a clean one, and `|| true` on a grep is the
 # canonical way to break that: it maps grep's exit 2 (error) onto the same
 # result as its exit 1 (no match). awk prints a count and needs no rescue.
-count_lines() { printf '%s\n' "$1" | awk 'NF { n++ } END { print n + 0 }'; }
+#
+# It RETURNS NON-ZERO rather than printing nothing when awk cannot run, and the
+# callers below exit 2 on that. Swapping in awk fixes the `|| true` and leaves
+# the fail-open direction it exists to close: with no awk the count is empty,
+# `[ "$bot_n" -gt 0 ]` errors and takes the ELSE branch, and the script prints
+# `free: '<b>' has  commit(s)` and exits 0 - a blank number inside the one
+# verdict this script must never get wrong. The perl guard further up is the
+# same rule about a different tool.
+count_lines() {
+  local n
+  n="$(printf '%s\n' "$1" | awk 'NF { n++ } END { print n + 0 }')" || return 1
+  # awk exiting 0 having printed nothing (or something non-numeric) is the same
+  # unusable answer as awk failing, so shape is checked rather than status alone.
+  case "$n" in
+    ''|*[!0-9]*) return 1 ;;
+  esac
+  printf '%s\n' "$n"
+}
 
 bot_lines=""
 others=""
@@ -719,8 +736,11 @@ bot_lines="${bot_lines%$'\n'}"
 mine="${mine%$'\n'}"
 
 if [ -z "$others" ]; then
-  mine_n=$(count_lines "$mine")
-  bot_n=$(count_lines "$bot_lines")
+  if ! mine_n=$(count_lines "$mine") || ! bot_n=$(count_lines "$bot_lines"); then
+    echo "could not count the commits on '$BRANCH' (awk unavailable or unusable)" >&2
+    echo "- refusing to report a free verdict carrying a blank count" >&2
+    exit 2
+  fi
   if [ "$bot_n" -gt 0 ]; then
     # Say it out loud. Ignoring the bot is a judgement this script makes on the
     # operator's behalf, and a judgement they cannot see is indistinguishable

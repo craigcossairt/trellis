@@ -394,7 +394,30 @@ case "$OUT" in
   *"$OTHER"*) ok "the verdict names the real holder, not the poisoned marker" ;;
   *)          bad "the verdict names the real holder, not the poisoned marker" "got: $OUT" ;;
 esac
+
+# FIXTURE SANITY, and the case above is worth nothing without it. The verdict it
+# asserts (exit 1, names $OTHER) is ALSO what correct code produces when the
+# poison never lands - a shim that never matched `fetch`, or an `update-ref`
+# that failed under `|| true`. A fixture that silently stopped firing would
+# leave this green while proving nothing, which is the same defect the injection
+# point itself had. Same guard as the ls-remote counter in test-claim-branch.sh.
+#
+# Both halves are needed: that the shim RAN, and that the poison is actually on
+# the fixed ref name at the end. The second is stable because correct code only
+# ever touches refs/claim-lease-read-$$ and deletes it, so the bare name it
+# never reads keeps whatever the shim put there.
+if [ -e "$TMP/.collide-fired" ]; then ok "fixture sanity: the collide shim fired"
+else bad "fixture sanity: the collide shim fired" "no $TMP/.collide-fired - the poison never landed"; fi
+POISONED_AT="$(git -C "$TMP/a" rev-parse --verify --quiet refs/claim-lease-read || true)"
+if [ "$POISONED_AT" = "$POISON" ]; then
+  ok "fixture sanity: refs/claim-lease-read really carries the poison marker"
+else
+  bad "fixture sanity: refs/claim-lease-read really carries the poison marker" \
+      "ref is '${POISONED_AT:-<absent>}', wanted $POISON"
+fi
+
 must rm -f "$TMP/.collide-fired"
+git -C "$TMP/a" update-ref -d refs/claim-lease-read 2>/dev/null || true
 
 # --- a lease taken over between ls-remote and fetch -------------------------
 # lease_read asks ls-remote for the sha, then fetches. If another session takes
@@ -709,6 +732,46 @@ esac
 
 run A feat/x --me "$ME" --now '2026-99-99T00:00:00Z'
 want 2 "a calendar-invalid --now is 2, not 0"
+
+# An unusable awk is could-not-tell too, and this is the one that bites hardest:
+# swapping `grep -c . || true` for awk fixes the construct and leaves the
+# fail-open direction it exists to close. With no awk the count is empty,
+# `[ "$bot_n" -gt 0 ]` errors into the ELSE branch, and the script prints
+# `free: '<b>' has  commit(s)` and exits 0 - a blank number inside the one
+# verdict this script must never get wrong. feat/idfile carries only my own
+# commits, so it reaches the counting path rather than stopping at the lease or
+# at another author.
+AWKSHIM="$TMP/awkshim"
+must mkdir -p "$AWKSHIM"
+printf '#!/usr/bin/env bash\nexit 127\n' > "$AWKSHIM/awk"
+must chmod +x "$AWKSHIM/awk"
+OUT="$( ( cd "$TMP/a" && PATH="$AWKSHIM:$PATH" bash "$SCRIPT" feat/idfile --me "$ME" --now "$NOW" ) 2>&1 )"; ACTUAL=$?
+want 2 "an unusable awk is 2, not a free verdict with a blank count"
+case "$OUT" in
+  *"could not count"*) ok "an unusable awk is reported as a failed count" ;;
+  *)                   bad "an unusable awk is reported as a failed count" "got: $OUT" ;;
+esac
+# The failure that would actually ship is a FREE verdict, so assert its absence
+# directly rather than trusting the exit code alone to have moved.
+case "$OUT" in
+  *"free:"*) bad "an unusable awk does NOT print a free verdict" "got: $OUT" ;;
+  *)         ok "an unusable awk does NOT print a free verdict" ;;
+esac
+
+# An awk that exits 0 and prints NOTHING is the harder half, and the exit-status
+# check alone does not catch it: the assignment succeeds and the count is empty,
+# which is the blank-number free verdict all over again. That is why count_lines
+# checks the SHAPE of what it got as well as the status. Without this case the
+# shape check is unproven - measured, the status check alone covers the shim
+# above just fine.
+printf '#!/usr/bin/env bash\nexit 0\n' > "$AWKSHIM/awk"
+must chmod +x "$AWKSHIM/awk"
+OUT="$( ( cd "$TMP/a" && PATH="$AWKSHIM:$PATH" bash "$SCRIPT" feat/idfile --me "$ME" --now "$NOW" ) 2>&1 )"; ACTUAL=$?
+want 2 "an awk that exits 0 printing NOTHING is 2, not a blank count"
+case "$OUT" in
+  *"free:"*) bad "a silent awk does NOT print a free verdict" "got: $OUT" ;;
+  *)         ok "a silent awk does NOT print a free verdict" ;;
+esac
 
 run A feat/x --me --quiet --now "$NOW"
 want 2 "--me swallowing the next flag as its value is 2, not 0"
