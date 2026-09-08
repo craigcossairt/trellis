@@ -182,6 +182,22 @@ epoch_of() {
   '
 }
 
+# A MISSING perl must be reported as a missing tool, not as a bad timestamp.
+# Without this, epoch_of fails for want of an interpreter, the caller below
+# blames "$NOW", and the operator is told to fix a value that is already
+# correct. The exit code would be right (2, could-not-tell) and the instruction
+# wrong, which is the worse half: an error message is an instruction, and this
+# one sends you to fix the one thing that is not broken.
+#
+# Probing `perl -MTime::Local` rather than `command -v perl`, because the module
+# is the actual dependency - a perl without it fails in exactly the same way,
+# and the probe is what makes this testable with a stub on PATH.
+perl -MTime::Local -e 'exit 0' >/dev/null 2>&1 || {
+  echo "claim-branch.sh needs perl with Time::Local to read timestamps, and could not run it." >&2
+  echo "This is a missing tool, not a bad --now value. Install perl, or run this from a shell that has it." >&2
+  exit 2
+}
+
 epoch_of "$NOW" >/dev/null || { echo "--now '$NOW' is not valid ISO-8601 UTC (YYYY-MM-DDTHH:MM:SSZ)" >&2; exit 2; }
 
 # --- per-worktree session identity ------------------------------------------

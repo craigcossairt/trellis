@@ -353,6 +353,17 @@ must rm -f "$TMP/.shim-fired"
 # The poison marker names THIS session, so a script that read through a fixed
 # ref name would answer MINE and exit 0 free on a branch another session
 # genuinely holds. Reverting the destination to a fixed name fails this case.
+#
+# THE INJECTION POINT IS THE WHOLE CASE, and the first draft got it wrong.
+# Firing on `log` is too late: lease_read resolves the ref with `git rev-parse`
+# and then passes the resolved SHA to `git log`, so by the time `log` runs there
+# is no ref left to poison - a fixed-name implementation would have resolved the
+# correct sha already and the case passed whatever the code did. So the shim
+# fires on `fetch`, runs the REAL fetch first, and poisons the fixed name in the
+# window between the fetch landing and the rev-parse reading it. Raised by
+# review; the mutation battery could not see it, because a mutation only
+# perturbs code you already wrote and this was a gap between the fixture and
+# reality.
 must git -C "$TMP/a" push -q --force origin "$(rival_lease "$OTHER" "$NOW" 4):refs/claims/feat/collide"
 
 POISON="$(git -C "$TMP/a" commit-tree "$(git -C "$TMP/a" hash-object -t tree /dev/null)" \
@@ -364,10 +375,13 @@ must mkdir -p "$SHIM2"
 cat > "$SHIM2/git" <<EOS2
 #!/usr/bin/env bash
 for a in "\$@"; do
-  if [ "\$a" = "log" ] && [ ! -e "$TMP/.collide-fired" ]; then
+  if [ "\$a" = "fetch" ] && [ ! -e "$TMP/.collide-fired" ]; then
     : > "$TMP/.collide-fired"
+    # Real fetch FIRST, so the ref exists to be clobbered, then poison the fixed
+    # name before the caller's rev-parse reads it.
+    "$REAL_GIT" "\$@"; rc=\$?
     "$REAL_GIT" -C "$TMP/a" update-ref refs/claim-lease-read "$POISON" || true
-    break
+    exit \$rc
   fi
 done
 exec "$REAL_GIT" "\$@"
@@ -585,7 +599,12 @@ else bad "the id lands in worktree A's own git dir" "no file at $WT_A_ID"; fi
 # common dir is exactly where the wrong flag would put it. Measured - swapping
 # --absolute-git-dir for --git-common-dir left this case green until the second
 # assertion was added. Check the shared location too.
-COMMON_ID="$(git -C "$TMP/wt-b" rev-parse --path-format=absolute --git-common-dir)/claim-session-id"
+# Resolved by cd + pwd rather than `rev-parse --path-format=absolute`, which
+# only exists from git 2.31. Older git does not reject the unknown option: it
+# echoes it as a positional result and still exits 0, so COMMON_ID would be a
+# multi-line non-path, the -f test would be false, and this assertion would pass
+# without ever looking at the file it names. Raised by review.
+COMMON_ID="$( cd "$TMP/wt-b" && cd "$(git rev-parse --git-common-dir)" && pwd )/claim-session-id"
 if [ ! -f "$WT_B_ID" ] && [ ! -f "$COMMON_ID" ]; then
   ok "the id is in NEITHER worktree B's git dir nor the shared common dir"
 else
@@ -667,6 +686,26 @@ want 2 "--acquire without --me is 2, not 0"
 
 run A feat/x --me "$ME" --now 'not-a-timestamp'
 want 2 "an invalid --now is 2, not 0"
+
+# A missing perl is a MISSING TOOL, not a bad timestamp. Both exit 2, so the
+# exit code cannot tell them apart and only the text can - and the text is an
+# instruction, so getting it wrong sends the operator to fix a --now value that
+# is already correct. Asserted BOTH ways: the tool message must appear and the
+# timestamp message must not, or a script that printed both would pass.
+PERLSHIM="$TMP/perlshim"
+must mkdir -p "$PERLSHIM"
+printf '#!/usr/bin/env bash\nexit 127\n' > "$PERLSHIM/perl"
+must chmod +x "$PERLSHIM/perl"
+OUT="$( ( cd "$TMP/a" && PATH="$PERLSHIM:$PATH" bash "$SCRIPT" feat/x --me "$ME" --now "$NOW" ) 2>&1 )"; ACTUAL=$?
+want 2 "an unusable perl is 2, not 0"
+case "$OUT" in
+  *"needs perl"*) ok "an unusable perl is reported as a missing TOOL" ;;
+  *)              bad "an unusable perl is reported as a missing TOOL" "got: $OUT" ;;
+esac
+case "$OUT" in
+  *"not valid ISO-8601"*) bad "a missing tool is NOT blamed on the --now value" "got: $OUT" ;;
+  *)                      ok "a missing tool is NOT blamed on the --now value" ;;
+esac
 
 run A feat/x --me "$ME" --now '2026-99-99T00:00:00Z'
 want 2 "a calendar-invalid --now is 2, not 0"

@@ -43,9 +43,14 @@ from the inside, so "it merged fine" is not evidence that nobody else was there.
 
 Run the check again before **every** push, including to a branch you created
 yourself. Creating it buys you nothing once it is on the remote.
-`.githooks/pre-push` runs the check for you, but only when it is installed and
-not under `--no-verify` - and knowing you are about to collide before you have
-built the commit is worth more than being stopped after.
+
+`.githooks/pre-push` runs the check for you, but there are three ways it does
+not: the hook is not installed (`core.hooksPath` unset), the push used
+`--no-verify`, or `PROJECT_ALLOW_SHARED_BRANCH=1` was set, which switches the
+claim layer off for that push while leaving the green layer on. Note the last
+one is a real escape hatch that prints a line saying so - so a push that scrolled
+past it looks exactly like a checked one. Knowing you are about to collide
+before you have built the commit is worth more than being stopped after.
 
 Acquire from the worktree you will actually work in: `--acquire` records the
 session id in that worktree's own git dir, which is how the hook tells your own

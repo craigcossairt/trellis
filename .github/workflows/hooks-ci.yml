@@ -282,7 +282,22 @@ jobs:
 
       - name: Suite - claim-branch (lease)
         run: |
-          # Mutation ledger, measured 2026-09-08 over 67 cases:
+          # Mutation ledger, measured 2026-09-08 over 70 cases:
+          #
+          #   tmpref reverted to a FIXED ref name             1 -> 2 red
+          #     The poison case fired on `git log` until review pointed out
+          #     that lease_read resolves the ref with rev-parse FIRST and hands
+          #     the resolved sha to log - so there was no ref left to poison,
+          #     and a fixed-name implementation passed the case anyway. Firing
+          #     on `fetch` (real fetch, then clobber) puts it in the window the
+          #     $$ suffix actually closes. The mutation battery could not find
+          #     this: it perturbs code you already wrote, and this was a gap
+          #     between the fixture and reality.
+          #   perl-availability guard removed                 2 -> 2 red
+          #     Exit stays 2, so only the two MESSAGE cases move. That is the
+          #     point: an error message is an instruction, and blaming --now
+          #     for a missing interpreter sends the operator to fix the one
+          #     thing that is not broken.
           #
           #   --force-with-lease -> --force                   2 -> 2 red
           #     Only the "moved BEFORE the push" pair goes red. The two
