@@ -792,6 +792,44 @@ want 2 "unreachable origin is 2, not 0"
 OUT="$( ( cd "$TMP/broken" && bash "$SCRIPT" --acquire feat/x --me "$ME" --now "$NOW" ) 2>&1 )"; ACTUAL=$?
 want 2 "unreachable origin under --acquire is 2, not 0"
 
+# --- a refused lease push is not proof somebody beat us ---------------------
+# On a takeover the CAS is pinned to the sha we read, so if the push fails and
+# the ref STILL reads that same sha, nothing moved: the push failed for its own
+# reasons. Reporting that as CLAIMED sends the operator to coordinate with a
+# session that is not there. The "the network died, so the re-read would have
+# failed too" argument does not hold - the push and the re-read are separate
+# calls and only one has to fail, which is what this shim models.
+must git -C "$TMP/a" push -q --force origin "$(rival_lease "$OTHER" "$NOW" 4):refs/claims/feat/pushfail"
+
+SHIM5="$TMP/shim5"
+must mkdir -p "$SHIM5"
+cat > "$SHIM5/git" <<EOS5
+#!/usr/bin/env bash
+# Fail ONLY a push that targets this branch's lease ref. ls-remote and fetch
+# name the same ref, so the subcommand has to be matched too, or the read side
+# would break and the case would pass as an ordinary could-not-tell.
+is_push=0; hits_ref=0
+for a in "\$@"; do
+  [ "\$a" = "push" ] && is_push=1
+  case "\$a" in *refs/claims/feat/pushfail*) hits_ref=1 ;; esac
+done
+[ "\$is_push" = 1 ] && [ "\$hits_ref" = 1 ] && exit 1
+exec "$REAL_GIT" "\$@"
+EOS5
+must chmod +x "$SHIM5/git"
+
+OUT="$( ( cd "$TMP/a" && PATH="$SHIM5:$PATH" bash "$SCRIPT" --acquire feat/pushfail \
+  --me "$ME" --harness claude-code --now "$EXPIRED" ) 2>&1 )"; ACTUAL=$?
+want 2 "a lease push that fails while the lease does NOT move is 2, not CLAIMED"
+case "$OUT" in
+  *"has not moved"*) ok "the refusal says the push failed, not that someone holds it" ;;
+  *)                 bad "the refusal says the push failed, not that someone holds it" "got: $OUT" ;;
+esac
+case "$OUT" in
+  *"leased by another session"*) bad "a failed push is NOT reported as another session's lease" "got: $OUT" ;;
+  *)                             ok "a failed push is NOT reported as another session's lease" ;;
+esac
+
 echo
 echo "passed $PASS, failed $FAIL"
 [ "$FAIL" -eq 0 ]

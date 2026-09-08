@@ -282,7 +282,19 @@ jobs:
 
       - name: Suite - claim-branch (lease)
         run: |
-          # Mutation ledger, measured 2026-09-08 over 77 cases:
+          # Mutation ledger, measured 2026-09-08 over 80 cases:
+          #
+          #   has-not-moved guard on a refused lease push     3 -> 3 red
+          #     A refused push is not proof somebody beat us: on a takeover the
+          #     CAS is pinned to the sha we read, so an unchanged sha means the
+          #     push failed for its own reasons. Reporting CLAIMED there sends
+          #     the operator to coordinate with a session that is not there.
+          #   unrecognised lease state falls through          NO TEST
+          #     Recorded rather than left implied: lease_read returns only
+          #     NONE/MINE/HELD/EXPIRED, so the new refusal arm cannot be driven
+          #     without mutating lease_read itself. It guards a fifth token a
+          #     later change might add. Unreachable-by-construction, not
+          #     untested-by-omission - and the difference is worth writing down.
           #
           #   count_lines call-site status check removed      3 -> 5 red
           #     Predicted 3 and got 5, and the extra two are the point: this
@@ -343,7 +355,14 @@ jobs:
 
       - name: Suite - push gate (pre-push hook + verify-green)
         run: |
-          # Mutation ledger, measured 2026-09-08 over 23 cases:
+          # Mutation ledger, measured 2026-09-08 over 27 cases:
+          #
+          #   green enablement probe collapsed to one branch  3 -> 3 red
+          #     ABSENT, OFF and BROKEN are three facts about verify-green.sh.
+          #     `! bash "$VERIFY" --check-configured` mapped the last two
+          #     together, so a script with a syntax error disabled the gate
+          #     silently on a repo that HAD configured it - this repo's own
+          #     exit-1-vs-2 rule broken inside the gate that enforces it.
           #
           #   PROJECT_SKIP_VERIFY also lifts the claim layer   1 -> 1 red
           #   claim check exit 2 treated as free               2 -> 2 red

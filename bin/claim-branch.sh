@@ -505,7 +505,27 @@ if [ "$MODE" != "check" ]; then
   # an ordinary out-of-date ref and names nobody - so re-read the ref and report
   # who actually holds it rather than echoing that.
   after="$(lease_read)" || exit 2
-  case "${after%%|*}" in
+  after_state="${after%%|*}"
+  after_sha="${after##*|}"
+
+  # A REFUSED PUSH IS NOT PROOF SOMEBODY BEAT US, and reporting it as one sends
+  # the operator to coordinate with a session that is not there. On a takeover
+  # (STATE=EXPIRED) the CAS was pinned to $OLD_SHA, so if the ref still reads
+  # that same sha then nothing moved and the push failed for its own reasons -
+  # a transport blip, a server refusing the custom ref namespace, a hook. That
+  # is could-not-tell, and the usual "the network died so lease_read would have
+  # failed too" argument does not hold: the push and the re-read are separate
+  # calls and only one of them has to fail.
+  #
+  # A CHANGED sha is a real race and stays CLAIMED, as does any HELD.
+  if [ "$after_state" = "EXPIRED" ] && [ -n "$OLD_SHA" ] && [ "$after_sha" = "$OLD_SHA" ]; then
+    echo "the lease push for '$BRANCH' was refused, but the lease has not moved" >&2
+    echo "($after_sha). Nobody took it - the push itself failed. Retry, and if it" >&2
+    echo "keeps failing check that the remote accepts refs/claims/*." >&2
+    exit 2
+  fi
+
+  case "$after_state" in
     HELD|EXPIRED)
       rest="${after#*|}"
       report_held "${rest%%|*}" "$(rest2="${rest#*|}"; printf '%s' "${rest2%%|*}")"
@@ -574,6 +594,19 @@ case "${check_state%%|*}" in
     check_rest="${check_rest#*|}"
     report_held "$check_holder" "${check_rest%%|*}"
     exit 1
+    ;;
+  # NONE / MINE / EXPIRED fall through to the author check on purpose. EXPIRED
+  # especially: a lease that outlives its TTL is meant to stop holding the
+  # branch, or a dead session would own it forever and the TTL would mean
+  # nothing. "an EXPIRED lease is free again" in the suite pins that.
+  NONE|MINE|EXPIRED) : ;;
+  *)
+    # An unrecognised state is could-not-tell, not free. lease_read returns only
+    # the four above today, so this arm is unreachable - which is exactly why it
+    # is here: a fifth token added later would otherwise fall through to the
+    # author check and could answer 0 on a branch this signal never judged.
+    echo "unrecognised lease state '${check_state%%|*}' for $BRANCH - refusing to call that free" >&2
+    exit 2
     ;;
 esac
 

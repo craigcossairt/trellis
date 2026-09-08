@@ -40,13 +40,40 @@ CLAIM="$REPO_ROOT/bin/claim-branch.sh"
 # --- which layers are live --------------------------------------------------
 
 GREEN_ON=0
+GREEN_BROKEN=0
 if [ "${PROJECT_SKIP_VERIFY:-0}" = "1" ]; then
   echo "pre-push: green gate bypassed via PROJECT_SKIP_VERIFY=1" >&2
-elif [ ! -f "$VERIFY" ] || ! bash "$VERIFY" --check-configured 2>/dev/null; then
-  echo "pre-push: green gate not configured (GREEN_COMMANDS in bin/verify-green.sh) - pushing unchecked" >&2
+elif [ ! -f "$VERIFY" ]; then
+  # ABSENT is a deliberate prune (SETUP.md), so the layer simply does not apply.
+  echo "pre-push: no bin/verify-green.sh - green gate off" >&2
 else
-  GREEN_ON=1
+  # PRESENT means it must be runnable, and the three exit codes are three
+  # different facts. The earlier form was
+  #   ! bash "$VERIFY" --check-configured 2>/dev/null
+  # which mapped ANY non-zero onto "not configured" and pushed unchecked - so a
+  # verify-green.sh with a syntax error, a missing interpreter or an unreadable
+  # file disabled the gate silently, on a repo where GREEN_COMMANDS was filled
+  # in. That is this repo's own exit-1-vs-2 rule broken inside the gate that
+  # enforces it: 1 is "off", anything else is "could not tell", and
+  # could-not-tell must not resolve to green.
+  vrc=0
+  vout="$(bash "$VERIFY" --check-configured 2>&1)" || vrc=$?
+  case "$vrc" in
+    0) GREEN_ON=1 ;;
+    1) echo "pre-push: green gate not configured (GREEN_COMMANDS in bin/verify-green.sh) - pushing unchecked" >&2 ;;
+    *)
+      echo "BLOCKED: bin/verify-green.sh --check-configured exited $vrc, so whether the" >&2
+      echo "green gate is on cannot be determined. That is not the same as it being off." >&2
+      [ -n "$vout" ] && printf '  %s\n' "$vout" >&2
+      echo "Fix the script, or bypass: PROJECT_SKIP_VERIFY=1 git push ..." >&2
+      GREEN_BROKEN=1
+      ;;
+  esac
 fi
+
+# Refuse before reading a single ref: with the gate's state unknown there is no
+# safe verdict to give any of them.
+[ "$GREEN_BROKEN" -eq 0 ] || exit 1
 
 CLAIM_ON=0
 if [ "${PROJECT_ALLOW_SHARED_BRANCH:-0}" = "1" ]; then

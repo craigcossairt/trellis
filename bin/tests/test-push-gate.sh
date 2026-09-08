@@ -282,6 +282,40 @@ OUT="$( git -C "$TMP/ungated" push -q origin feat/ungated 2>&1 )"; RC=$?
 if [ "$RC" -eq 0 ]; then ok "with neither layer configured the push is free"
 else bad "with neither layer configured the push is free" "exit $RC: $OUT"; fi
 
+# --- the green layer's own enablement probe --------------------------------
+# ABSENT, OFF and BROKEN are three different facts about verify-green.sh, and
+# the hook used to collapse the last two: `! bash "$VERIFY" --check-configured`
+# mapped ANY non-zero onto "not configured - pushing unchecked", so a script
+# with a syntax error or a missing interpreter silently disabled the gate on a
+# repo that had configured it. The case above covers ABSENT; these cover the
+# other two. No claim script in either fixture, so whatever happens is the
+# green layer's doing.
+stub_repo "$TMP/greenoff" ''
+must mkdir -p "$TMP/greenoff/bin"
+printf '#!/usr/bin/env bash\nexit 1\n' > "$TMP/greenoff/bin/verify-green.sh"
+must git -C "$TMP/greenoff" checkout -q -b feat/greenoff
+OUT="$( git -C "$TMP/greenoff" push -q origin feat/greenoff 2>&1 )"; RC=$?
+if [ "$RC" -eq 0 ]; then ok "exit 1 from --check-configured means OFF, and the push is free"
+else bad "exit 1 from --check-configured means OFF, and the push is free" "exit $RC: $OUT"; fi
+
+stub_repo "$TMP/greenbroken" ''
+must mkdir -p "$TMP/greenbroken/bin"
+printf '#!/usr/bin/env bash\nexit 2\n' > "$TMP/greenbroken/bin/verify-green.sh"
+must git -C "$TMP/greenbroken" checkout -q -b feat/greenbroken
+OUT="$( git -C "$TMP/greenbroken" push -q origin feat/greenbroken 2>&1 )"; RC=$?
+if [ "$RC" -ne 0 ]; then ok "a verify-green.sh that CRASHES blocks, rather than reading as OFF"
+else bad "a verify-green.sh that CRASHES blocks, rather than reading as OFF" "it went through: $OUT"; fi
+# Assert the MESSAGE too: both outcomes are non-zero-ish to a skim reader, and
+# the failure that shipped was the wrong DIAGNOSIS, not the wrong exit code.
+case "$OUT" in
+  *"cannot be determined"*) ok "the block says the gate's state is unknown, not that it is off" ;;
+  *)                        bad "the block says the gate's state is unknown, not that it is off" "got: $OUT" ;;
+esac
+case "$OUT" in
+  *"not configured"*) bad "a broken gate is NOT reported as an unconfigured one" "got: $OUT" ;;
+  *)                  ok "a broken gate is NOT reported as an unconfigured one" ;;
+esac
+
 echo
 echo "passed $PASS, failed $FAIL"
 [ "$FAIL" -eq 0 ]
