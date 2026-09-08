@@ -46,6 +46,15 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v7
+        with:
+          # actions/checkout writes the job token into .git/config as an
+          # http.extraheader by default, and `contents: read` above limits what
+          # that token can DO without changing who can READ it. The behavioral
+          # steps below run shell out of this checkout, so on a pull_request
+          # that is PR-author code sitting next to a live credential. The suites
+          # build throwaway local repos with `git init --bare` and never reach a
+          # remote, so dropping it costs nothing here.
+          persist-credentials: false
 
       - name: No CRLF line endings (breaks bash at the first line)
         run: |
