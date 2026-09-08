@@ -47,13 +47,17 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          # actions/checkout writes the job token into .git/config as an
-          # http.extraheader by default, and `contents: read` above limits what
-          # that token can DO without changing who can READ it. The behavioral
-          # steps below run shell out of this checkout, so on a pull_request
-          # that is PR-author code sitting next to a live credential. The suites
-          # build throwaway local repos with `git init --bare` and never reach a
-          # remote, so dropping it costs nothing here.
+          # actions/checkout persists the job token for later git commands by
+          # default, and `contents: read` above limits what that token can DO
+          # without changing who can reach it. Stated as the EFFECT on purpose:
+          # an earlier draft of this comment named the storage mechanism, which
+          # varies by action version and which had not been verified - a comment
+          # asserting a mechanism it cannot demonstrate is worse than one that
+          # sticks to what is observable. The behavioral steps below run shell
+          # out of this checkout, so on a pull_request that is PR-author code
+          # running beside a live credential. The suites build throwaway local
+          # repos with `git init --bare` and never reach a remote, so dropping
+          # it costs nothing here.
           persist-credentials: false
 
       - name: No CRLF line endings (breaks bash at the first line)
