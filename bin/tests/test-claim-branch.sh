@@ -144,6 +144,51 @@ rc=0; out="$(cd "$BROKEN" && bash "$SCRIPT" feature/theirs --quiet 2>&1)" || rc=
 if [ "$rc" -eq 2 ]; then ok "unreachable origin under --quiet is 2, not 0"
 else bad "unreachable origin under --quiet is 2, not 0" "got $rc: $out"; fi
 
+# The two cases above no longer reach the AUTHOR path's ls-remote guard, and
+# that is worth stating rather than discovering later. Since the lease check runs
+# first, an origin that is down fails inside lease_read and the script exits 2
+# there - so rewriting the author path's error branch to `exit 0` leaves this
+# whole suite green. Measured: that mutation produced 0 red across 16 cases,
+# against a predicted 2. The cases still assert the right verdict; they stopped
+# asserting it about the code they were written for.
+#
+# So drive the second reader directly: a `git` shim that passes the FIRST
+# ls-remote through (the lease read, which must answer "no such ref") and fails
+# the SECOND (the branch read). That is the only way into the guard now, and it
+# is also a real state - a remote can go away between two calls.
+REAL_GIT="$(command -v git)"
+SHIM="$SANDBOX/shim"
+must mkdir -p "$SHIM"
+cat > "$SHIM/git" <<EOS
+#!/usr/bin/env bash
+for a in "\$@"; do
+  if [ "\$a" = "ls-remote" ]; then
+    n=0
+    [ -f "$SANDBOX/.lsr-count" ] && n="\$(cat "$SANDBOX/.lsr-count")"
+    n=\$((n + 1))
+    printf '%s' "\$n" > "$SANDBOX/.lsr-count"
+    # 128 is git's transport failure, and it is neither 0 (found) nor 2
+    # (--exit-code, no match) - so it must land in the error branch.
+    [ "\$n" -ge 2 ] && exit 128
+    break
+  fi
+done
+exec "$REAL_GIT" "\$@"
+EOS
+must chmod +x "$SHIM/git"
+rm -f "$SANDBOX/.lsr-count"
+rc=0; out="$(PATH="$SHIM:$PATH" bash "$SCRIPT" feature/mine 2>&1)" || rc=$?
+if [ "$rc" -eq 2 ]; then ok "an origin that fails on the BRANCH read (not the lease read) is 2, not 0"
+else bad "an origin that fails on the BRANCH read (not the lease read) is 2, not 0" "got $rc: $out"; fi
+# Fixture sanity: if the shim never fired twice, the case above proved nothing.
+if [ "$(cat "$SANDBOX/.lsr-count" 2>/dev/null)" = "2" ]; then
+  ok "fixture sanity: the shim failed the second ls-remote, not the first"
+else
+  bad "fixture sanity: the shim failed the second ls-remote, not the first" \
+      "ls-remote was called $(cat "$SANDBOX/.lsr-count" 2>/dev/null || echo 0) time(s)"
+fi
+rm -f "$SANDBOX/.lsr-count"
+
 # --- reporting ------------------------------------------------------------
 out="$(bash "$SCRIPT" feature/theirs 2>&1)" || true
 case "$out" in

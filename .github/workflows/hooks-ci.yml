@@ -241,6 +241,83 @@ jobs:
           echo "checked ${#routers[@]} Cursor router(s)"
           exit $fail
 
+      # ---- behavioral suites ----------------------------------------------
+      # Everything above is a LINTER: it proves the scripts parse, not that they
+      # do what they claim. bin/tests/ holds suites that run the guardrails
+      # against real fixtures, and until this round NOTHING RAN THEM. The suite
+      # shipped, the docs said it covered the script, and CI never invoked it -
+      # the exact failure this workflow's own header is about, sitting inside
+      # the workflow.
+      #
+      # One NAMED step per suite, deliberately. A single "run the tests" step
+      # reports one conclusion for everything, so a reader has to open the log
+      # to learn which guardrail broke - and a step name is what people read.
+      #
+      # Each step carries the MUTATION LEDGER for its suite: which cases go red
+      # when the thing under test is broken. A suite whose ledger is empty has
+      # never been shown to assert anything, and a green suite is not evidence
+      # until it has been. Predict the set BEFORE running the mutation and read
+      # WHICH cases failed - a count alone proves nothing - and confirm the
+      # mutation actually changed the file, because a pattern that no longer
+      # matches leaves the mutant byte-identical and its all-green run reads as
+      # "my suite does not cover this".
+
+      - name: Suite - claim-branch (author signal)
+        run: |
+          # Mutation ledger, measured 2026-09-08 over 18 cases. Format is
+          # predicted -> actual, because a count that was never predicted is not
+          # a result.
+          #
+          #   author-path ls-remote error branch -> exit 0    1 -> 1 red
+          #     ("an origin that fails on the BRANCH read ...")
+          #
+          # Recorded because it is easy to get wrong twice: that mutation used
+          # to produce 0 red. The lease check now runs FIRST, so an origin that
+          # is simply down fails inside lease_read and the two older
+          # "unreachable origin" cases exit 2 there without ever reaching the
+          # author path. They still assert the right verdict; they stopped
+          # asserting it about the code they were written for. The shim case
+          # that fails only the SECOND ls-remote is what covers it now.
+          bash bin/tests/test-claim-branch.sh
+
+      - name: Suite - claim-branch (lease)
+        run: |
+          # Mutation ledger, measured 2026-09-08 over 66 cases:
+          #
+          #   --force-with-lease -> --force                   2 -> 2 red
+          #     Only the "moved BEFORE the push" pair goes red. The two
+          #     mid-push races stay green on purpose: git refuses those on its
+          #     own, so they pin the behaviour while the third pins the flag.
+          #   session_id_path uses --git-common-dir           3 -> 3 red
+          #     The first run of this one gave 2, and the case that stayed green
+          #     ("worktree B does not see A's id file") was the reason: it
+          #     checked only B's own path, which is empty whether the id landed
+          #     in A's git dir or in the SHARED common dir - the exact place the
+          #     wrong flag puts it. The case now checks both locations.
+          #   ttl range guard removed                         1 -> 1 red
+          #   unparseable lease marker treated as NONE        1 -> 1 red
+          #   grep -qxF -> grep -q (regex)                    2 -> 2 red
+          #     Also caught a weak assertion: the "verdict SAYS it ignored the
+          #     bot" case matched the substring "github-actions", which appears
+          #     in the CLAIMED report too, so it was green either way. It now
+          #     matches the free path's own wording.
+          #   grep -qxF -> grep -qF (drop -x only)            0 -> 0 red
+          #     Predicted zero and recorded rather than hidden: each allowlist
+          #     entry is a superset of the other spelling, so a substring match
+          #     still finds it. -x defends against a FUTURE entry that contains
+          #     a real person's address, which these two do not.
+          bash bin/tests/test-claim-branch-lease.sh
+
+      - name: Suite - push gate (pre-push hook + verify-green)
+        run: |
+          # Mutation ledger, measured 2026-09-08 over 23 cases:
+          #
+          #   PROJECT_SKIP_VERIFY also lifts the claim layer   1 -> 1 red
+          #   claim check exit 2 treated as free               2 -> 2 red
+          #   drop verify-green's mid-run index comparison     3 -> 3 red
+          #   claim layer skips deletions                      1 -> 1 red
+          bash bin/tests/test-push-gate.sh
+
       - name: JSON config is parseable
         run: |
           # settings.json wires every hook in this repo, and hooks.json does the

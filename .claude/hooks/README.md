@@ -19,9 +19,24 @@ Lessons already baked into these scripts - keep them in mind when adding hooks:
   the session looks clean precisely when it is not. Keep session hooks fast, measure them
   rather than assuming, and be careful with per-file subprocesses in a loop: that is what turns
   a fast hook into a silent one as a repo grows.
+- **A pipeline hides the exit status of everything but its last command, and process
+  substitution hides it entirely.** `cmd | while read ...` returns the `while`'s status, so a
+  `cmd` that died mid-scan reads as a clean pass; `while read ...; done < <(cmd)` is worse,
+  because `cmd`'s status is never available at all - `set -o pipefail` does not cover it and
+  `$?` belongs to the loop. Both are ordinary shell, and both turn "the scan broke" into "the
+  scan found nothing". Where the producer can fail, run it into a temp file first and check its
+  status, or capture into a variable (`out=$(cmd)` sets `$?`) before looping.
 - **The scripts have their own CI.** `.github/workflows/hooks-ci.yml` gates every `*.sh` and
-  `.githooks/*` file: CRLF check, `bash -n`, shellcheck, and exec bits - git skips a
-  non-executable hook without a word.
+  `.githooks/*` file: CRLF check, `bash -n`, shellcheck, exec bits (git skips a non-executable
+  hook without a word), and the behavioral suites in `bin/tests/`.
+- **A test suite that CI never invokes is not coverage.** The claim-branch suite shipped with a
+  header describing what it proved and sat unrun for a month, because nothing in the workflow
+  called it - a shape worth watching for, since the docs read exactly the same either way.
+  Every suite gets its own NAMED step, carrying the mutation ledger that shows it asserts
+  something: break the thing under test, predict which case labels go red, then read which ones
+  actually did. Confirm the mutation changed the file before believing its result - a pattern
+  that no longer matches leaves the mutant byte-identical, and that all-green run reads as "the
+  suite does not cover this" when it means "the mutation never happened".
 - **A workflow's `paths:` filter and your required status checks are one rule in two places.**
   If you make a check required in branch protection while its workflow filters paths, any PR
   touching only ignored paths publishes no such check. The requirement never reports, the PR
