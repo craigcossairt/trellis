@@ -35,6 +35,15 @@ on:
 jobs:
   lint:
     runs-on: ubuntu-latest
+    # Least privilege, and it matters MORE here than in an ordinary workflow:
+    # the behavioral steps below execute scripts out of the checked-out tree, so
+    # on a pull_request this job runs code the PR author wrote. Without an
+    # explicit block the job inherits the repository default, which can be
+    # read/write - and every project created from this template inherits
+    # whatever this file says, into a contributor model that may not look like
+    # this one. Nothing here needs to write.
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v7
 

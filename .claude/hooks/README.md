@@ -20,7 +20,7 @@ Lessons already baked into these scripts - keep them in mind when adding hooks:
   rather than assuming, and be careful with per-file subprocesses in a loop: that is what turns
   a fast hook into a silent one as a repo grows.
 - **A pipeline hides the exit status of everything but its last command, and process
-  substitution hides it entirely - and only the second one is fixed by `pipefail`.**
+  substitution hides it entirely - and `pipefail` fixes only the pipeline.**
   `cmd | while read ...` returns the `while`'s status **without** `set -o pipefail`, so a `cmd`
   that died mid-scan reads as a clean pass; with `pipefail` on (as in `.githooks/pre-push`) the
   pipeline does report the producer's failure, so the warning is conditional, not absolute.
