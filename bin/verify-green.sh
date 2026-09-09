@@ -41,6 +41,28 @@ if ! git rev-parse --git-dir >/dev/null 2>&1; then
   exit 1
 fi
 
+# The tree as it stands BEFORE any check runs, compared against the tree at the
+# end. Without this, anything staged DURING the run moves the index and the
+# marker is written for a tree nothing has run against.
+#
+# That is not theoretical. A real suite takes minutes and an agent session
+# stages work continuously, so it is hit by ordinary use rather than by
+# contrivance. The unstaged-edits NOTE further down does not cover it either:
+# staging is exactly what makes the working tree clean again, so that NOTE goes
+# quiet in the one case that matters here.
+#
+# Failing NOW rather than after the checks is deliberate. A write-tree that
+# cannot run means no marker can be recorded whatever the checks say, so
+# spending the whole run first only delays the same refusal.
+KEY_BEFORE=$(git write-tree 2>/dev/null)
+if [ -z "$KEY_BEFORE" ]; then
+  echo "verify-green: 'git write-tree' failed, so no marker could be recorded." >&2
+  echo "verify-green: git said:" >&2
+  git write-tree 2>&1 >/dev/null | sed 's/^/  /' >&2
+  echo "verify-green: resolve the index problem and re-run - refusing to spend the run." >&2
+  exit 1
+fi
+
 i=0
 total=${#GREEN_COMMANDS[@]}
 for cmd in "${GREEN_COMMANDS[@]}"; do
@@ -61,6 +83,28 @@ KEY=$(git write-tree 2>/dev/null)
 if [ -z "$KEY" ]; then
   echo "verify-green: checks PASSED but 'git write-tree' failed - no marker recorded." >&2
   echo "verify-green: resolve the index problem and re-run." >&2
+  exit 1
+fi
+
+# The tree MOVED while the checks were running, so the checks and the marker
+# would describe different content. Refuse rather than record.
+#
+# Refusing LOUDLY rather than quietly filing under KEY_BEFORE: a marker for the
+# old tree would not match the tree a push actually sends, so the push would be
+# blocked anyway - with no explanation, which reads as "the gate is broken".
+# A gate people believe is broken is a gate they bypass.
+#
+# STAGING is what trips this, not committing. `git commit` builds from the index
+# without changing it, so committing already-staged content leaves this equal
+# and is correctly allowed through. A gate that fired on that ordinary workflow
+# would get switched off within a day.
+if [ "$KEY" != "$KEY_BEFORE" ]; then
+  echo "verify-green: the index MOVED during the run - refusing to record a marker." >&2
+  echo "  the checks ran against tree ${KEY_BEFORE:0:12}" >&2
+  echo "  the index now reads         ${KEY:0:12}" >&2
+  echo "verify-green: something was staged while the checks were running, so a marker" >&2
+  echo "written now would vouch for content that nothing verified. The checks" >&2
+  echo "themselves PASSED - this is not a check failure. Re-run on a settled tree." >&2
   exit 1
 fi
 

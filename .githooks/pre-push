@@ -1,41 +1,99 @@
 #!/bin/bash
-# Real git pre-push hook: refuses to send a commit whose tree has no green marker
-# from bin/verify-green.sh. Because it runs inside `git push` itself, it gates
+# Real git pre-push hook. Because it runs inside `git push` itself, it gates
 # every push the same way - typed in a terminal or made by an AI agent - and it
 # reads the ACTUAL refs being pushed from stdin rather than predicting them.
 #
-# OFF by default: until GREEN_COMMANDS in bin/verify-green.sh is filled in, every
-# push is allowed (with a one-line reminder). Once configured, the gate fails
-# CLOSED: anything it cannot resolve blocks. A gate that opens when confused is
-# not a gate.
+# TWO INDEPENDENT LAYERS, AND TWO INDEPENDENT BYPASSES:
+#
+#   1. BRANCH CLAIM  - refuses a branch another session has claimed, via
+#                      bin/claim-branch.sh. Bypass: PROJECT_ALLOW_SHARED_BRANCH=1
+#   2. GREEN MARKER  - refuses a commit whose tree has no marker from
+#                      bin/verify-green.sh. Bypass: PROJECT_SKIP_VERIFY=1
+#
+# The bypasses are deliberately separate and MUST stay that way.
+# PROJECT_SKIP_VERIFY is the routine docs-only escape, reached for often; if it
+# also lifted the claim layer it would silently disable collision detection
+# every time someone pushed a README fix.
+#
+# Both layers are OFF by default, each on its own terms: the green layer until
+# GREEN_COMMANDS in bin/verify-green.sh is filled in, the claim layer until
+# bin/claim-branch.sh is present (SETUP.md lets a solo project delete it). Once
+# a layer is on, it fails CLOSED: anything it cannot resolve blocks. A gate that
+# opens when confused is not a gate.
 #
 # Wiring: git only runs this once `core.hooksPath=.githooks` is set - see
 # bin/install-git-hooks.sh (session-start runs it, so agent sessions self-heal).
 # This file must be executable, or git skips it SILENTLY.
 #
-# Bypass: PROJECT_SKIP_VERIFY=1 git push ...   (or --no-verify)
+# Skip everything: git push --no-verify
 #
 # git feeds one line per ref: <local ref> <local sha> <remote ref> <remote sha>
+# and passes the remote's name as $1.
 set -uo pipefail
 
-if [ "${PROJECT_SKIP_VERIFY:-0}" = "1" ]; then
-  echo "pre-push: bypassed via PROJECT_SKIP_VERIFY=1" >&2
-  exit 0
-fi
+REMOTE_NAME="${1:-origin}"
 
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || printf '%s' "$PWD")
 VERIFY="$REPO_ROOT/bin/verify-green.sh"
+CLAIM="$REPO_ROOT/bin/claim-branch.sh"
 
-if [ ! -f "$VERIFY" ] || ! bash "$VERIFY" --check-configured 2>/dev/null; then
-  echo "pre-push: green gate not configured (GREEN_COMMANDS in bin/verify-green.sh) - pushing unchecked" >&2
+# --- which layers are live --------------------------------------------------
+
+GREEN_ON=0
+GREEN_BROKEN=0
+if [ "${PROJECT_SKIP_VERIFY:-0}" = "1" ]; then
+  echo "pre-push: green gate bypassed via PROJECT_SKIP_VERIFY=1" >&2
+elif [ ! -f "$VERIFY" ]; then
+  # ABSENT is a deliberate prune (SETUP.md), so the layer simply does not apply.
+  echo "pre-push: no bin/verify-green.sh - green gate off" >&2
+else
+  # PRESENT means it must be runnable, and the three exit codes are three
+  # different facts. The earlier form was
+  #   ! bash "$VERIFY" --check-configured 2>/dev/null
+  # which mapped ANY non-zero onto "not configured" and pushed unchecked - so a
+  # verify-green.sh with a syntax error, a missing interpreter or an unreadable
+  # file disabled the gate silently, on a repo where GREEN_COMMANDS was filled
+  # in. That is this repo's own exit-1-vs-2 rule broken inside the gate that
+  # enforces it: 1 is "off", anything else is "could not tell", and
+  # could-not-tell must not resolve to green.
+  vrc=0
+  vout="$(bash "$VERIFY" --check-configured 2>&1)" || vrc=$?
+  case "$vrc" in
+    0) GREEN_ON=1 ;;
+    1) echo "pre-push: green gate not configured (GREEN_COMMANDS in bin/verify-green.sh) - pushing unchecked" >&2 ;;
+    *)
+      echo "BLOCKED: bin/verify-green.sh --check-configured exited $vrc, so whether the" >&2
+      echo "green gate is on cannot be determined. That is not the same as it being off." >&2
+      [ -n "$vout" ] && printf '  %s\n' "$vout" >&2
+      echo "Fix the script, or bypass: PROJECT_SKIP_VERIFY=1 git push ..." >&2
+      GREEN_BROKEN=1
+      ;;
+  esac
+fi
+
+# Refuse before reading a single ref: with the gate's state unknown there is no
+# safe verdict to give any of them.
+[ "$GREEN_BROKEN" -eq 0 ] || exit 1
+
+CLAIM_ON=0
+if [ "${PROJECT_ALLOW_SHARED_BRANCH:-0}" = "1" ]; then
+  echo "pre-push: branch-claim check bypassed via PROJECT_ALLOW_SHARED_BRANCH=1" >&2
+elif [ -f "$CLAIM" ]; then
+  CLAIM_ON=1
+fi
+
+if [ "$GREEN_ON" -eq 0 ] && [ "$CLAIM_ON" -eq 0 ]; then
   exit 0
 fi
 
-GIT_DIR_PATH=$(git rev-parse --git-dir 2>/dev/null) || {
-  echo "pre-push: BLOCKED - cannot resolve the git dir, so the marker location is" >&2
-  echo "unknown. Refusing to guess. Bypass: PROJECT_SKIP_VERIFY=1 git push ..." >&2
-  exit 1
-}
+GIT_DIR_PATH=""
+if [ "$GREEN_ON" -eq 1 ]; then
+  GIT_DIR_PATH=$(git rev-parse --git-dir 2>/dev/null) || {
+    echo "pre-push: BLOCKED - cannot resolve the git dir, so the marker location is" >&2
+    echo "unknown. Refusing to guess. Bypass: PROJECT_SKIP_VERIFY=1 git push ..." >&2
+    exit 1
+  }
+fi
 
 blocked=0
 # shellcheck disable=SC2034  # remote_sha is consumed on purpose: `read` assigns the
@@ -44,16 +102,62 @@ blocked=0
 while read -r local_ref local_sha remote_ref remote_sha; do
   [ -n "${local_sha:-}" ] || continue
 
-  # A deletion (`git push origin :branch`) sends an all-zero LOCAL sha - nothing
-  # is being sent, so there is nothing to vouch for. Matched on "only zeros"
-  # rather than a fixed length so it holds under SHA-256 repos too.
+  # A deletion (`git push origin :branch`) sends an all-zero LOCAL sha. Matched
+  # on "only zeros" rather than a fixed length so it holds under SHA-256 repos.
+  deleting=0
   case "$local_sha" in
     *[!0]*) ;;
-    *) continue ;;
+    *) deleting=1 ;;
   esac
 
-  # </dev/null on git calls inside this loop: stdin here IS the ref list, and a
-  # command that consumed it would swallow the remaining refs unchecked.
+  # --- layer 1: branch claim ------------------------------------------------
+  # Deletions ARE claim-checked. The green layer skips them because a deletion
+  # sends no tree to vouch for, but deleting a branch another session is working
+  # on is the same collision as pushing over it.
+  #
+  # Only refs/heads/*. A tag has no branch to judge, and a lease ref
+  # (refs/claims/*) is pushed by claim-branch.sh itself.
+  case "$remote_ref" in
+    refs/heads/*)
+      if [ "$CLAIM_ON" -eq 1 ]; then
+        branch="${remote_ref#refs/heads/}"
+        if [ "$REMOTE_NAME" != "origin" ]; then
+          # claim-branch.sh asks `origin`. Against any other remote it would be
+          # answering about a different repository, so the check did not run -
+          # and a check that did not run is not a check that passed.
+          echo "BLOCKED: pushing to remote '$REMOTE_NAME', but the branch-claim check only" >&2
+          echo "knows how to ask 'origin'. Bypass: PROJECT_ALLOW_SHARED_BRANCH=1 git push ..." >&2
+          blocked=1
+        else
+          # --quiet-if-free, not --quiet: --quiet would suppress the CLAIMED
+          # report too and leave a refused push with nothing explaining it.
+          # </dev/null because stdin here IS the ref list, and a command that
+          # consumed it would swallow the remaining refs unchecked.
+          crc=0
+          bash "$CLAIM" "$branch" --quiet-if-free </dev/null || crc=$?
+          case "$crc" in
+            0) ;;
+            1)
+              echo "BLOCKED: '$branch' is claimed by another session (see above)." >&2
+              echo "Bypass: PROJECT_ALLOW_SHARED_BRANCH=1 git push ..." >&2
+              blocked=1
+              ;;
+            *)
+              # 2, or anything else, is could-not-tell. It is NOT free.
+              echo "BLOCKED: the branch-claim check on '$branch' could not run (exit $crc)." >&2
+              echo "Bypass: PROJECT_ALLOW_SHARED_BRANCH=1 git push ..." >&2
+              blocked=1
+              ;;
+          esac
+        fi
+      fi
+      ;;
+  esac
+
+  [ "$GREEN_ON" -eq 1 ] || continue
+  [ "$deleting" -eq 0 ] || continue
+
+  # --- layer 2: green marker ------------------------------------------------
   # An annotated tag resolves through to the tagged commit's tree, so tag pushes
   # are gated against the commit the tag points at.
   tree=$(git rev-parse --verify --quiet "${local_sha}^{tree}" 2>/dev/null </dev/null)

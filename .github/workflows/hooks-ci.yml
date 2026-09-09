@@ -35,8 +35,30 @@ on:
 jobs:
   lint:
     runs-on: ubuntu-latest
+    # Least privilege, and it matters MORE here than in an ordinary workflow:
+    # the behavioral steps below execute scripts out of the checked-out tree, so
+    # on a pull_request this job runs code the PR author wrote. Without an
+    # explicit block the job inherits the repository default, which can be
+    # read/write - and every project created from this template inherits
+    # whatever this file says, into a contributor model that may not look like
+    # this one. Nothing here needs to write.
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v7
+        with:
+          # actions/checkout persists the job token for later git commands by
+          # default, and `contents: read` above limits what that token can DO
+          # without changing who can reach it. Stated as the EFFECT on purpose:
+          # an earlier draft of this comment named the storage mechanism, which
+          # varies by action version and which had not been verified - a comment
+          # asserting a mechanism it cannot demonstrate is worse than one that
+          # sticks to what is observable. The behavioral steps below run shell
+          # out of this checkout, so on a pull_request that is PR-author code
+          # running beside a live credential. The suites build throwaway local
+          # repos with `git init --bare` and never reach a remote, so dropping
+          # it costs nothing here.
+          persist-credentials: false
 
       - name: No CRLF line endings (breaks bash at the first line)
         run: |
@@ -240,6 +262,135 @@ jobs:
 
           echo "checked ${#routers[@]} Cursor router(s)"
           exit $fail
+
+      # ---- behavioral suites ----------------------------------------------
+      # Everything above is a LINTER: it proves the scripts parse, not that they
+      # do what they claim. bin/tests/ holds suites that run the guardrails
+      # against real fixtures, and until this round NOTHING RAN THEM. The suite
+      # shipped, the docs said it covered the script, and CI never invoked it -
+      # the exact failure this workflow's own header is about, sitting inside
+      # the workflow.
+      #
+      # One NAMED step per suite, deliberately. A single "run the tests" step
+      # reports one conclusion for everything, so a reader has to open the log
+      # to learn which guardrail broke - and a step name is what people read.
+      #
+      # Each step carries the MUTATION LEDGER for its suite: which cases go red
+      # when the thing under test is broken. A suite whose ledger is empty has
+      # never been shown to assert anything, and a green suite is not evidence
+      # until it has been. Predict the set BEFORE running the mutation and read
+      # WHICH cases failed - a count alone proves nothing - and confirm the
+      # mutation actually changed the file, because a pattern that no longer
+      # matches leaves the mutant byte-identical and its all-green run reads as
+      # "my suite does not cover this".
+
+      - name: Suite - claim-branch (author signal)
+        run: |
+          # Mutation ledger, measured 2026-09-08 over 18 cases. Format is
+          # predicted -> actual, because a count that was never predicted is not
+          # a result.
+          #
+          #   author-path ls-remote error branch -> exit 0    1 -> 1 red
+          #     ("an origin that fails on the BRANCH read ...")
+          #
+          # Recorded because it is easy to get wrong twice: that mutation used
+          # to produce 0 red. The lease check now runs FIRST, so an origin that
+          # is simply down fails inside lease_read and the two older
+          # "unreachable origin" cases exit 2 there without ever reaching the
+          # author path. They still assert the right verdict; they stopped
+          # asserting it about the code they were written for. The shim case
+          # that fails only the SECOND ls-remote is what covers it now.
+          bash bin/tests/test-claim-branch.sh
+
+      - name: Suite - claim-branch (lease)
+        run: |
+          # Mutation ledger, measured 2026-09-08 over 80 cases:
+          #
+          #   has-not-moved guard on a refused lease push     3 -> 3 red
+          #     A refused push is not proof somebody beat us: on a takeover the
+          #     CAS is pinned to the sha we read, so an unchanged sha means the
+          #     push failed for its own reasons. Reporting CLAIMED there sends
+          #     the operator to coordinate with a session that is not there.
+          #   unrecognised lease state falls through          NO TEST
+          #     Recorded rather than left implied: lease_read returns only
+          #     NONE/MINE/HELD/EXPIRED, so the new refusal arm cannot be driven
+          #     without mutating lease_read itself. It guards a fifth token a
+          #     later change might add. Unreachable-by-construction, not
+          #     untested-by-omission - and the difference is worth writing down.
+          #
+          #   count_lines call-site status check removed      3 -> 5 red
+          #     Predicted 3 and got 5, and the extra two are the point: this
+          #     one check is the single gate BOTH awk failure classes flow
+          #     through, so it subsumes the shape check below. The fail-open it
+          #     closes is what the awk rewrite left behind - swapping out
+          #     `grep -c . || true` fixed the construct, and an unchecked
+          #     assignment still let a blank count reach a FREE verdict.
+          #   numeric shape check inside count_lines removed  2 -> 2 red
+          #     Only the silent-awk pair. An awk that exits 0 printing nothing
+          #     satisfies the status check, so shape has to be read too.
+          #   collide shim never matches `fetch` (FIXTURE)    2 -> 2 red
+          #     A mutation of the fixture rather than the code, because the
+          #     poison case's verdict is ALSO what correct code produces when
+          #     the poison never lands. Only the two sanity assertions move.
+          #
+          #   tmpref reverted to a FIXED ref name             1 -> 2 red
+          #     The poison case fired on `git log` until review pointed out
+          #     that lease_read resolves the ref with rev-parse FIRST and hands
+          #     the resolved sha to log - so there was no ref left to poison,
+          #     and a fixed-name implementation passed the case anyway. Firing
+          #     on `fetch` (real fetch, then clobber) puts it in the window the
+          #     $$ suffix actually closes. The mutation battery could not find
+          #     this: it perturbs code you already wrote, and this was a gap
+          #     between the fixture and reality.
+          #   perl-availability guard removed                 2 -> 2 red
+          #     Exit stays 2, so only the two MESSAGE cases move. That is the
+          #     point: an error message is an instruction, and blaming --now
+          #     for a missing interpreter sends the operator to fix the one
+          #     thing that is not broken.
+          #
+          #   --force-with-lease -> --force                   2 -> 2 red
+          #     Only the "moved BEFORE the push" pair goes red. The two
+          #     mid-push races stay green on purpose: git refuses those on its
+          #     own, so they pin the behaviour while the third pins the flag.
+          #   session_id_path uses --git-common-dir           3 -> 3 red
+          #     The first run of this one gave 2, and the case that stayed green
+          #     ("worktree B does not see A's id file") was the reason: it
+          #     checked only B's own path, which is empty whether the id landed
+          #     in A's git dir or in the SHARED common dir - the exact place the
+          #     wrong flag puts it. The case now checks both locations.
+          #   ttl range guard removed                         1 -> 1 red
+          #   unparseable lease marker treated as NONE        1 -> 1 red
+          #   grep -qxF -> grep -q (regex)                    2 -> 2 red
+          #     Also caught a weak assertion: the "verdict SAYS it ignored the
+          #     bot" case matched the substring "github-actions", which appears
+          #     in the CLAIMED report too, so it was green either way. It now
+          #     matches the free path's own wording.
+          #   grep -qxF -> grep -qF (drop -x only)            1 -> 1 red
+          #     This one was 0 red until the fixture was fixed, and the reason
+          #     is worth keeping: the existing near-miss address ("robotham@")
+          #     is not a SUBSTRING of any allowlist entry, so dropping -x left
+          #     it green. The case that bites is an address the allowlist line
+          #     contains - "actions[bot]@users.noreply.github.com" sits inside
+          #     "41898282+github-actions[bot]@users.noreply.github.com" - which
+          #     a substring match waves through.
+          bash bin/tests/test-claim-branch-lease.sh
+
+      - name: Suite - push gate (pre-push hook + verify-green)
+        run: |
+          # Mutation ledger, measured 2026-09-08 over 27 cases:
+          #
+          #   green enablement probe collapsed to one branch  3 -> 3 red
+          #     ABSENT, OFF and BROKEN are three facts about verify-green.sh.
+          #     `! bash "$VERIFY" --check-configured` mapped the last two
+          #     together, so a script with a syntax error disabled the gate
+          #     silently on a repo that HAD configured it - this repo's own
+          #     exit-1-vs-2 rule broken inside the gate that enforces it.
+          #
+          #   PROJECT_SKIP_VERIFY also lifts the claim layer   1 -> 1 red
+          #   claim check exit 2 treated as free               2 -> 2 red
+          #   drop verify-green's mid-run index comparison     3 -> 3 red
+          #   claim layer skips deletions                      1 -> 1 red
+          bash bin/tests/test-push-gate.sh
 
       - name: JSON config is parseable
         run: |
