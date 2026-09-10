@@ -109,6 +109,33 @@ deliberately kept out of the corpus gets converted back into it through a side d
 
 Source: https://github.com/firecrawl/anydoc
 
+## Longshot - full-page screenshots an agent can actually take
+
+Two surfaces over one capture engine: a Chrome/Brave extension for screenshots you take by hand,
+and a headless CLI for the ones a script, CI job, or coding agent takes. The reason to prefer it
+over a hand-rolled Playwright call is sticky headers - a scroll-and-stitch capture repeats them
+down a tall image, and this suppresses them after the first tile. It drives your installed
+Chrome, so nothing is downloaded and nothing is uploaded.
+
+```bash
+npx @craigcossairt/longshot --url https://example.com --full-page --out shot.png
+```
+
+Built for non-human callers: one JSON object on stdout, progress on stderr, and distinct exit
+codes rather than a single failure state. It also writes a `.verdict.json` you can hand back as
+`--baseline` on a later run, which is what turns a screenshot into something CI can fail on.
+
+**Disclosure, because this list is otherwise third-party:** this is the template author's own
+tool, MIT, first published 2026-09-10. Every other entry here had field use before it was
+listed; this one has a thorough review and very little mileage. Judge it on the code.
+
+**Limits:** `--cdp`, the flag that attaches to a browser you are already running so you can
+capture logged-in pages, does not set `bypassCSP` - so a page with a restrictive CSP is covered
+when Longshot launches the browser itself and not covered over an attached one. The extension is
+sideload-only, with no Chrome Web Store listing. Needs Chrome, Chromium, or Edge installed.
+
+Source: https://github.com/craigcossairt/Longshot
+
 ---
 
 # Services & integrations
