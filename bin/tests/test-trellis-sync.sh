@@ -77,6 +77,7 @@ c_absent() { # $1 name, $2 path - must be in NO bucket
 }
 c_rc()  { if [ "$RC" -eq "$2" ]; then ok "$1"; else bad "$1" "expected exit $2, got $RC ($OUT)"; fi; }
 c_says(){ if printf '%s' "$OUT" | grep -qiE "$2"; then ok "$1"; else bad "$1" "output did not match /$2/: $OUT"; fi; }
+c_not() { if printf '%s' "$OUT" | grep -qiE "$2"; then bad "$1" "did not expect /$2/: $OUT"; else ok "$1"; fi; }
 
 # =============================================================================
 echo "== A. classification =="
@@ -619,6 +620,53 @@ if [ "$mp" = "600" ]; then
 else
   echo "  SKIP three exact-mode cases: this filesystem reports $mp for a chmod 600 file"
 fi
+
+echo "== I. --verify, because --check cannot see a stale hash =="
+# This section exists because of a shipped defect, in the release cut itself.
+# v1.2.0 was tagged with its manifest generated one step too early: written,
+# then a decision-log entry appended, then committed. A pristine clone of that
+# tag reported docs/decision-log.md as `localonly` - "you changed this" - to an
+# adopter who had changed nothing, which ALSO masks any later upstream change
+# to that file, because localonly means there is nothing to take.
+#
+# --check passed the whole time and was right to: it asks whether the manifest
+# is well formed and names nothing that has vanished, and the manifest is a
+# RELEASE artifact that goes stale on main on purpose. The missing question was
+# a different one, so it needed a different mode rather than a stricter --check.
+D="$(new_copy verify)"
+printf 'one\n' > "$D/one.md"; printf 'two\n' > "$D/two.md"
+must git -C "$D" add one.md two.md .trellis/source
+must git -C "$D" remote add origin 'https://github.com/example/tpl.git'
+OUT="$(bash "$MANIFEST_SH" --write --root "$D" 2>&1)"; RC=$?
+c_rc "--write on a template checkout exits 0" 0
+OUT="$(bash "$MANIFEST_SH" --verify --root "$D" 2>&1)"; RC=$?
+c_rc   "--verify passes on a manifest written against this tree" 0
+c_says "and says it compared against the tree, not just the shape" 'matching the tree'
+
+# Now the actual defect: a file changes AFTER the manifest was written.
+printf 'two, edited after the manifest was written\n' > "$D/two.md"
+OUT="$(bash "$MANIFEST_SH" --verify --root "$D" 2>&1)"; RC=$?
+c_rc   "--verify catches a hash that no longer matches" 1
+c_says "and names the path"                    'two\.md'
+c_says "and prints both hashes, so it is checkable" 'manifest [0-9a-f]{40}, tree [0-9a-f]{40}'
+c_says "and says what the release process got wrong" 'writes the manifest LAST'
+
+# The pair that makes the distinction attributable: SAME tree, SAME manifest,
+# and --check still passes. Without this case, --verify could be a stricter
+# --check and nobody would notice the two had merged.
+OUT="$(bash "$MANIFEST_SH" --check --root "$D" 2>&1)"; RC=$?
+c_rc   "--check still passes on that identical tree" 0
+c_not  "and does not claim it compared hashes" 'matching the tree'
+
+# A vanished file is a --check problem, so --verify must report it too rather
+# than replacing one set of checks with the other.
+rm -f "$D/one.md"
+OUT="$(bash "$MANIFEST_SH" --verify --root "$D" 2>&1)"; RC=$?
+c_rc   "--verify still reports a file that has vanished" 1
+c_says "and names that one as missing rather than as a mismatch" 'no longer exists'
+
+OUT="$(bash "$MANIFEST_SH" --verify --root "$TMP/not-a-repo-at-all" 2>&1)"; RC=$?
+c_rc "--verify on a non-repo exits 2, not 1" 2
 
 echo
 echo "passed: $PASS   failed: $FAIL"
