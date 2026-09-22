@@ -304,7 +304,12 @@ if [ "$DO_APPLY" -eq 1 ]; then
       echo "trellis-sync: could not read upstream $p. Your copy is untouched." >&2
       failed=$((failed + 1)); continue
     fi
-    have="$(git -C "$ROOT" hash-object "$dest" 2>/dev/null)"
+    # --path is load-bearing: $dest is OUTSIDE the worktree, and git applies
+    # eol/filter attributes by the path a blob would live at. Without it a
+    # source file with CRLF endings (a --from-dir pointing at a Windows
+    # checkout) hashes to the CRLF blob and never matches a manifest written
+    # from LF, so every apply would refuse for a reason that is not real.
+    have="$(git -C "$ROOT" hash-object --path "$p" "$dest" 2>/dev/null)"
     if [ "$have" != "$want" ]; then
       echo "trellis-sync: $p from $SRC_NOTE does not match the upstream manifest." >&2
       echo "  manifest says $want, fetched $have. Not writing it." >&2
