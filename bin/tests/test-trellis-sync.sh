@@ -546,6 +546,80 @@ else
   echo "  SKIP four exec-bit cases: this filesystem does not carry the mode"
 fi
 
+echo "== H. second review round =="
+# Three more from the same cross-model review, after the first round was fixed.
+# Each one is a case here for the same reason as section G.
+
+# H1. A URL authority is case-insensitive and may carry a port, so comparing it
+# as exact text made https://GitHub.com:443/o/r read as a different host from
+# github.com - refusing the template's OWN release cut and sending the
+# maintainer to --force. A guard that misfires on the canonical case is how
+# people learn to reach for the bypass.
+D="$(new_copy canonhost)"
+printf 'x\n' > "$D/x.md"
+must git -C "$D" add x.md .trellis/source
+must git -C "$D" remote add origin 'https://GitHub.com:443/example/tpl.git'
+OUT="$(bash "$MANIFEST_SH" --write --root "$D" 2>&1)"; RC=$?
+c_rc "an equivalent GitHub URL is still the template, no --force needed" 0
+
+# H2. A LEXICAL path check cannot see a symlinked ancestor. `hooks/pre-commit`
+# is fine as text; if $ROOT/hooks is a link elsewhere, mkdir -p and mv both
+# follow it and the write lands outside the copy. git checks out symlinks, so
+# a template could ship one and a later manifest entry write through it.
+# The probe is gated on the PLATFORM, not attempted and caught. On MSYS without
+# developer mode `ln -s` does not fail, it HANGS - measured, rc 124 under a 10s
+# timeout - so a try-and-see probe wedges the whole suite rather than skipping
+# one section. CI is Linux, which is where these three cases mean something.
+case "$(uname -s 2>/dev/null)" in
+  MINGW*|MSYS*|CYGWIN*) can_symlink=0 ;;
+  *) can_symlink=0
+     if ln -s /tmp "$TMP/lnprobe" 2>/dev/null && [ -L "$TMP/lnprobe" ]; then can_symlink=1; fi
+     rm -f "$TMP/lnprobe" ;;
+esac
+if [ "$can_symlink" = 1 ]; then
+  D="$(new_copy symlink)"
+  OUTSIDE="$TMP/outside-dir"; rm -rf "$OUTSIDE"; mkdir -p "$OUTSIDE"
+  printf 'do not touch me\n' > "$OUTSIDE/pre-commit"
+  must ln -s "$OUTSIDE" "$D/hooks"
+  printf 'x\n' > "$D/x.md"
+  printf '%s x.md\n' "$(H "$D" "$D/x.md")" > "$D/.trellis/manifest"
+  SRC="$TMP/symsrc"; rm -rf "$SRC"; mkdir -p "$SRC/hooks"
+  printf 'payload\n' > "$SRC/hooks/pre-commit"
+  USYM="$TMP/up-sym"
+  { printf '%s x.md\n' "$(H "$D" "$D/x.md")"
+    printf '%s hooks/pre-commit\n' "$(H "$D" "$SRC/hooks/pre-commit")"; } > "$USYM"
+  apply_run "$D" "$USYM" "$SRC" 'hooks/pre-commit'
+  c_rc   "a symlinked ancestor is refused, not followed" 2
+  c_says "and names the link rather than the path"       'is a symlink'
+  c_file "and the file it points at is untouched" "$OUTSIDE/pre-commit" 'do not touch me'
+else
+  echo "  SKIP three symlink cases: this filesystem will not make one"
+fi
+
+# H3. Preserving "the mode" means all of it. chmod -x on a fetched 0644 temp
+# file leaves it 0644, so replacing a 0600 file that way WIDENS it - the update
+# silently makes a private file world-readable.
+mprobe="$TMP/mprobe"; printf 'x\n' > "$mprobe"; chmod 600 "$mprobe" 2>/dev/null
+mp="$(stat -c '%a' "$mprobe" 2>/dev/null || stat -f '%Lp' "$mprobe" 2>/dev/null || echo '')"
+if [ "$mp" = "600" ]; then
+  D="$(new_copy exactmode)"
+  printf 'secret v1\n' > "$D/private.txt"
+  chmod 600 "$D/private.txt"
+  printf '%s private.txt\n' "$(H "$D" "$D/private.txt")" > "$D/.trellis/manifest"
+  SRC2="$TMP/modesrc"; rm -rf "$SRC2"; mkdir -p "$SRC2"
+  printf 'secret v2\n' > "$SRC2/private.txt"; chmod 644 "$SRC2/private.txt"
+  UMODE="$TMP/up-mode"
+  printf '%s private.txt\n' "$(H "$D" "$SRC2/private.txt")" > "$UMODE"
+  apply_run "$D" "$UMODE" "$SRC2" 'private.txt'
+  c_rc "applying over a 0600 file exits 0" 0
+  got="$(stat -c '%a' "$D/private.txt" 2>/dev/null || stat -f '%Lp' "$D/private.txt" 2>/dev/null)"
+  if [ "$got" = "600" ]; then ok "and the file keeps 0600 rather than widening to 0644"
+  else bad "and the file keeps 0600 rather than widening to 0644" "mode is now $got"; fi
+  c_file "and the content did update" "$D/private.txt" 'secret v2'
+else
+  echo "  SKIP three exact-mode cases: this filesystem reports $mp for a chmod 600 file"
+fi
+
 echo
 echo "passed: $PASS   failed: $FAIL"
 [ "$FAIL" -eq 0 ]

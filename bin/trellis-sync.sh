@@ -285,6 +285,32 @@ if [ "$DO_APPLY" -eq 1 ]; then
         echo "  A manifest from this template never contains one. Check your upstream." >&2
         failed=$((failed + 1)); continue ;;
     esac
+    # A LEXICAL check cannot see a symlinked ancestor. `hooks/pre-commit` has
+    # nothing wrong with it as text, and if $ROOT/hooks is a symlink to
+    # somewhere else then mkdir -p and mv both follow it and the write lands
+    # outside the copy anyway. The hash says what the bytes ARE, never where
+    # they end up. So every existing ancestor of the destination is checked,
+    # and a symlink among them is refused rather than resolved: git checks out
+    # symlinks, so a template could ship one and a later manifest entry write
+    # through it, and nothing about that is a thing this tool should do
+    # silently.
+    esc=""; probe="$ROOT"
+    rest="$p"
+    while [ -n "$rest" ]; do
+      comp="${rest%%/*}"
+      if [ "$comp" = "$rest" ]; then rest=""; else rest="${rest#*/}"; fi
+      [ -n "$comp" ] || continue
+      probe="$probe/$comp"
+      # The final component may legitimately be a symlink being replaced; it is
+      # the DIRECTORIES above it that route the write elsewhere.
+      [ -n "$rest" ] || break
+      if [ -L "$probe" ]; then esc="$probe"; break; fi
+    done
+    if [ -n "$esc" ]; then
+      echo "trellis-sync: refusing $p - $esc is a symlink, so the write would leave the copy." >&2
+      echo "  Resolve or remove that link yourself; this tool will not write through one." >&2
+      failed=$((failed + 1)); continue
+    fi
     want="$(lookup "$work/new" "$p")"
     if [ -z "$want" ]; then
       echo "trellis-sync: $p is not in the upstream manifest at $SRC_NOTE - not fetching." >&2
@@ -339,8 +365,17 @@ if [ "$DO_APPLY" -eq 1 ]; then
     # mode it already had. A NEW file is executable only if its content starts
     # with a shebang, which is the one signal actually available here.
     if [ -e "$ROOT/$p" ]; then
-      if [ -x "$ROOT/$p" ]; then chmod +x "$dest" 2>/dev/null || true
-      else chmod -x "$dest" 2>/dev/null || true; fi
+      # The whole numeric mode, not just the execute bits. `chmod -x` on a
+      # fetched 0644 temp file leaves it 0644, so replacing a 0600 file that
+      # way widens it - preserving the mode means preserving all of it.
+      # stat is spelled two ways: -c on GNU, -f on BSD and macOS.
+      oldmode="$(stat -c '%a' "$ROOT/$p" 2>/dev/null || stat -f '%Lp' "$ROOT/$p" 2>/dev/null || true)"
+      case "$oldmode" in
+        [0-7][0-7][0-7] | [0-7][0-7][0-7][0-7]) chmod "$oldmode" "$dest" 2>/dev/null || true ;;
+        *) # stat did not answer in a shape worth trusting. Fall back to the
+           # one bit that silently breaks a guardrail when it is lost.
+           if [ -x "$ROOT/$p" ]; then chmod +x "$dest" 2>/dev/null || true; fi ;;
+      esac
     elif [ "$(head -c 2 "$dest" 2>/dev/null)" = "#!" ]; then
       chmod +x "$dest" 2>/dev/null || true
     fi

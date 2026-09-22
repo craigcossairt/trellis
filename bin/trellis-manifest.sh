@@ -102,7 +102,13 @@ if [ "$MODE" = "write" ]; then
     # api.github.com or raw.githubusercontent.com - so dropping the host made
     # a GitLab remote at the same owner/repo path compare EQUAL to the
     # template and walk straight through this guard.
-    originhost="$(printf '%s' "$originurl" | sed -n -e 's#^git@\([^:]*\):.*#\1#p' -e 's#^[a-z+]*://\([^/@]*@\)\{0,1\}\([^/]*\)/.*#\2#p' | head -1)"
+    _hostraw="$(printf '%s' "$originurl" | sed -n -e 's#^git@\([^:]*\):.*#\1#p' -e 's#^[a-z+]*://\([^/@]*@\)\{0,1\}\([^/]*\)/.*#\2#p' | head -1)"
+    # Lowercased and with any port removed before comparison. A URL authority
+    # is case-insensitive and may carry :443, so https://GitHub.com:443/o/r is
+    # the SAME host as github.com - comparing it as exact text refused the
+    # template's own release cut and sent the maintainer to --force, which is
+    # how a guard teaches people to bypass it.
+    originhost="$(printf '%s' "$_hostraw" | tr '[:upper:]' '[:lower:]' | sed 's#:[0-9]*$##')"
     if [ -n "$declared" ] && [ -n "$origin" ] &&        { [ "$originhost" != "github.com" ] || [ "$declared" != "$origin" ]; }; then
       echo "trellis-manifest: refusing --write. This looks like a COPY of $declared, not the template." >&2
       echo "  --write hashes every tracked file, so here it would record YOUR files as" >&2
