@@ -44,7 +44,7 @@ c2f161b0fc48ed8cd02467c844b1a20516a00990 .githooks/pre-push
 13ec07cb599bd6c3fd72c9307d28178b324f8c2a .grok/config.toml
 f9da9d6ea176fc711a598a4ba8b9a3a3d91feffe .grok/hooks/hooks.json
 d45f37b3ca968f5d4157dd5a7bc798ca509021c3 .mcp.json.example
-c8ce0ce9cea3e020b2237d08eaf10f559b5aea69 .trellis/source
+b9be69a6e9592fccdea387cde01bbfd73adb0d3b .trellis/source
 4032b99a29c4a6e2295b39487f6af4b10e105a45 AGENTS.md
 022d958bd89570bcc3b9309a635a33bdc82fa48f CLAUDE.md
 857a8facc38fb0d7d6ab2c4de90ae9f943bca824 CREDITS.md
@@ -76,7 +76,7 @@ e69de29bb2d1d6434b8b29ae775ad8c2e48c5391 brain/raw/.gitkeep
 e69de29bb2d1d6434b8b29ae775ad8c2e48c5391 brain/summaries/.gitkeep
 df3c702390445e21b46ed4c647ebbdc02bd46734 docs/about-me.md
 d2c128d1ad079820768a7ad98592640ed1a1c49f docs/common-gotchas.md
-175d1b74f4c41e914f983c1b0143e360e8b7b773 docs/decision-log.md
+c034f52813776d2ae4b5183324302041469fbc88 docs/decision-log.md
 2b370ffd3e819ce5bcf494eb7d9f043b98082234 docs/growing-into-a-workspace.md
 3c92ad41c3d462a70f82611558747d0238843ce5 docs/harness-support.md
 c56f95020f2cfe21362788f051f5379fe2137442 docs/methodology/adversarial-review.md
@@ -85,5 +85,5 @@ ad754818bbb0bfacc1f7395b0b8bf3a4434d5c82 docs/methodology/bug-protocol.md
 9b654ca43073d3c8d715be0988661258aebcad83 docs/methodology/tdd.md
 523c3750f89f8fa3c322b3a618b6db3e94073dda docs/methodology/verification-gate.md
 56b70c944714ddf26b959c6379448b7bf604c642 docs/recommended-tooling.md
-0550b25b61c7a713bd2d1ef923590e15f6220378 docs/writing-your-own-skills.md
+f677eee7a9e62c591c16b7f79aa9e8b9536f8033 docs/writing-your-own-skills.md
 454f918e5845f537004100d6bf334b35cbeb245a examples/AGENTS.example.md
