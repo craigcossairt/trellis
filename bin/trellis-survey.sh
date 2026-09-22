@@ -86,10 +86,21 @@ fi
 # is no jq guarantee on a fresh machine and a missing jq must not turn this
 # section into a silent pass. The cost is that a hook wired under a different
 # path but the same basename reads as wired; that is stated rather than hidden.
+#
+# The two directions are checked SEPARATELY. They were once behind a single
+# `&&`, so either side going missing skipped BOTH: delete .claude/hooks/ while
+# settings.json still names those scripts, and the survey came back clean while
+# the harness called a hook that did not exist on every tool call. One-sided
+# drift is exactly what this section is for, so a condition requiring both
+# sides to be present was the wrong shape.
 SETTINGS="$ROOT/.claude/settings.json"
-if [ -f "$SETTINGS" ] && [ -d "$ROOT/.claude/hooks" ]; then
+settings_text=""
+[ -f "$SETTINGS" ] && settings_text="$(tr -d "$CR" < "$SETTINGS")"
+
+# Direction one: a script on disk that nothing invokes. Inert, not dangerous,
+# but it reads as protection that does not exist.
+if [ -d "$ROOT/.claude/hooks" ]; then
   examined=$((examined + 1))
-  settings_text="$(tr -d "$CR" < "$SETTINGS")"
   for h in "$ROOT"/.claude/hooks/*.sh; do
     [ -e "$h" ] || continue
     base="$(basename "$h")"
@@ -97,16 +108,19 @@ if [ -f "$SETTINGS" ] && [ -d "$ROOT/.claude/hooks" ]; then
     printf '%s' "$settings_text" | grep -qF "$base" \
       || finding "hook-unwired" ".claude/hooks/$base" "on disk but nothing in settings.json runs it"
   done
-  # And the other direction: settings.json naming a script that is not here.
-  # This one is worse - the harness tries to run it, the hook does nothing, and
-  # nothing says so on any tool call.
-  #
-  # Written as a for-loop over command substitution rather than the obvious
-  # `grep ... | while read`, because a pipeline runs its last stage in a
-  # SUBSHELL: every `finding` call inside one appends to the temp file from a
-  # child, and on a shell where that child's writes are buffered or the file is
-  # reopened, the parent reads none of them back. A check that collects findings
-  # nobody can see is indistinguishable from a clean result.
+fi
+
+# Direction two: settings.json naming a script that is not here. Worse - the
+# harness tries to run it, the hook does nothing, and nothing says so.
+#
+# Written as a for-loop over command substitution rather than the obvious
+# `grep ... | while read`, because a pipeline runs its last stage in a
+# SUBSHELL: every `finding` call inside one appends to the temp file from a
+# child, and on a shell where that child's writes are buffered or the file is
+# reopened, the parent reads none of them back. A check that collects findings
+# nobody can see is indistinguishable from a clean result.
+if [ -n "$settings_text" ]; then
+  examined=$((examined + 1))
   for ref in $(printf '%s' "$settings_text" | grep -o '[A-Za-z0-9_-]*\.sh' | sort -u); do
     found=0
     for cand in "$ROOT/.claude/hooks/$ref" "$ROOT/brain/hooks/$ref" "$ROOT/bin/$ref"; do
@@ -122,8 +136,34 @@ fi
 if [ -d "$ROOT/.githooks" ]; then
   examined=$((examined + 1))
   hookspath="$(git -C "$ROOT" config core.hooksPath 2>/dev/null)"
-  [ -n "$hookspath" ] || finding "githooks-not-installed" "core.hooksPath" \
-    "the hooks in .githooks/ never run; install with bin/install-git-hooks.sh"
+  if [ -z "$hookspath" ]; then
+    finding "githooks-not-installed" "core.hooksPath" \
+      "the hooks in .githooks/ never run; install with bin/install-git-hooks.sh"
+  else
+    # Non-empty is not the same as pointing HERE. A core.hooksPath aimed at
+    # another directory means git ignores $ROOT/.githooks entirely, and
+    # checking only for non-empty suppressed the finding and then went on to
+    # test exec bits on hooks git will never run - a clean-looking report over
+    # a dormant layer. Relative values resolve against the worktree top level,
+    # per git's own rule, and both sides are normalised through cd/pwd because
+    # `.githooks`, `./.githooks` and an absolute path are all the same place.
+    # A Windows drive prefix is detected by stripping "?:" rather than by a
+    # case pattern containing a backslash: every layer between here and the
+    # file has eaten one of those at least once, and an escape that silently
+    # collapses turns this into a literal-asterisk match that never fires.
+    hp_abs="$ROOT/$hookspath"
+    case "$hookspath" in /*) hp_abs="$hookspath" ;; esac
+    [ "${hookspath#?:}" != "$hookspath" ] && hp_abs="$hookspath"
+    hp_real="$(cd "$hp_abs" 2>/dev/null && pwd -P)"
+    want_real="$(cd "$ROOT/.githooks" 2>/dev/null && pwd -P)"
+    if [ -z "$hp_real" ]; then
+      finding "githooks-elsewhere" "core.hooksPath=$hookspath" \
+        "points at a directory that does not exist, so no hook here runs"
+    elif [ "$hp_real" != "$want_real" ]; then
+      finding "githooks-elsewhere" "core.hooksPath=$hookspath" \
+        "git runs that directory, not this project's .githooks/"
+    fi
+  fi
   for h in "$ROOT"/.githooks/*; do
     [ -f "$h" ] || continue
     [ -x "$h" ] || finding "githook-not-executable" ".githooks/$(basename "$h")" \
@@ -224,7 +264,7 @@ section() { # $1 extended-regex of kinds, $2 heading
 }
 
 section 'hook-missing'                  "NOT RUNNING - the harness calls these and they are not here:"
-section 'githook-not-executable|githooks-not-installed' "NOT RUNNING - git will skip these without a word:"
+section 'githook-not-executable|githooks-not-installed|githooks-elsewhere' "NOT RUNNING - git will skip these without a word:"
 section 'hook-unwired'                  "PRESENT BUT INERT - nothing invokes these:"
 section 'skill-no-router|command-no-router|router-dangling' "HARNESS COVERAGE - reachable from one tool but not another:"
 section 'setup-incomplete'              "SETUP UNFINISHED - the agent will guess at these every session:"

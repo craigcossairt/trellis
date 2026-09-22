@@ -182,6 +182,67 @@ c_rc   "a root that does not exist exits 2" 2
 OUT="$(bash "$SURVEY" --root "$TMP" --bogus 2>&1)"; RC=$?
 c_rc "an unknown argument exits 2, never 0" 2
 
+echo "== H. one-sided drift, and a hooksPath aimed elsewhere =="
+# Both from a cross-model review of the first version, and both are the exact
+# class this whole script exists to catch - which is the reason they are worth
+# a section rather than a line.
+
+# H1. The two hook directions were behind one `&&`, so either side going
+# missing skipped BOTH. Delete .claude/hooks/ while settings.json still names
+# those scripts and the survey came back CLEAN, while the harness called a
+# hook that did not exist on every matching tool call.
+D="$(new_copy onesided)"
+rm -rf "$D/.claude/hooks"
+cat > "$D/.claude/settings.json" <<'JSON'
+{ "hooks": { "PreToolUse": [ { "hooks": [
+  { "type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/gone.sh\"" }
+] } ] } }
+JSON
+runp "$D"
+c_kind "hooks dir deleted: the wired-but-absent script is still reported" hook-missing 'gone.sh'
+c_rc   "and that is a finding, not a clean survey" 1
+
+# The mirror: settings.json missing, scripts present. Those scripts are inert,
+# and inert is worth saying even though nothing is broken.
+D="$(new_copy onesided2)"
+rm -f "$D/.claude/settings.json"
+printf '#!/usr/bin/env bash\n' > "$D/.claude/hooks/lonely.sh"
+runp "$D"
+c_kind "settings.json missing: scripts on disk are reported inert" hook-unwired ".claude/hooks/lonely.sh"
+
+# H2. core.hooksPath NON-EMPTY is not the same as pointing HERE. Aimed at
+# another directory, git ignores this project's .githooks entirely - and the
+# old check suppressed the finding, then went on to test exec bits on hooks
+# git will never run. A clean-looking report over a dormant layer.
+D="$(new_copy hookspath)"
+mkdir -p "$D/.githooks" "$D/somewhere-else"
+printf '#!/usr/bin/env bash\n' > "$D/.githooks/pre-push"
+chmod +x "$D/.githooks/pre-push" 2>/dev/null
+
+must git -C "$D" config core.hooksPath .githooks
+runp "$D"
+c_not  "pointing at .githooks is correct and reports nothing" 'githooks-'
+
+must git -C "$D" config core.hooksPath somewhere-else
+runp "$D"
+c_kind "pointing somewhere else is reported"        githooks-elsewhere "core.hooksPath=somewhere-else"
+run "$D"
+c_says "and lands under NOT RUNNING, not a footnote" 'NOT RUNNING'
+
+must git -C "$D" config core.hooksPath no-such-dir
+runp "$D"
+c_kind "pointing at a directory that does not exist is reported" githooks-elsewhere "core.hooksPath=no-such-dir"
+
+# Equivalent spellings of the same directory must NOT be reported. Without
+# this pair the check could be a naive string compare against ".githooks" and
+# nothing here would notice.
+must git -C "$D" config core.hooksPath ./.githooks
+runp "$D"
+c_not "a ./ prefixed path is the same directory, not a finding" 'githooks-elsewhere'
+must git -C "$D" config core.hooksPath "$D/.githooks"
+runp "$D"
+c_not "an absolute path to the same directory is not a finding" 'githooks-elsewhere'
+
 # =============================================================================
 echo
 echo "passed: $PASS   failed: $FAIL"

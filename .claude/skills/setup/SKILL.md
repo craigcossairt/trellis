@@ -8,15 +8,25 @@ description: Walk a new project through setting up this template - interview the
 `SETUP.md` is a checklist a person works through alone. This runs the same
 checklist as a conversation: you ask, they answer, you write the files.
 
-**`SETUP.md` is the script. Read it now and follow ITS steps and ITS order.**
-Nothing below repeats its content, deliberately - a copy here would drift from
-the real checklist within one edit, and then two files would disagree about what
-setup is. This file only covers how to *conduct* it.
+**`SETUP.md` is the script.** Nothing below repeats its content, deliberately -
+a copy here would drift from the real checklist within one edit, and then two
+files would disagree about what setup is. This file only covers how to *conduct*
+it.
 
-## Before anything: one question, then calibrate
+Order of operations, and it only goes this way round:
 
-Ask both of these in a single `AskUserQuestion` call, before reading anything
-else or touching a file.
+1. Ask the two calibration questions below. Nothing else first.
+2. Read `SETUP.md`.
+3. Work its steps, in its order, as an interview.
+
+Asking first is not a stylistic preference. Their answer decides how much you
+explain at every step after it, so reading the checklist first means drafting
+the whole conversation for a reader you have not met yet.
+
+## 1. Before anything: two questions, then calibrate
+
+Ask both of these in a single `AskUserQuestion` call, before reading `SETUP.md`
+or touching any file.
 
 1. **How much have you built before?** Offer: *first real project* / *I code,
    new to working with an agent* / *I do this for a living*.
@@ -34,7 +44,7 @@ main thing the skill exists to get right:
 Whatever they said, never make them read a file to answer a question. You have
 read it; put the choice to them in their own terms.
 
-## How to run each step
+## 2. How to run each step
 
 - **Ask, then write.** Never leave a `<!-- FILL IN -->` for them to find later.
   The whole point is that they finish this conversation with the files filled.
@@ -112,8 +122,9 @@ refuses. A hook that silently is not wired looks exactly like a hook that is
 working, right up until it matters. If it does not refuse, that is the finding -
 say so plainly and fix it before calling setup done.
 
-Then write their first `docs/decision-log.md` entry: what they decided to build
-and why, in their words. It is the first thing future-them will read.
+`SETUP.md` step 2 already had them write the first `docs/decision-log.md` entry.
+Do not write a second one here - check that it exists, and if it got skipped,
+that is the moment to catch it rather than to duplicate it.
 
 ## Last
 
