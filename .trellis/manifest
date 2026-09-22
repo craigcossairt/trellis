@@ -31,7 +31,7 @@ ab6a8742f913ac4c7d60a75eeca60657099bfd7c .cursor/skills/trellis-sync/SKILL.md
 f1cc799bcb6b67040f8e7512304965256d0499b0 .gitattributes
 c2f161b0fc48ed8cd02467c844b1a20516a00990 .githooks/pre-push
 28dc2cdc181429ba7b29b85229d91dfbb9a4a2e2 .github/copilot-instructions.md
-1d5685353d53e712ca2354817514a5b71c24a223 .github/workflows/hooks-ci.yml
+11c9036c0ecd9da822ae08f750fe9a9aaa5a4b15 .github/workflows/hooks-ci.yml
 27755e89ddacd1daa89602ddceb45c80f2151edb .gitignore
 13ec07cb599bd6c3fd72c9307d28178b324f8c2a .grok/config.toml
 f9da9d6ea176fc711a598a4ba8b9a3a3d91feffe .grok/hooks/hooks.json

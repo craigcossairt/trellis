@@ -421,6 +421,17 @@ jobs:
           #
           # Mutation ledger, measured 2026-09-21 over 35 cases:
           #
+          #   manifest --check stops stripping CR           1 -> 1 red
+          #   sync classifier stops stripping CR            0 red ON WINDOWS
+          #     Stated as measured, not rounded up. MSYS awk strips a trailing
+          #     CR at input (verified: field length 10, not 11), so on Windows
+          #     the classifier is accidentally immune and the mutation cannot
+          #     go red there. `bash read` does NOT strip it, which is why
+          #     --check broke and the classifier did not. On Linux awk keeps
+          #     the CR, so the strip is load-bearing there - this step is the
+          #     only place that claim gets exercised, and it has not been
+          #     mutation-measured on Linux. The strip stays because it is
+          #     correct and free, not because it is covered.
           #   apply ignores whether upstream changed        2 -> 2 red
           #     Only reachable when a setup baseline exists AND upstream did not
           #     change the file. The first draft of the suite had no such case,
