@@ -522,3 +522,55 @@ jobs:
             fi
           done
           exit $fail
+
+      - name: Suite - trellis-sync (classification + manifest)
+        run: |
+          # The whole value of sync is one distinction: "I changed this" vs
+          # "upstream changed this". Wrong in one direction it nags about files
+          # you meant to change; wrong in the other it overwrites your work.
+          # 35 cases, and every one asserts the exact bucket rather than just
+          # that something was reported.
+          #
+          # Mutation ledger, measured 2026-09-21 over 35 cases:
+          #
+          #   manifest --check stops stripping CR           1 -> 1 red
+          #   sync classifier stops stripping CR            0 red ON WINDOWS
+          #     Stated as measured, not rounded up. MSYS awk strips a trailing
+          #     CR at input (verified: field length 10, not 11), so on Windows
+          #     the classifier is accidentally immune and the mutation cannot
+          #     go red there. `bash read` does NOT strip it, which is why
+          #     --check broke and the classifier did not. On Linux awk keeps
+          #     the CR, so the strip is load-bearing there - this step is the
+          #     only place that claim gets exercised, and it has not been
+          #     mutation-measured on Linux. The strip stays because it is
+          #     correct and free, not because it is covered.
+          #   apply ignores whether upstream changed        2 -> 2 red
+          #     Only reachable when a setup baseline exists AND upstream did not
+          #     change the file. The first draft of the suite had no such case,
+          #     so this mutation went 0 red over 33 green - a hole sitting over
+          #     the most damaging thing this tool could do, offering to replace
+          #     a filled-in AGENTS.md with the blank template.
+          #   localonly drops its local-change half        3 -> 3 red
+          #   converged-content check removed              1 -> 1 red
+          #   empty upstream manifest accepted             2 -> 2 red
+          #   missing local manifest accepted              2 -> 2 red
+          #   manifest: empty-is-an-error removed          2 -> 2 red
+          #     Was 1 until the message assertion stopped using the alternation
+          #     `did not run|empty` - the broken version still printed "empty",
+          #     so the case could not tell them apart.
+          #   manifest: file-exists check removed          2 -> 2 red
+          #   manifest: self-exclusion removed             1 -> 1 red
+          #     Was 0 until the fixture TRACKED the manifest: `git ls-files`
+          #     lists only tracked files, so an untracked one is excluded by
+          #     accident and the case passes with the exclusion deleted.
+          bash bin/tests/test-trellis-sync.sh
+
+      - name: Manifest is well formed
+        run: |
+          # Deliberately NOT a check that the manifest matches the working tree.
+          # It describes a RELEASE, not the current state of main, so requiring
+          # it to match every commit would be wrong and would make every PR
+          # regenerate it. What must hold is that it parses and that nothing it
+          # names has vanished. An empty manifest exits 2 rather than 0, because
+          # a generator that produced nothing is not a clean result.
+          bash bin/trellis-manifest.sh --check
