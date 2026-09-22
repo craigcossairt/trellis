@@ -94,9 +94,14 @@ The knowledge in this file and `docs/` is harness-agnostic; each tool gets only 
 | Gemini CLI | `GEMINI.md` pointer |
 | GitHub Copilot | `.github/copilot-instructions.md` pointer |
 
+**This table lists what is wired, not what runs. For which features are missing per harness, see
+`docs/harness-support.md`.** Three of the six run no hooks at all, and on those every rule here
+is advisory - the agent honors it because nothing is enforcing it.
+
 Claude, Cursor, and Grok all run the SAME hook scripts (via `bin/run-claude-hook.sh` for the
-latter two) - guardrail logic exists once. Where a harness runs no hooks at all, agents must
-still honor the rules the hooks enforce (don't edit secrets, verify before push).
+latter two) - guardrail logic exists once. Two guardrails survive everywhere regardless of
+harness, because they sit at the boundary rather than in the session: the push gate is a git
+hook that runs inside `git push`, and hooks CI runs on GitHub.
 
 Skills and command protocols work the same way: one canonical body under `.claude/`, and a thin
 router for any harness that cannot load it directly. **While an adapter is present, a new skill
