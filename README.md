@@ -25,6 +25,7 @@ that prevents that - before the chaos starts.
 |---|---|
 | `AGENTS.md` | One instruction file that every major AI tool reads (Claude Code, Cursor, Codex, Gemini CLI, Copilot). Your conventions, methodology, and project facts live here once - not re-explained every session. |
 | `SETUP.md` | Day-1 setup, two ways: let your AI interview you and make the edits, or follow the checklist yourself. About 15 minutes for the core steps, plus a couple of optional extras. Explains what each piece is before asking you to touch it. |
+| `bin/trellis-survey.sh` | Read-only answer to "is any of this actually running?" - hooks on disk that nothing invokes, hooks the harness calls that are not there, skills one tool cannot see, setup left half-finished. Every one of those looks like a working setup from the outside. |
 | `DESIGN.md` | Design defaults your agent reads before it builds UI: name every value as a token, treat repeats as components, decide every state up front. No colours or type choices - those are yours, and the file has slots for them. Delete or override freely. |
 | `docs/methodology/` | Battle-tested working rules: test-first development, a disciplined bug-fix protocol, why a second model should review anything you would hate to get wrong, and habits for keeping AI sessions sharp. Plain markdown, works with any tool. |
 | `docs/common-gotchas.md` | A running "symptom, cause, fix" table. Your AI appends to it after every bug fix, so the same bug never costs you twice. |
