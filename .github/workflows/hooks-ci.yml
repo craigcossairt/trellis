@@ -443,6 +443,67 @@ jobs:
           #   claim layer skips deletions                      1 -> 1 red
           bash bin/tests/test-push-gate.sh
 
+      - name: Suite - sensitive-file block hook
+        run: |
+          # The hook that stops an agent writing to .env. Until this step it was
+          # covered by `bash -n` and shellcheck only, which prove it parses and
+          # say nothing about whether it blocks. 57 cases.
+          #
+          # Mutation ledger, measured 2026-09-21 over 57 cases. Predicted case
+          # sets were named before each run and every one matched exactly:
+          #
+          #   parse failure exits 0 instead of 2            7 -> 7 red
+          #     The fail-CLOSED property. A payload that arrives and resolves to
+          #     no path must refuse, because the check could not run - which is
+          #     a different fact from "no payload arrived", and that one is
+          #     deliberately exit 0.
+          #   BOTH exits become 0 (hook blocks nothing)    33 -> 33 red
+          #     Kept as the non-vacuity check for the suite as a whole.
+          #   SECRETS loses 'secrets'                       1 -> 1 red
+          #   \.key loses its $ anchor                      1 -> 1 red
+          #   yarn\.lock loses its $ anchor                 1 -> 1 red
+          #   \.min\.(js|css) loses its $ anchor            1 -> 1 red
+          #   \.generated\. loses its dots                  1 -> 1 red
+          #   template carve-out removed                    3 -> 3 red
+          #   pattern match becomes case-sensitive          1 -> 1 red
+          #   jq loses the Grok camelCase branch            2 -> 2 red
+          #   sed fallback loses its filePath probe         1 -> 1 red
+          #
+          # Five cases in the first draft asserted NOTHING and were found by
+          # these mutations rather than by review. Three used fixtures that
+          # never matched the pattern they claimed to test (keyboard.js does
+          # not contain ".key", so dropping that anchor cannot affect it). Two
+          # expected exit 2 on a sensitive path, which is what BOTH "recognized
+          # and blocked" and "could not parse, failed closed" produce - so a
+          # broken parser left them green. The fix for the second pair is to
+          # assert the refusal MESSAGE, which is the only place those two
+          # outcomes differ.
+          bash bin/tests/test-block-sensitive-files.sh
+
+      - name: Suite - session-start hook
+        run: |
+          # Looks like a pile of echoes; it is not. It picks its own root,
+          # branches on whether that root is a git repo, caps a list with
+          # arithmetic, and shells out to the installer that wires the real git
+          # pre-push hook. The failure mode is silence. 28 cases.
+          #
+          # Mutation ledger, measured 2026-09-21 over 28 cases, every predicted
+          # set matched exactly:
+          #
+          #   worktree check removed (.git must be a dir)   2 -> 2 red
+          #     In a linked worktree .git is a FILE. All branch work in this
+          #     template happens in worktrees, so losing that check blinds the
+          #     hook exactly where it is used most.
+          #   CLAUDE_PROJECT_DIR ignored                    3 -> 3 red
+          #     The dangerous failure is not silence, it is reporting another
+          #     repo's branch, which reads as correct.
+          #   cap boundary off by one (-gt -> -ge)          1 -> 1 red
+          #   overflow arithmetic drops the subtraction     2 -> 2 red
+          #   list cap tightened to 5                       2 -> 2 red
+          #   installer self-heal removed                   1 -> 1 red
+          #   closing marker removed                        3 -> 3 red
+          bash bin/tests/test-session-start.sh
+
       - name: JSON config is parseable
         run: |
           # settings.json wires every hook in this repo, and hooks.json does the
