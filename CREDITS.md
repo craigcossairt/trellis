@@ -42,6 +42,9 @@ that will tread on this template if you install them, are in
 | [gstack](https://github.com/garrytan/gstack) and [gbrain](https://github.com/garrytan/gbrain) | Garry Tan | Recommended with warnings - both overlap things this template ships |
 | [anydoc](https://github.com/firecrawl/anydoc) | Firecrawl | Recommended, documents to markdown |
 | [Longshot](https://github.com/craigcossairt/Longshot) | this template's author | Recommended, screenshots. Disclosed as the author's own tool where it is listed |
+| [Google Stitch](https://stitch.withgoogle.com/) | Google | Recommended, first-draft visuals for people new to design |
+| [Paper](https://paper.design/) | Paper | Recommended, design and code as one artifact |
+| [grill-design](https://github.com/will-ness-ai/skills) | Will Ness | This template's `/grill-design` skill is adapted from it |
 
 ## Licence
 

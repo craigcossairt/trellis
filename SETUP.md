@@ -5,9 +5,10 @@ This page gets your project set up. Work top to bottom. The core steps take abou
 ## Two ways to do this
 
 **Let your AI do it.** Open your AI coding tool in this folder and say *"walk me through
-SETUP.md"*. It asks you each question in plain conversation, makes the edits for you, and shows
-you every change before saving it. You will not have to edit a config file by hand. This is the
-recommended path if you are new to this.
+SETUP.md"* - or, in Claude Code, `/setup`. It asks you each question in plain conversation,
+makes the edits for you, and shows you every change before saving it. You will not have to edit
+a config file by hand. It starts by asking how much you have built before, and explains more or
+less depending on your answer. This is the recommended path if you are new to this.
 
 **Do it yourself.** Follow the checkboxes below. A few steps use a terminal (the window where
 you type commands instead of clicking). Each one says exactly what to type.
