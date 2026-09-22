@@ -202,6 +202,13 @@ format; delete the adapter and the rule goes with it.
   what is left is a pure function you can assert on directly. This does not replace the
   end-to-end check: a green suite over a feature that does not work at all is a real and
   different failure. It removes the excuse for having no test at all.
+- **Before building any UI, read `DESIGN.md`.** It asserts a small set of defaults - name every
+  value as a token rather than writing a literal, treat a repeated arrangement as a named
+  component, decide loading/empty/error/overflow while the component is at rest, and take
+  hierarchy from type and space before chrome. It prescribes no colours, type pairings or
+  spacing scale; those are the project's and the file has slots for them. It also carries the
+  order to protect these in when they conflict, so say which rung you applied rather than
+  quietly picking. Delete or override anything there that does not suit the project.
 - **Simplicity first** - make every change as simple as possible. Minimize code impact. No
   temporary fixes - find root causes.
 
