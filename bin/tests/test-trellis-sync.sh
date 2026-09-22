@@ -377,17 +377,75 @@ c_rc   "content that does not match its manifest hash exits 2" 2
 c_says "and says which hash it wanted" 'does not match the upstream manifest'
 c_file "and the destination still holds the ORIGINAL bytes" "$D2/x.md" 'shipped x'
 
+# A FRESH copy, deliberately. Run against $D2 this case shares a fixture with
+# the one above, and a mutation that lets the mismatch through corrupts x.md
+# there - so this case goes red for the PREVIOUS case's reason and the result
+# reads as coverage it does not have. Found by mutation: dropping the hash
+# verification turned this case red while nothing about truncation had changed.
+D3="$(new_copy applymissing)"
+printf 'shipped x
+' > "$D3/x.md"
+printf '%s x.md
+' "$(H "$D3" "$D3/x.md")" > "$D3/.trellis/manifest"
 MISSING="$TMP/upstream-missing"; rm -rf "$MISSING"; mkdir -p "$MISSING"
-apply_run "$D2" "$UB" "$MISSING" 'x.md'
+apply_run "$D3" "$UB" "$MISSING" 'x.md'
 c_rc   "an unreadable upstream file exits 2" 2
-c_file "and the destination is NOT truncated to empty" "$D2/x.md" 'shipped x'
+c_file "and the destination is NOT truncated to empty" "$D3/x.md" 'shipped x'
 
+# never-shipped.md EXISTS in the source dir and is absent from the manifest, so
+# the fetch would succeed and only the guard can stop it. The first draft left
+# the file out, which made the exit-2 assertion vacuous: deleting the guard
+# still exited 2, because the read failed instead. Mutation caught that - the
+# exit-code case stayed green and only the message case went red.
+printf 'something upstream has but never shipped
+' > "$BAD/never-shipped.md"
 apply_run "$D2" "$UB" "$BAD" 'never-shipped.md'
-c_rc   "a path upstream does not ship exits 2" 2
+c_rc   "a path upstream does not ship exits 2 even when readable" 2
 c_says "and says removing it is the user's call" 'your call, by hand'
+if [ -e "$D2/never-shipped.md" ]; then
+  bad "and it is not written into the copy" "never-shipped.md was written anyway"
+else ok "and it is not written into the copy"; fi
 
 OUT="$(bash "$SYNC" --root "$D2" --apply 2>&1)"; RC=$?
 c_rc "--apply with no path exits 2" 2
+
+echo "== F. --write refuses to run inside a copy =="
+# The dangerous command is now unavailable where it is dangerous. A copy's own
+# origin is a different repo from the upstream recorded in .trellis/source, and
+# that difference is the whole test. Refuse rather than warn: a warning printed
+# on a destructive default gets read once and then scrolled past.
+D="$(new_copy iscopy)"
+printf 'x\n' > "$D/x.md"
+must git -C "$D" add x.md .trellis/source
+printf '%s x.md\n' "$(H "$D" "$D/x.md")" > "$D/.trellis/manifest"
+must git -C "$D" remote add origin 'https://github.com/someone/their-project.git'
+
+OUT="$(bash "$MANIFEST_SH" --write --root "$D" 2>&1)"; RC=$?
+c_rc   "--write in a copy exits 2, it does not quietly rewrite the manifest" 2
+c_says "and says what it would have done to their files" 'removed upstream|safe to take'
+c_says "and names the command that IS right for a copy" 'trellis-sync.sh --apply'
+# The refusal has to leave the manifest alone, not refuse after clobbering it.
+c_file "and the manifest is untouched" "$D/.trellis/manifest" "$(H "$D" "$D/x.md") x.md"
+
+OUT="$(bash "$MANIFEST_SH" --write --root "$D" --force 2>&1)"; RC=$?
+c_rc "--force is the deliberate escape for cutting a release" 0
+
+# The template itself must still be able to cut a release: same-repo origin.
+D="$(new_copy istemplate)"
+printf 'x\n' > "$D/x.md"
+must git -C "$D" add x.md .trellis/source
+must git -C "$D" remote add origin 'https://github.com/example/tpl.git'
+OUT="$(bash "$MANIFEST_SH" --write --root "$D" 2>&1)"; RC=$?
+c_rc "the template's own checkout can still --write without a flag" 0
+
+# A copy with no origin at all cannot be told apart from the template, so it is
+# allowed rather than refused. Stated out loud because it is the hole in this
+# guard, and a hole named in a test is one somebody can close later.
+D="$(new_copy noorigin)"
+printf 'x\n' > "$D/x.md"
+must git -C "$D" add x.md .trellis/source
+OUT="$(bash "$MANIFEST_SH" --write --root "$D" 2>&1)"; RC=$?
+c_rc "with no origin to compare, --write is allowed (a known hole)" 0
 
 echo
 echo "passed: $PASS   failed: $FAIL"

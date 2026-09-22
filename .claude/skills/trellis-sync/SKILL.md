@@ -48,41 +48,54 @@ as if upstream had shipped them, and every future sync inherits that lie.
 Lead with `apply` and `added`, because those are the cheap wins. Summarise
 `localonly` as a count. A report where everything looks urgent gets skimmed.
 
-## 3. Apply what they pick, one file at a time
+## 3. Apply what they pick
 
-For each accepted path, fetch that file from upstream and write it:
+**You do not fetch or write files yourself.** One command does it:
 
 ```bash
-gh api "repos/<upstream>/contents/<path>" -H 'Accept: application/vnd.github.raw' > "<path>"
+bash bin/trellis-sync.sh --apply <path> [--apply <path> ...]
 ```
 
-`<upstream>` comes from `.trellis/source`. If `gh` is unavailable, use
-`curl -fsSL "https://raw.githubusercontent.com/<upstream>/HEAD/<path>"`.
+It resolves the upstream to a single immutable commit, takes the bytes for each
+path from that same commit, checks each one against its hash in the upstream
+manifest, and only then moves it into place. A file that fails any of that is
+not written and the run exits 2.
 
-Rules:
+The earlier version of this section told you to run
+`gh api "repos/<upstream>/contents/<path>" ... > "<path>"` by hand. Do not go
+back to it, and do not reach for it when the script is inconvenient. It was
+wrong twice over. That URL is the **default branch**, while the buckets above
+are computed from the release manifest, so the bytes written were not the bytes
+that had been classified. And `>` truncates the destination *before* the fetch
+runs, so a failed fetch left an **empty file** where the adopter's file had
+been. That is measured, not theoretical: 42 bytes to 0.
 
-- **Show the diff before writing**, for every file, including ones in `apply`.
+Rules that still need you:
+
+- **Show the diff before applying**, for every file, including `apply`.
   "Safe to take" means nobody edited it here, not that they wanted the change.
-- **Never write a `conflict` file without the user having seen both versions.**
-- **A failed fetch is a stop, not a skip.** Half-applying an update leaves a
-  copy in a state neither version was tested in. Report which files landed and
-  which did not.
+- **Never apply a `conflict` file without the user having seen both versions.**
+  Taking an update is a whole-file write. There is no merge.
 - If a file needs a matching change elsewhere - a skill and its Cursor router,
   a hook and its `settings.json` entry - take both or neither.
+- `removed` is not applied by this tool. Upstream deleting a file is not the
+  same as you wanting it gone; delete it yourself if you agree.
 
-## 4. Record what happened
+## 4. Recording happens automatically. Do not "regenerate the manifest"
 
-After applying, regenerate the manifest so the next sync compares against where
-they are now rather than where they were:
+`--apply` rewrites only the manifest lines for the files it actually took.
+Everything else is left exactly as it was, which is what makes a declined
+update show up again next time instead of disappearing.
 
-```bash
-bash bin/trellis-manifest.sh --write
-```
+**Never run `bin/trellis-manifest.sh --write` in a copy.** It hashes every
+tracked file, so it records *your* work as though the template had shipped it.
+Measured on a fixture: a template file the adopter had edited and declined went
+from `localonly` to `apply` - "SAFE TO TAKE" - on the very next run, and their
+own `src/app.ts` appeared under "REMOVED UPSTREAM - decide whether to keep". The
+command now refuses to run outside the template, but the reason matters more
+than the guard: the manifest records what the TEMPLATE shipped, and the moment
+it records anything else, every later sync inherits that.
 
-Then update `version=` in `.trellis/source` to the release just synced to, and
-commit the whole thing together. A manifest committed without the files it
-describes is worse than none.
-
-If the user declined everything, change nothing - not the manifest, not the
-version. Declining is not syncing, and recording it as a sync would hide those
-same updates next time.
+If the user declined everything, nothing is written - not the manifest, not the
+version. Declining is not syncing, and recording it as one would hide those same
+updates next time.
