@@ -6,6 +6,10 @@ those once per machine, not per project. Two are not: pstack is a Cursor plugin,
 installs per project. Each entry states its own scope. They are referenced here rather than
 vendored so they update from source and their licensing stays clean.
 
+**Read [Overlaps and collisions](#overlaps-and-collisions) before you install anything.** Skill
+packs install into a shared namespace. Some of the packs below ship a skill under a name this
+template already uses, and one of them edits files this template owns.
+
 ## Matt Pocock's skills - engineering discipline
 
 Eleven skills that force the agent to slow down: grill you on the plan, run a real debug loop,
@@ -70,19 +74,6 @@ Note: unlike the others, this installs per-project state - which fits, since des
 
 Source: https://impeccable.style/ (pbakaus/impeccable)
 
-## gstack - virtual engineering team
-
-Opinionated persona commands (CEO product rethink, eng-manager architecture lock, design
-critique, security audit, QA in a real browser, release engineer). Heavy install (~GBs: bundled
-browser + node_modules) - machine-level, clone once:
-
-```bash
-git clone --single-branch --depth 1 https://github.com/garrytan/gstack.git ~/.claude/skills/gstack
-cd ~/.claude/skills/gstack && ./setup
-```
-
-Source: https://github.com/garrytan/gstack
-
 ## anydoc - documents into Markdown so your knowledge base can read them
 
 Converts Word, PowerPoint, Excel, OpenDocument, RTF, EPUB, CSV and PDF into GitHub-flavored
@@ -138,6 +129,111 @@ Source: https://github.com/craigcossairt/Longshot
 
 ---
 
+# Overlaps and collisions
+
+Skill packs install into a shared namespace, and nothing warns you when two of them claim the
+same name. This section is the one place that tracks it. Everything here is still worth using -
+the point is to install it knowingly.
+
+| Pack | Overlaps with | What you get if you ignore it |
+|---|---|---|
+| Matt Pocock's skills | `/tdd`, and `implement` | Two TDD workflows with different rules and no way for the agent to pick |
+| pstack | `/tdd`, `/learn`, plus principles that argue against rules in your `AGENTS.md` | An agent holding two rule sets that contradict each other |
+| gstack | `/learn`, and your repo's `CLAUDE.md`, `.claude/settings.json` and `.claude/hooks/` if you run its team setup | A second `/learn` that writes somewhere else, and tracked files edited by an installer |
+| gbrain | `brain/` | Two project memories, neither aware of the other |
+
+## How name collisions actually work
+
+Worth understanding once, because it lets you check any pack yourself.
+
+Claude Code loads skills from two places: **user level** (`~/.claude/skills/`, shared by all your
+projects) and **project level** (`.claude/skills/`, this repo). Almost every pack here installs
+user-level. This template's skills are project-level. So a pack that ships a skill named `learn`
+does **not** overwrite this template's `learn` - the two files sit in different places. What you
+get instead is two skills answering to one name, and nothing tells you which one ran.
+
+The destructive case is narrower and worth knowing: if a pack installs a skill at a name where
+you already have a **user-level** skill of your own, the installer may replace your file outright.
+
+To check a pack before installing, list the names it ships and compare them against your own
+`.claude/skills/` and `.claude/commands/`. Note that a skill's installed name comes from the
+`name:` line inside its `SKILL.md`, which is not always its folder name.
+
+## gstack - virtual engineering team, and it edits your repo
+
+Opinionated persona commands (CEO product rethink, eng-manager architecture lock, design
+critique, security audit, QA in a real browser, release engineer). Genuinely capable. Heavy
+install (~GBs: bundled browser + node_modules) - machine-level, clone once:
+
+```bash
+git clone --single-branch --depth 1 https://github.com/garrytan/gstack.git ~/.claude/skills/gstack
+cd ~/.claude/skills/gstack && ./setup
+```
+
+Four things to know first. All four were checked against gstack v1.12.2.0 on 2026-09-21.
+
+**1. It installs under short names by default.** The installer offers short names (`/qa`, `/ship`,
+`/review`) or namespaced ones (`/gstack-qa`). Short is the default in every path that does not
+involve you typing: quiet mode, any non-interactive run, and the interactive prompt itself, which
+auto-selects short after ten seconds. Of the 42 skills it ships, exactly one collides with this
+template: **`learn`**. Choose namespaced at the prompt, or pass the flag, and the collision goes
+away entirely.
+
+**2. Installing over an existing user-level skill replaces it silently.** The installer links each
+skill into place with `ln -snf`, which removes whatever is already at that path. Tested directly:
+a `SKILL.md` of your own at a colliding name is replaced, exit code 0, no warning. On Windows the
+replacement is a copy rather than a link, so the original content is simply gone. This does not
+affect this template's skills, which are project-level - it affects any user-level skill of your
+own that shares a name with one of gstack's 42.
+
+**3. Its team setup edits files this template owns.** `gstack-team-init` appends a gstack section
+to your repo's `CLAUDE.md`, creates `.claude/hooks/check-gstack.sh`, and adds an entry to
+`.claude/settings.json`. This template's `CLAUDE.md` is deliberately an eleven-line pointer, and
+its `settings.json` has exactly four hook entries. Skip team init, or expect to review what it
+wrote.
+
+**4. `/ship` and the push gate will fight.** gstack's release commands commit and push. If you
+turned on this template's push gate, those pushes are refused until the checks have been recorded.
+That is the gate working, not a bug - but the tempting fix is to start bypassing the gate by
+reflex, at which point you no longer have one.
+
+Also worth knowing, though neither is a collision: it reports anonymous skill-usage telemetry to
+its author by default (set in `~/.gstack/config.yaml`), and its install instructions ask you to
+write a line into your `CLAUDE.md` telling your agent never to use the built-in browser tools.
+Your `AGENTS.md` is where your tool policy is decided; a line a vendor asks you to paste in is a
+suggestion to evaluate like any other.
+
+Source: https://github.com/garrytan/gstack
+
+## gbrain - a second project memory
+
+A separate project from gstack by the same author, despite the name and the bundled `/setup-gbrain`
+skill that installs it. It is agent memory in Postgres: pages, chunks, embeddings, typed links, a
+timeline. It attaches as an MCP server rather than as skills.
+
+```bash
+bun install -g github:garrytan/gbrain
+claude mcp add gbrain -- gbrain serve
+```
+
+**It overlaps `brain/` completely.** Both exist to feed relevant project context into your prompts.
+Running both means two stores with two ingest paths and no shared notion of what is true. Pick one.
+`brain/` is smaller, local, has no service dependency, and is already wired into this template's
+hooks. gbrain is far more capable and costs more to run. If you pick gbrain, delete `brain/`.
+
+**Its setup can ask for a Supabase personal access token.** One of its three storage options
+provisions a new Supabase project for you, which requires a token that grants access to *every*
+project in your Supabase account. The skill discloses this. The local PGLite option needs no
+token at all and is the right default.
+
+**Naming trap:** gstack ships its own scripts named `gstack-brain-*`. Those are unrelated to
+gbrain - they sync gstack's local state to a private GitHub repo. Three different things, two
+of them one letter apart.
+
+Source: https://github.com/garrytan/gbrain
+
+---
+
 # Services & integrations
 
 The service stack that earned its keep in the production setup this template was extracted
@@ -169,8 +265,10 @@ and pick the tool that fits your needs before committing - especially to a paid 
 ## Adding to this list
 
 Criteria for a skill-pack entry: actively maintained, installable from source with one command,
-and worth recommending to a teammate on day 1. Note any collisions with this template's
-commands/skills.
+and worth recommending to a teammate on day 1. Before adding one, list the skill names it ships
+and diff them against `.claude/skills/` and `.claude/commands/`; anything that overlaps, or any
+installer that writes into the repo, gets a row in **Overlaps and collisions** above. A collision
+recorded in one entry's prose and nowhere else is a collision the next reader will not find.
 
 Criteria for a service entry: it earned its keep in a real project, has a usable free tier or
 clear pricing, and ideally has an MCP server or CLI so agents can operate it, not just humans.
