@@ -640,6 +640,39 @@ jobs:
           #     accident and the case passes with the exclusion deleted.
           bash bin/tests/test-trellis-sync.sh
 
+      - name: Suite - trellis-survey (what is present vs what runs)
+        run: |
+          # The survey notices things that look EXACTLY like a working setup: a
+          # hook on disk nothing invokes, a hook settings.json invokes that is
+          # not on disk, a git hook without its exec bit, a router pointing at
+          # a deleted skill. All silent in normal use, so this suite is the
+          # only thing between them and going unnoticed.
+          #
+          # Mutation ledger, measured 2026-09-22 over 22 cases. Every
+          # prediction matched its named set exactly.
+          #
+          #   section() back to `case "$kind" in $1)`      1 -> 1 red
+          #     This was a REAL shipped defect, not a synthetic mutation. A `|`
+          #     arriving from a variable is an ordinary character in a case
+          #     pattern, not alternation, so every multi-kind section matched
+          #     nothing while the total still counted those findings: the
+          #     report said "5 finding(s)" and printed two. Found by running it
+          #     against a real copy, not by reading it - and shellcheck's
+          #     SC2254 was pointing straight at it, which is worth recalling
+          #     before disabling a warning because the glob looks intended.
+          #   dangling-router check removed                1 -> 1 red
+          #   wired-but-absent hook check removed          2 -> 2 red
+          #   examined-nothing reports clean               2 -> 2 red
+          #   template exemption drops the host check      1 -> 1 red
+          #
+          # One exec-bit case SKIPS where the filesystem cannot carry the mode
+          # both ways (MSYS on NTFS keeps +x and ignores -x). It is announced
+          # rather than silently counted as a pass, and CI is Linux, so here it
+          # runs. The probe tests BOTH directions on purpose: checking only that
+          # chmod +x sticks let the case run on a filesystem where it could
+          # never go red.
+          bash bin/tests/test-trellis-survey.sh
+
       - name: Manifest is well formed
         run: |
           # Deliberately NOT a check that the manifest matches the working tree.
