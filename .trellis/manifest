@@ -31,12 +31,12 @@ ab6a8742f913ac4c7d60a75eeca60657099bfd7c .cursor/skills/trellis-sync/SKILL.md
 f1cc799bcb6b67040f8e7512304965256d0499b0 .gitattributes
 c2f161b0fc48ed8cd02467c844b1a20516a00990 .githooks/pre-push
 28dc2cdc181429ba7b29b85229d91dfbb9a4a2e2 .github/copilot-instructions.md
-816a8dac6d22ea58baebf268d542090f5083eb01 .github/workflows/hooks-ci.yml
+70f29172df71d6b6e4ff84a8afccd7568752a69a .github/workflows/hooks-ci.yml
 27755e89ddacd1daa89602ddceb45c80f2151edb .gitignore
 13ec07cb599bd6c3fd72c9307d28178b324f8c2a .grok/config.toml
 f9da9d6ea176fc711a598a4ba8b9a3a3d91feffe .grok/hooks/hooks.json
 d45f37b3ca968f5d4157dd5a7bc798ca509021c3 .mcp.json.example
-2ed8298afc5c3912690814b88c2fbc68fe7c4233 .trellis/source
+d4dc614c8d9869bce7658a1148926fa01953bed8 .trellis/source
 835ac745751abbb531d6501d10d3553a9eb6abca AGENTS.md
 022d958bd89570bcc3b9309a635a33bdc82fa48f CLAUDE.md
 cc16aaa8e2445abaceca4eed87617f504975fa7e CREDITS.md
@@ -52,8 +52,8 @@ d6201b180c07f8ca88b3f1f2db3dbfe5668ad96e GEMINI.md
 62a463566a86e56b3927cb567892ec2d8779344e bin/tests/test-claim-branch.sh
 cbad4d9bcf5a05cdcc3c1ecbbd2e64b4d22c660a bin/tests/test-push-gate.sh
 907574c8cf09f7f302441a70a5bcd15b4d917fa4 bin/tests/test-session-start.sh
-a70d260b4b604c6deee227599ad9e31050f2de2f bin/tests/test-trellis-sync.sh
-b6a123d2af63e9722c41e8e3ff42cf1328291214 bin/trellis-manifest.sh
+201dc0906d2eb21d46a59e44a4e131daa8842800 bin/tests/test-trellis-sync.sh
+91412191ab5d481330862213a72648fb62e9e9d1 bin/trellis-manifest.sh
 28679e9041c2474d7d1a6960d29e34e11362ca8b bin/trellis-sync.sh
 675d553ae485bf146d951d3088fe183a203836dd bin/verify-green.sh
 93a6196e3c908c3639831a8d1038ff3b3efa45b2 brain/README.md
@@ -65,7 +65,7 @@ e69de29bb2d1d6434b8b29ae775ad8c2e48c5391 brain/raw/.gitkeep
 e69de29bb2d1d6434b8b29ae775ad8c2e48c5391 brain/summaries/.gitkeep
 df3c702390445e21b46ed4c647ebbdc02bd46734 docs/about-me.md
 d2c128d1ad079820768a7ad98592640ed1a1c49f docs/common-gotchas.md
-38d976829a8097852db8d1124752c62007c29019 docs/decision-log.md
+867ed5e1a118bd28fe6214aa632be3ea8ef14da2 docs/decision-log.md
 2b370ffd3e819ce5bcf494eb7d9f043b98082234 docs/growing-into-a-workspace.md
 3c92ad41c3d462a70f82611558747d0238843ce5 docs/harness-support.md
 c56f95020f2cfe21362788f051f5379fe2137442 docs/methodology/adversarial-review.md
