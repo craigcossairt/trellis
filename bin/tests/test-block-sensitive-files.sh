@@ -45,24 +45,63 @@ ok()  { PASS=$((PASS + 1)); printf '  ok   %s\n' "$1"; }
 bad() { FAIL=$((FAIL + 1)); printf '  FAIL %s\n     %s\n' "$1" "$2"; }
 
 # --- Build a PATH with jq removed, to exercise the sed fallback --------------
-# Removing the directory rather than shadowing the binary: `command -v` resolves
-# names, so a fake jq earlier in PATH would still be found and the jq branch
-# would still be taken. The result is VERIFIED below - if jq survives the
-# filter, the fallback cases would silently run through jq and pass for the
-# wrong reason, so that is a fixture failure and not a test failure.
-NOJQ_PATH="$PATH"
-if command -v jq >/dev/null 2>&1; then
-  for _ in 1 2 3 4 5; do
-    command -v jq >/dev/null 2>&1 || break
-    jq_dir="$(cd "$(dirname "$(command -v jq)")" && pwd)"
-    NOJQ_PATH="$(printf '%s' "$NOJQ_PATH" | tr ':' '\n' | grep -vxF "$jq_dir" | paste -sd: -)"
-    PATH="$NOJQ_PATH" command -v jq >/dev/null 2>&1 || break
+# Shadowing does not work: `command -v` resolves names, so a fake jq earlier in
+# PATH is still found and the jq branch is still taken. jq has to be genuinely
+# unreachable. Two strategies, because no single one is portable:
+#
+#   1. Drop every directory that contains a jq. Works where jq lives somewhere
+#      of its own (a Windows package manager's shim directory). Useless on a
+#      typical Linux box, where jq is in /usr/bin and dropping that takes sed,
+#      grep and cat with it.
+#   2. Build a directory of links to only the tools the fallback needs, and use
+#      that as the whole PATH. Works on Linux; on Windows a copied bash cannot
+#      find its DLLs, which is why strategy 1 exists.
+#
+# Each is VERIFIED before use - jq must be gone AND the tools must still work.
+# An unverified strategy would run the fallback cases through jq and pass for
+# the wrong reason, which is worse than not running them.
+TMPBIN="$(mktemp -d 2>/dev/null || mktemp -d -t blocktest)"
+trap 'rm -rf "$TMPBIN"' EXIT
+
+usable() { # $1 candidate PATH -> jq absent and the fallback's tools present
+  PATH="$1" command -v jq >/dev/null 2>&1 && return 1
+  local t
+  for t in bash sed grep head cat; do
+    PATH="$1" command -v "$t" >/dev/null 2>&1 || return 1
   done
-  if PATH="$NOJQ_PATH" command -v jq >/dev/null 2>&1; then
-    echo "FIXTURE FAILED: could not remove jq from PATH; fallback cases would run through jq" >&2
+  return 0
+}
+
+NOJQ_PATH=""
+if command -v jq >/dev/null 2>&1; then
+  HAVE_JQ=1
+  # Strategy 1: filter, recomputing from the CANDIDATE each pass. Recomputing
+  # from the original PATH would keep finding the same directory and never walk
+  # on to the second copy - which is exactly how this passed locally and failed
+  # on a runner where /bin and /usr/bin both resolve jq.
+  cand="$PATH"
+  for _ in 1 2 3 4 5; do
+    PATH="$cand" command -v jq >/dev/null 2>&1 || break
+    d="$(cd "$(dirname "$(PATH="$cand" command -v jq)")" && pwd)"
+    cand="$(printf '%s' "$cand" | tr ':' '\n' | grep -vxF "$d" | paste -sd: -)"
+  done
+  usable "$cand" && NOJQ_PATH="$cand"
+
+  # Strategy 2: a directory of links to just what the fallback needs.
+  if [ -z "$NOJQ_PATH" ]; then
+    mkdir -p "$TMPBIN/bin"
+    for t in bash sed grep head cat tr; do
+      src="$(command -v "$t" 2>/dev/null)" || continue
+      ln -sf "$src" "$TMPBIN/bin/$t" 2>/dev/null || cp "$src" "$TMPBIN/bin/$t" 2>/dev/null || true
+    done
+    usable "$TMPBIN/bin" && NOJQ_PATH="$TMPBIN/bin"
+  fi
+
+  if [ -z "$NOJQ_PATH" ]; then
+    echo "FIXTURE FAILED: could not build a PATH with jq absent and sed/grep present." >&2
+    echo "  The sed-fallback cases would have run through jq and passed for the wrong reason." >&2
     exit 1
   fi
-  HAVE_JQ=1
 else
   HAVE_JQ=0
 fi
@@ -201,7 +240,9 @@ check "tool_input.path resolves WITH jq"          0 "$(nested 'src/index.ts')"
 check "tool_input.path fails CLOSED without jq"   2 "$(nested 'src/index.ts')" "$NOJQ_PATH"
 
 echo "== J. a broken jq is not a free pass =="
-BROKEN="$(mktemp -d)"; trap 'rm -rf "$BROKEN"' EXIT
+# Reuses TMPBIN rather than taking its own temp dir: a second `trap ... EXIT`
+# REPLACES the first, so the earlier directory would never be cleaned up.
+BROKEN="$TMPBIN/brokenjq"; mkdir -p "$BROKEN"
 printf '#!/bin/sh\nexit 1\n' > "$BROKEN/jq"; chmod +x "$BROKEN/jq"
 # jq resolves but fails: the helper takes the jq branch, gets nothing back, and
 # the hook must refuse rather than allow.
