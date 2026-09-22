@@ -31,9 +31,14 @@ session already knows it. This page is the 10-minute guide to writing one that a
 
 ## The hardening checklist
 
-Before you call a skill finished, ask these six questions. Most skills need only one or two of
-these, but knowing the list keeps you from writing a skill where a stronger mechanism was
-available:
+Before you call a skill finished, work through the questions below. Most skills need only one or
+two of them, but knowing the list keeps you from writing a skill where a stronger mechanism was
+available.
+
+(The count is deliberately not written out here. It said "six" while the list held seven, and
+then eight - a number stated in one place and maintained in another drifts the moment somebody
+adds an item, which is the same reason the ratchets in this template keep their budgets in
+exactly one file.)
 
 1. **Should this be a hook instead of a skill?** A skill only helps when someone invokes it.
    If the point is "never let X happen" (bad edits, secrets in commits), wire it as a hook that
