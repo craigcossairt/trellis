@@ -1,86 +1,142 @@
 # SETUP.md - Day-1 checklist
 
-Work top to bottom. Delete this file when done (or keep it until the project has real shape).
+This page gets your project set up. Work top to bottom. The core steps take about 15 minutes.
 
-> **Shortcut:** open your AI coding tool and say *"walk me through SETUP.md"* - it will ask you
-> the fill-in questions conversationally and make the edits for you. Recommended if you're not
-> used to editing config files by hand.
+## Two ways to do this
 
-## 1. Identity (5 min)
+**Let your AI do it.** Open your AI coding tool in this folder and say *"walk me through
+SETUP.md"*. It asks you each question in plain conversation, makes the edits for you, and shows
+you every change before saving it. You will not have to edit a config file by hand. This is the
+recommended path if you are new to this.
 
-- [ ] `AGENTS.md` - fill every `<!-- FILL IN -->` slot: project name, owner, stage, tech stack
-      table, getting-started commands.
-- [ ] `AGENTS.md` § Delegation - fill in the current model names for each tier (they turn over
-      every few months; the tier structure is the stable part).
-- [ ] Decide the em-dash rule (keep or delete the optional content rule).
-- [ ] `docs/about-me.md` - fill in your background, technical level, and working style. Five
-      minutes here upgrades every piece of advice agents give you.
+**Do it yourself.** Follow the checkboxes below. A few steps use a terminal (the window where
+you type commands instead of clicking). Each one says exactly what to type.
 
-## 2. Tracker + docs (2 min)
+Either way, nothing here is permanent. Every piece of this template is optional and deletable.
 
-- [ ] Point the "Active issues + priorities" line in AGENTS.md at your issue tracker (Linear
-      project, GitHub Issues, etc.).
-- [ ] `docs/decision-log.md` - add your first entry: the decision to start this project.
+Delete this file when you are done, or keep it until the project has real shape.
 
-## 3. Secrets (3 min)
+---
 
-- [ ] `cp .env.example .env` and fill values from your password manager. `.env` is gitignored.
-- [ ] If using MCP servers: `cp .mcp.json.example .mcp.json` and fill in. Also gitignored -
-      commit a scrubbed version only if the whole team should share server config.
+## 1. Tell the AI about your project (5 min)
 
-## 4. Hooks (3 min)
+Right now your AI knows nothing about what you are building. This step fixes that. What you fill
+in here is read at the start of every session, by every AI tool you use, so you never have to
+re-explain your project.
 
-- [ ] `.claude/hooks/format-on-edit.sh` - check the extension → formatter map covers your stack;
-      add/remove languages. It silently no-ops for missing formatters, so over-including is safe.
-- [ ] `.claude/hooks/block-sensitive-files.sh` - add project-specific generated-file patterns
-      (e.g. `*.g.dart` for Flutter, `*_pb2.py` for protobuf).
-- [ ] Hooks run through `.claude/settings.json` with `$CLAUDE_PROJECT_DIR` paths - nothing to
-      edit there unless you add hooks.
-- [ ] Optional push gate: fill in `GREEN_COMMANDS` in `bin/verify-green.sh` (your lint/test
-      commands). Once non-empty, `git push` refuses any commit whose checks were never seen
-      passing - run `bash bin/verify-green.sh` before pushing to record the proof. The wiring
-      (`core.hooksPath=.githooks`) self-installs at session start; bypass with
-      `PROJECT_SKIP_VERIFY=1` for docs-only pushes. Leave the array empty to keep the gate off.
+- [ ] Open `AGENTS.md` and fill in every slot marked `<!-- FILL IN -->`: project name, what it
+      does, who owns it, what stage it is at, and your tech stack. If you do not know your stack
+      yet, write what you are leaning toward. You can fix it later.
+- [ ] In the same file, find the **Delegation** section and fill in a model name for each tier.
+      AI models get replaced every few months, so this is a note to yourself, not a setting.
+      If you are not sure, ask your AI: *"what are the current models for each tier?"*
+- [ ] Decide whether to keep the em dash rule. Em dashes are the long dashes that AI writing
+      uses constantly, so banning them is a quick way to make your public writing read as human.
+      Keep the rule or delete it.
+- [ ] Open `docs/about-me.md` and fill it in, especially **Technical level**. This is the
+      highest-value five minutes on this page. An AI that knows you have never used git explains
+      things completely differently from one that assumes you have. Write it as plain sentences,
+      not a rating: *"I can read code but I have never used branches"* tells it far more than
+      *"beginner"*. Change this file whenever your comfort level changes.
 
-## 5. Prune (2 min)
+## 2. Point at your to-do list (2 min)
 
-Everything is optional. Delete what this project won't use:
+Your AI should never guess what you are working on next. It should look it up.
 
-- [ ] Skills you won't need (`.claude/skills/*`) - e.g. `launch-check` is for user-facing apps.
-      Delete the matching Cursor router (`.cursor/skills/<name>/`) in the same commit; hooks CI
-      fails a router left pointing at a file you removed.
-- [ ] Harness adapters nobody on the project uses: `.cursor/`, `.grok/`, `GEMINI.md`,
-      `.github/copilot-instructions.md`. (If you keep `.cursor/` or `.grok/`, keep
-      `bin/run-claude-hook.sh` too - it's their shared hook adapter. Keeping `.cursor/` also
-      means keeping one router per skill and command - that is what makes them reachable
-      there, and CI checks the pair both ways.)
-- [ ] The push gate (`.githooks/`, `bin/verify-green.sh`, `bin/install-git-hooks.sh`) if you
-      never want push-time verification. It's inert until configured, so keeping it costs
-      nothing.
-- [ ] `brain/` if the project is small enough to not need a knowledge base (you can add it back
-      later - it's self-contained).
-- [ ] `examples/` once you've filled in your own AGENTS.md (it's a reference sample, nothing
-      points to it).
+- [ ] In `AGENTS.md`, find the "Active issues + priorities" line and point it at wherever you
+      track work: a GitHub Issues page, a Linear project, a Trello board, any URL. If you do not
+      have one yet, GitHub Issues is free and already attached to your repo.
+- [ ] Open `docs/decision-log.md` and add your first entry: the decision to start this project,
+      and why. This file becomes the answer to *"why on earth did I do it that way?"* six months
+      from now.
 
-## 6. Third-party tooling (optional, 5 min)
+## 3. Keep your passwords and keys out of git (3 min)
 
-- [ ] Skim `docs/recommended-tooling.md` - curated third-party skill packs (engineering
-      discipline, frontend design, persona commands) with install commands and collision
-      warnings. All user-level; install once per machine.
+A secret is any password, API key, or token. The rule is that they never go in git, because
+anything committed to git is very hard to truly delete.
 
-## 7. Brain (optional, 10 min)
+- [ ] Make a copy of `.env.example` and name the copy `.env`, then fill in your values.
+      In a terminal that is `cp .env.example .env`. The `.env` file is already set up to be
+      ignored by git, so it will not be committed by accident.
+- [ ] Only if you use MCP servers (extensions that give your AI access to outside tools like a
+      database or your issue tracker): make a copy of `.mcp.json.example` named `.mcp.json` and
+      fill it in. Also ignored by git. If you do not know what this means, skip it - you can
+      come back when you need one.
 
-Only if you want prompt-time context injection from a local corpus. Follow `brain/README.md`:
-install QMD, configure `brain/config.sh` sources, run the ingest, wire the hook. Skip on day 1.
-Rule of thumb: enable it once the project has roughly 15-20 real docs/decisions or a few weeks
-of commit history - before that there's nothing worth searching.
+## 4. Turn on the safety rails (3 min)
 
-## 8. Sanity check
+A **hook** is a small script that runs automatically at a specific moment, without anyone asking
+it to. This template ships four: one tidies your code after every edit, one refuses to let the
+AI touch your secrets, one shows you where you left off at the start of a session, and one feeds
+relevant project background into your prompts (that last one stays off until you set up `brain/`
+in step 7). They are already wired up. This step is only checking they fit your project.
 
-- [ ] Start an agent session in the repo root and ask: *"What are the working methodology rules
-      for this project?"* - it should answer from AGENTS.md.
-- [ ] Edit any source file and confirm the formatter hook ran.
-- [ ] Try to edit `.env` via the agent and confirm the block hook refuses. A guardrail that
-      no-ops looks identical to one that passes - only a deliberate violation proves it's alive.
-- [ ] If you configured the push gate: commit a trivial change and `git push` WITHOUT running
-      `bin/verify-green.sh` first - confirm the push is blocked, then verify and push for real.
+- [ ] Open `.claude/hooks/format-on-edit.sh`. This one tidies the layout of your code every time
+      a file is saved. Check that the list covers the languages you are using, and add yours if
+      it is missing. If the tidying tool for a language is not installed, the hook quietly does
+      nothing, so listing extra languages is harmless.
+- [ ] Open `.claude/hooks/block-sensitive-files.sh`. This one refuses to let the AI edit your
+      secrets, your lock files, and any file that is generated by a tool rather than written by
+      a person. Add patterns for your own generated files if you have them (for example
+      `*.g.dart`, or `*_pb2.py`).
+- [ ] Nothing to change in `.claude/settings.json`. That file is what connects the hooks to your
+      AI tool, and it already points at the right places.
+- [ ] **Optional - the push gate.** This one refuses to let you push code whose tests were never
+      seen passing, which is the single most useful guardrail here once you have tests. To turn
+      it on, open `bin/verify-green.sh` and fill in `GREEN_COMMANDS` with the commands that
+      check your project (your linter, your tests). Then, before pushing, run
+      `bash bin/verify-green.sh` to record that the checks passed. Leave the list empty and the
+      gate stays off, which is the right choice until you have tests worth gating on.
+      To push without it once, put `PROJECT_SKIP_VERIFY=1` in front of your push command.
+
+## 5. Delete what you will not use (2 min)
+
+Everything here is optional. A smaller template you understand beats a larger one you do not.
+
+- [ ] **Skills you do not need** (`.claude/skills/*`). A skill is a saved procedure your AI can
+      follow on request. `launch-check`, for example, only makes sense for an app real people
+      will use. If you delete a skill, delete its matching file in `.cursor/skills/<name>/` in
+      the same commit. That file is a pointer, and the automated checks fail if a pointer aims
+      at something that no longer exists.
+- [ ] **Adapters for AI tools nobody here uses**: `.cursor/` (Cursor), `.grok/` (Grok Build),
+      `GEMINI.md` (Gemini CLI), `.github/copilot-instructions.md` (GitHub Copilot). If you keep
+      `.cursor/` or `.grok/`, also keep `bin/run-claude-hook.sh`, which is how those two run the
+      same safety rails.
+- [ ] **The push gate** (`.githooks/`, `bin/verify-green.sh`, `bin/install-git-hooks.sh`) if you
+      never want push-time checks. It does nothing until you configure it, so keeping it costs
+      you nothing.
+- [ ] **`brain/`** if your project is too small to need a searchable memory. You can add it back
+      later; it is self-contained.
+- [ ] **`examples/`** once your own `AGENTS.md` is filled in. It is a worked sample of a
+      finished one, and nothing else refers to it.
+
+## 6. Outside tools (optional, 5 min)
+
+- [ ] Skim `docs/recommended-tooling.md`. It covers add-on skill packs and the services worth
+      paying for, with collision warnings where one would tread on something already in here.
+      Read the warnings before installing anything: some popular packs install skills under
+      names this template already uses.
+
+## 7. Project memory (optional, 10 min)
+
+This sets up a local search index over your own docs and history, so relevant background gets
+pulled into your prompts automatically. It is genuinely useful and genuinely not a day-1 task.
+
+- [ ] Skip this for now. Come back when the project has roughly 15 to 20 real documents and
+      decisions, or a few weeks of history. Before that there is nothing worth searching.
+      When you are ready, follow `brain/README.md`.
+
+## 8. Check that it worked (5 min)
+
+Do not skip this. A safety rail that silently does nothing looks exactly like one that is
+working. The only way to tell them apart is to try to break something on purpose.
+
+- [ ] Start an AI session in this folder and ask: *"What are the working methodology rules for
+      this project?"* It should answer from `AGENTS.md`. If it does not, your AI tool is not
+      reading the file, and nothing else on this page is doing anything either.
+- [ ] Edit any code file and confirm the formatting hook ran.
+- [ ] Ask your AI to edit `.env` and confirm it refuses. This is the important one: it proves
+      the block is alive rather than merely installed.
+- [ ] If you turned on the push gate: make a trivial change, commit it, and push WITHOUT running
+      `bash bin/verify-green.sh` first. The push should be refused. Then run the check and push
+      again for real.
