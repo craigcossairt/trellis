@@ -36,8 +36,19 @@
 # and verified. So --write refuses when this repo is not the template itself.
 #
 # Usage:
-#   trellis-manifest.sh --write [--root DIR]   regenerate the manifest (template only)
-#   trellis-manifest.sh --check [--root DIR]   validate it
+#   trellis-manifest.sh --write  [--root DIR]  regenerate the manifest (template only)
+#   trellis-manifest.sh --check  [--root DIR]  validate that it is well formed
+#   trellis-manifest.sh --verify [--root DIR]  AND that every hash matches the tree
+#
+# --check and --verify answer different questions, and the difference cost a
+# release. --check says the manifest parses and names nothing that has vanished;
+# it deliberately does NOT compare hashes, because the manifest describes a
+# RELEASE and goes stale on main on purpose. --verify does compare them, and is
+# what a release cut must pass: write the manifest LAST, after every other
+# change, then verify. v1.2.0 shipped with the manifest generated one step too
+# early - before a decision-log entry was appended - and a pristine clone of it
+# reported that file as "you changed this", which also masks any later upstream
+# change to it. --check passed the whole time, because nothing was malformed.
 #
 # Exit: 0 ok / 1 problem found / 2 could not run (not a repo, no manifest, ...)
 # A could-not-run is never reported as ok. "I did not check" is not "clean".
@@ -57,12 +68,13 @@ while [ $# -gt 0 ]; do
     --write) MODE="write"; shift ;;
     --force) FORCE=1; shift ;;
     --check) MODE="check"; shift ;;
+    --verify) MODE="verify"; shift ;;
     --root)  ROOT="${2:-}"; shift 2 ;;
     -h|--help) sed -n '2,34p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "trellis-manifest: unknown argument '$1'" >&2; exit 2 ;;
   esac
 done
-[ -n "$MODE" ] || { echo "trellis-manifest: need --write or --check" >&2; exit 2; }
+[ -n "$MODE" ] || { echo "trellis-manifest: need --write, --check or --verify" >&2; exit 2; }
 
 if [ -z "$ROOT" ]; then
   ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || {
@@ -134,7 +146,7 @@ if [ "$MODE" = "write" ]; then
   exit 0
 fi
 
-# --- check -------------------------------------------------------------------
+# --- check / verify ----------------------------------------------------------
 [ -f "$MANIFEST" ] || { echo "trellis-manifest: no .trellis/manifest to check" >&2; exit 2; }
 
 problems=0
@@ -154,6 +166,20 @@ while IFS= read -r line; do
   if [ ! -e "$ROOT/$path" ]; then
     echo "line $lineno: manifest names a file that no longer exists: $path"
     problems=$((problems + 1))
+    continue
+  fi
+  if [ "$MODE" = "verify" ]; then
+    # git hash-object, not a byte compare: on Windows the working tree is CRLF
+    # while the blob git recorded is LF, and comparing bytes would report drift
+    # on every text file.
+    actual="$(git -C "$ROOT" hash-object "$ROOT/$path" 2>/dev/null)"
+    if [ -z "$actual" ]; then
+      echo "line $lineno: could not hash $path"
+      problems=$((problems + 1))
+    elif [ "$actual" != "$hash" ]; then
+      echo "line $lineno: $path does not match the manifest (manifest $hash, tree $actual)"
+      problems=$((problems + 1))
+    fi
   fi
 done < <(tr -d "$CR" < "$MANIFEST")   # a CRLF checkout must not make every path unmatchable
 
@@ -167,7 +193,15 @@ fi
 
 if [ "$problems" -gt 0 ]; then
   echo "trellis-manifest: $problems problem(s) in .trellis/manifest"
+  if [ "$MODE" = "verify" ]; then
+    echo "  A release cut writes the manifest LAST, after every other change." >&2
+    echo "  Re-run: bash bin/trellis-manifest.sh --write" >&2
+  fi
   exit 1
 fi
-echo "trellis-manifest: $lineno entries, all well formed and present"
+if [ "$MODE" = "verify" ]; then
+  echo "trellis-manifest: $lineno entries, all present and matching the tree"
+else
+  echo "trellis-manifest: $lineno entries, all well formed and present"
+fi
 exit 0

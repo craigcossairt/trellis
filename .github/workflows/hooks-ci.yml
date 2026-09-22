@@ -522,7 +522,7 @@ jobs:
           # The whole value of sync is one distinction: "I changed this" vs
           # "upstream changed this". Wrong in one direction it nags about files
           # you meant to change; wrong in the other it overwrites your work.
-          # 74 cases, and every one asserts the exact bucket rather than just
+          # 93 cases, and every one asserts the exact bucket rather than just
           # that something was reported.
           #
           # Mutation ledger, measured 2026-09-22 over 62 cases. Predictions were
@@ -554,6 +554,29 @@ jobs:
           #     too, so the run exited 2 because the READ failed and the case
           #     proved nothing whatsoever.
           #   --write copy guard removed                     4 -> 4 red
+          #
+          # Third pass, --verify. This mode exists because of a defect in the
+          # RELEASE CUT, not in the tool: v1.2.0 was tagged with its manifest
+          # generated one step too early - written, then a decision-log entry
+          # appended, then committed - and a pristine clone of that tag
+          # reported docs/decision-log.md as `localonly` to an adopter who had
+          # changed nothing, which also masks any later upstream change to it.
+          # --check passed throughout and was right to; it asks a different
+          # question. Hence a new mode rather than a stricter --check.
+          #
+          #   hash comparison removed                        4 -> 4 red
+          #   verify stops reporting a vanished file         2 predicted, 3 red
+          #     The extra is a section D --check case: both modes share that
+          #     code path, so breaking it breaks --check too. Note the verify
+          #     EXIT-CODE case stays green - another mismatch in the same
+          #     fixture keeps problems above zero - and only the message case
+          #     distinguishes them. Third time that shape has appeared in this
+          #     ledger, which is the argument for asserting message text.
+          #   --check silently becomes --verify              2 predicted, 1 red
+          #     "does not claim it compared hashes" stays green: the success
+          #     message keys off MODE, which is still check, so that case
+          #     cannot go red under this mutation. It earns its red under a
+          #     mutation of the message branch instead.
           #
           # Second pass, after a cross-model review found three defects this
           # suite was already green and mutation-validated over. Each is now a
