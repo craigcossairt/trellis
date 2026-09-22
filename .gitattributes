@@ -12,3 +12,12 @@ brain/bin/qmd text eol=lf
 .claude/**/*.md text eol=lf
 .cursor/**/*.md text eol=lf
 .claude/settings.json text eol=lf
+
+# The manifest is a DATA file a script reads, not prose. Without this, a Windows
+# checkout writes it CRLF, every path in it gains a trailing carriage return,
+# and nothing matches - so sync reports every file as deleted upstream. It
+# passes when generated locally (LF) and fails when cloned, which is the only
+# way anyone but the author ever gets it.
+.trellis/manifest text eol=lf
+.trellis/baseline text eol=lf
+.trellis/source   text eol=lf

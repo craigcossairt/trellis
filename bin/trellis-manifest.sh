@@ -34,6 +34,11 @@
 # =============================================================================
 set -uo pipefail
 
+# The carriage return is computed, not written. A literal CR byte in a
+# shell script is invisible in every editor and diff, and the escape form
+# is rewritten by whichever of bash, sed or perl last touched the file.
+CR=$(printf '\r')
+
 MODE=""
 ROOT=""
 while [ $# -gt 0 ]; do
@@ -108,7 +113,7 @@ while IFS= read -r line; do
     echo "line $lineno: manifest names a file that no longer exists: $path"
     problems=$((problems + 1))
   fi
-done < "$MANIFEST"
+done < <(tr -d "$CR" < "$MANIFEST")   # a CRLF checkout must not make every path unmatchable
 
 if [ "$lineno" -eq 0 ]; then
   # An empty manifest is a could-not-have-run result, not a clean one: a real

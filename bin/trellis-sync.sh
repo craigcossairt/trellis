@@ -28,6 +28,11 @@
 # =============================================================================
 set -uo pipefail
 
+# The carriage return is computed, not written. A literal CR byte in a
+# shell script is invisible in every editor and diff, and the escape form
+# is rewritten by whichever of bash, sed or perl last touched the file.
+CR=$(printf '\r')
+
 ROOT=""; UPSTREAM_MANIFEST=""; PORCELAIN=0
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -109,7 +114,7 @@ fi
 work="$(mktemp -d 2>/dev/null || mktemp -d -t trellissyncwork)"
 trap 'rm -rf "$work" ${tmpdir:+"$tmpdir"}' EXIT
 
-norm() { LC_ALL=C sort -k2,2 "$1" | awk '{h=$1; $1=""; sub(/^ /,""); print $0 "\t" h}'; }
+norm() { tr -d "$CR" < "$1" | LC_ALL=C sort -k2,2 | awk '{h=$1; $1=""; sub(/^ /,""); print $0 "\t" h}'; }
 norm "$LOCAL_MANIFEST"    > "$work/orig"
 norm "$UPSTREAM_MANIFEST" > "$work/new"
 if [ -f "$BASELINE" ] && [ -s "$BASELINE" ]; then

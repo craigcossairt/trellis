@@ -28,7 +28,7 @@ ab6a8742f913ac4c7d60a75eeca60657099bfd7c .cursor/skills/trellis-sync/SKILL.md
 0142c05da7801c23be49533168b2056a2cc026e2 .cursor/skills/worktree/SKILL.md
 7759773811429fc7ae12c03e7aa66b33bc1faa94 .cursor/skills/write-a-prd/SKILL.md
 6926fdb398bcc33b58df6d73d058d37fb6eaf6e7 .env.example
-94820cdfbcfa91d465e2410629945ea0df13e44c .gitattributes
+f1cc799bcb6b67040f8e7512304965256d0499b0 .gitattributes
 c2f161b0fc48ed8cd02467c844b1a20516a00990 .githooks/pre-push
 28dc2cdc181429ba7b29b85229d91dfbb9a4a2e2 .github/copilot-instructions.md
 1d5685353d53e712ca2354817514a5b71c24a223 .github/workflows/hooks-ci.yml
@@ -49,9 +49,9 @@ d3d1f27c113d3b2dd0903ac525ffc39ee55e9c06 README.md
 684e684332f1138fd6f1203ba34d8811994ae5d1 bin/tests/test-claim-branch-lease.sh
 62a463566a86e56b3927cb567892ec2d8779344e bin/tests/test-claim-branch.sh
 cbad4d9bcf5a05cdcc3c1ecbbd2e64b4d22c660a bin/tests/test-push-gate.sh
-81002a790a95aa6962c68308eede89842098c1a3 bin/tests/test-trellis-sync.sh
-3166c0f10782a9ed6f57476f1a21991668b527f4 bin/trellis-manifest.sh
-c9086b130f6337ab0ff95d6f55c20cab766bce22 bin/trellis-sync.sh
+ebf053b7caab02f4fe96ca9de01cabe0256f941e bin/tests/test-trellis-sync.sh
+44ddc6b3c0882d63373fba34da99a32976e393e1 bin/trellis-manifest.sh
+1a4a6317e53a1be5cb7f0a1d3fee308d9a4bd873 bin/trellis-sync.sh
 675d553ae485bf146d951d3088fe183a203836dd bin/verify-green.sh
 93a6196e3c908c3639831a8d1038ff3b3efa45b2 brain/README.md
 8ae4436f12033cbee50824d93aff9ce1561e9e1b brain/bin/qmd

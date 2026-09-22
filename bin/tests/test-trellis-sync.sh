@@ -160,6 +160,36 @@ sync_run "$D" "$UP_SAME"
 c_absent "a setup-filled file upstream did not change is left alone" 'AGENTS.md'
 c_rc     "and that alone means there is nothing to take" 0
 
+echo "== B2. a CRLF manifest still works =="
+# This is what an adopter on Windows actually receives. `* text=auto` checks the
+# manifest out with CRLF unless .gitattributes pins it, every path then carries
+# a trailing carriage return, nothing matches, and sync reports the ENTIRE
+# template as deleted upstream. It passes when the manifest is generated locally
+# and fails when it is cloned - and CI runs on Linux, so CI never sees it.
+# Found by merging all the open branches together and running this suite in the
+# merged tree, which is the only place a checked-out manifest existed.
+to_crlf() { sed 's/$/\r/' "$1" > "$1.crlf" && mv "$1.crlf" "$1"; }
+D="$(new_copy crlf)"
+printf 'same\n' > "$D/keep.md"
+printf 'orig\n' > "$D/changed.md"
+{ printf '%s keep.md\n'    "$(H "$D" "$D/keep.md")"
+  printf '%s changed.md\n' "$(H "$D" "$D/changed.md")"; } > "$D/.trellis/manifest"
+to_crlf "$D/.trellis/manifest"
+# The LOCAL manifest is CRLF and the UPSTREAM one is LF, which is exactly the
+# real pairing: your copy was checked out by git on Windows, upstream's was
+# fetched raw from the API. Making BOTH sides CRLF - the first version of this
+# fixture - hides the bug, because the paths still match each other and only
+# the on-disk lookup suffers. Mutation caught that: neutralising the strip in
+# the classifier went 0 red until this fixture told the two sides apart.
+UCRLF="$TMP/up-crlf"
+{ printf '%s keep.md\n' "$(H "$D" "$D/keep.md")"
+  printf 'f%039d changed.md\n' 1; } > "$UCRLF"
+sync_run "$D" "$UCRLF"
+c_bucket "CRLF manifests still classify a real change" apply   'changed.md'
+c_absent "and an unchanged file is not reported as deleted" 'keep.md'
+OUT="$(bash "$MANIFEST_SH" --check --root "$D" 2>&1)"; RC=$?
+c_rc "--check accepts a CRLF manifest" 0
+
 echo "== C. exit codes, and could-not-tell is never clean =="
 D="$(new_copy exits)"
 printf 'x\n' > "$D/a.md"
