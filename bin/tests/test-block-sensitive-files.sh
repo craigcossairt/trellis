@@ -146,10 +146,14 @@ echo "== F. ordinary files are allowed =="
 # miss of a real pattern, so a rule that loses its anchor shows up here.
 check "allows src/index.ts"            0 "$(claude 'src/index.ts')"
 check "allows README.md"               0 "$(claude 'README.md')"
-check "allows keyboard.js (.key needs to end the path)"  0 "$(claude 'keyboard.js')"
-check "allows locksmith.md (lock patterns are suffixes)" 0 "$(claude 'locksmith.md')"
-check "allows src/generated/foo.ts (pattern is .generated.)" 0 "$(claude 'src/generated/foo.ts')"
-check "allows minify.js (pattern is .min.js)"            0 "$(claude 'minify.js')"
+# Each of these CONTAINS a blocked pattern without ending in it, so it goes red
+# the moment a `$` anchor is dropped. An unrelated name (keyboard.js, minify.js)
+# looks like it tests the anchor and does not - it never matched in the first
+# place, so it passes whatever the anchor does. Found by mutation, not by review.
+check "allows config.keys.json (.key must END the path)"      0 "$(claude 'config.keys.json')"
+check "allows yarn.lock.bak (lock patterns must END the path)" 0 "$(claude 'yarn.lock.bak')"
+check "allows app.min.js.map (.min.js must END the path)"     0 "$(claude 'app.min.js.map')"
+check "allows src/generated/foo.ts (pattern needs the dots)"  0 "$(claude 'src/generated/foo.ts')"
 check "allows docs/env-setup.md"       0 "$(claude 'docs/env-setup.md')"
 
 echo "== G. template carve-out =="
@@ -168,12 +172,26 @@ check_msg "parse refusal says the check could not run, not that the file is sens
   '{"tool_input":{}}' 'could not parse' 'this is a sensitive'
 check_msg "both refusals tell the user to confirm before editing" \
   "$(claude 'package-lock.json')" 'confirm with the user'
+# One per payload shape. Exit 2 alone cannot tell "the path was read and matched
+# a rule" from "the path could not be read at all", so without these a shape
+# whose parsing breaks still shows green on its sensitive case. The message is
+# the only place the two are distinguishable.
+check_msg "Claude shape blocks on the RULE, not on a parse failure" \
+  "$(claude '.env')" 'sensitive, lock, or generated' 'could not parse'
+check_msg "Grok shape blocks on the RULE, not on a parse failure" \
+  "$(grok '.env')" 'sensitive, lock, or generated' 'could not parse'
+check_msg "Cursor shape blocks on the RULE, not on a parse failure" \
+  "$(cursor '.env')" 'sensitive, lock, or generated' 'could not parse'
 
 echo "== I. sed fallback (jq removed from PATH) =="
 check "fallback: Claude shape, sensitive"   2 "$(claude '.env')"        "$NOJQ_PATH"
 check "fallback: Claude shape, ordinary"    0 "$(claude 'src/index.ts')" "$NOJQ_PATH"
 check "fallback: Cursor shape, sensitive"   2 "$(cursor '.env')"        "$NOJQ_PATH"
-check "fallback: Grok camelCase resolves"   2 "$(grok '.env')"          "$NOJQ_PATH"
+# Ordinary, not sensitive, on purpose. Exit 2 is what BOTH "recognized and
+# blocked" and "could not parse, failed closed" produce, so a sensitive path
+# here would pass whether or not the fallback resolves anything. Exit 0 can
+# only happen if the path was actually read.
+check "fallback: Grok camelCase resolves"   0 "$(grok 'src/index.ts')"  "$NOJQ_PATH"
 check "fallback: no path still fails CLOSED" 2 '{"tool_input":{}}'      "$NOJQ_PATH"
 # The documented asymmetry. With jq this parses and is allowed; without jq the
 # fallback cannot see a path nested under `path`, so the hook refuses rather

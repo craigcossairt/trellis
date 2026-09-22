@@ -39,7 +39,24 @@ Lessons already baked into these scripts - keep them in mind when adding hooks:
   something: break the thing under test, predict which case labels go red, then read which ones
   actually did. Confirm the mutation changed the file before believing its result - a pattern
   that no longer matches leaves the mutant byte-identical, and that all-green run reads as "the
-  suite does not cover this" when it means "the mutation never happened".
+  suite does not cover this" when it means "the mutation never happened". **Print the diff and
+  read it, too** - applying is not the same as applying correctly. A search string that occurs
+  twice replaces both, which is a bigger mutation than the one you named and produces a red
+  count that looks like broad coverage. Never filter the diff out of the harness's output to
+  reduce noise; it is the only thing that shows where the change actually landed.
+- **A case whose expected result is "it refused" may not be testing what you think.** A guard
+  that refuses on a rule and a guard that refuses because it could not read its input produce
+  the same exit code, so breaking the input parsing leaves such a case green. Either pair it
+  with a case that can only pass when parsing works (an allowed path, expecting success), or
+  assert the refusal MESSAGE, which is where the two differ.
+- **Do not begin a comment with the word `shellcheck`.** It is read as a malformed directive
+  (SC1072/SC1073) and checking of the rest of the file stops there - so you get FEWER findings,
+  which reads as a pass. Hit while writing the suites in `bin/tests/`: the file reported clean,
+  and rewording the comment immediately surfaced a real SC2086 further down that had been
+  invisible the whole time.
+- **`chmod +x` does not reach the index on a Windows checkout.** With `core.fileMode=false`,
+  git records the file as `100644` however the working tree looks, and CI's exec-bit step fails
+  on a script you can see is executable. Use `git update-index --chmod=+x <file>`.
 - **A workflow's `paths:` filter and your required status checks are one rule in two places.**
   If you make a check required in branch protection while its workflow filters paths, any PR
   touching only ignored paths publishes no such check. The requirement never reports, the PR
