@@ -11,26 +11,20 @@
 # either, it is silently skipped, so the skill never runs and nothing says so.
 name: hooks-ci
 
+# NO paths filter, deliberately. There was one, listing shell scripts,
+# .githooks, .claude, .cursor and .grok - and it silently excluded the inputs of
+# two of the checks below. The credits gate reads docs/recommended-tooling.md
+# and CREDITS.md; the manifest gate reads .trellis/manifest. A pull request
+# touching only those ran neither, so "CI fails when a recommendation has no
+# credit line" was true only when a shell script happened to change in the same
+# PR. docs/harness-support.md meanwhile told readers this job runs on every
+# pull request, which was the claim the filter falsified. A filter on a job that
+# is lint plus a handful of hermetic suites, and finishes in seconds, buys
+# nothing and costs the coverage its own docs promise.
 on:
   push:
     branches: [main]
-    paths:
-      - '**/*.sh'
-      - '.githooks/**'
-      - 'brain/bin/qmd'
-      - '.claude/**'
-      - '.cursor/**'
-      - '.grok/**'
-      - '.github/workflows/hooks-ci.yml'
   pull_request:
-    paths:
-      - '**/*.sh'
-      - '.githooks/**'
-      - 'brain/bin/qmd'
-      - '.claude/**'
-      - '.cursor/**'
-      - '.grok/**'
-      - '.github/workflows/hooks-ci.yml'
 
 jobs:
   lint:
@@ -528,10 +522,40 @@ jobs:
           # The whole value of sync is one distinction: "I changed this" vs
           # "upstream changed this". Wrong in one direction it nags about files
           # you meant to change; wrong in the other it overwrites your work.
-          # 35 cases, and every one asserts the exact bucket rather than just
+          # 62 cases, and every one asserts the exact bucket rather than just
           # that something was reported.
           #
-          # Mutation ledger, measured 2026-09-21 over 35 cases:
+          # Mutation ledger, measured 2026-09-22 over 62 cases. Predictions were
+          # written before each run, and every extra red is accounted for: an
+          # unexplained extra red is as much a signal as a missing one.
+          #
+          #   record from the working tree (the --write bug)  1 predicted, 2 red
+          #     Extra: "and nothing is outstanding" - once the declined edit is
+          #     misfiled as `apply` the run exits 1, not 0. A consequence.
+          #   recording sweeps in untracked files            3 -> 3 red
+          #   post-fetch hash verification dropped           3 -> 3 red
+          #     Was 4 until the unreadable-file case got its OWN copy. It shared
+          #     a fixture with the mismatch case, so a mutation that let bad
+          #     bytes through corrupted the file and this case went red for the
+          #     PREVIOUS case's reason - coverage it did not have.
+          #   write straight to the destination              2 predicted, 3 red
+          #     Extra: "applying one file exits 0" - source and destination
+          #     become one path, so the rename fails. Accounted for.
+          #   .trellis/baseline read reinstated              1 -> 1 red
+          #   not-in-upstream-manifest guard dropped         2 predicted, 1 red
+          #     READ THIS BEFORE TOUCHING THAT GUARD. Only the MESSAGE case goes
+          #     red. The hash check catches the same path a line later (an empty
+          #     expected hash never matches), so the exit code cannot tell the
+          #     two refusals apart and the exit-2 case is vacuous for this
+          #     mutation. The guard's whole surviving value is saying "removing
+          #     it is your call, by hand" rather than printing a confusing hash
+          #     mismatch. Deliberately not contrived into a red. The first draft
+          #     was worse still: never-shipped.md was absent from the source dir
+          #     too, so the run exited 2 because the READ failed and the case
+          #     proved nothing whatsoever.
+          #   --write copy guard removed                     4 -> 4 red
+          #
+          # Ledger from the previous round, still standing:
           #
           #   manifest --check stops stripping CR           1 -> 1 red
           #   sync classifier stops stripping CR            0 red ON WINDOWS
@@ -545,11 +569,12 @@ jobs:
           #     mutation-measured on Linux. The strip stays because it is
           #     correct and free, not because it is covered.
           #   apply ignores whether upstream changed        2 -> 2 red
-          #     Only reachable when a setup baseline exists AND upstream did not
-          #     change the file. The first draft of the suite had no such case,
-          #     so this mutation went 0 red over 33 green - a hole sitting over
+          #     The first draft of the suite had no case for this, so the
+          #     mutation went 0 red over 33 green - a hole sitting directly over
           #     the most damaging thing this tool could do, offering to replace
-          #     a filled-in AGENTS.md with the blank template.
+          #     a filled-in AGENTS.md with the blank template. The baseline that
+          #     made it reachable has since been removed outright, and a case
+          #     now asserts that putting one back moves no verdict.
           #   localonly drops its local-change half        3 -> 3 red
           #   converged-content check removed              1 -> 1 red
           #   empty upstream manifest accepted             2 -> 2 red

@@ -42,9 +42,12 @@ available:
 2. **Does it load only what it needs?** If the skill has a big reference (a style guide, an API
    doc), keep it in a separate file and have the skill read it only when the task needs it.
    A skill that dumps everything into context every time crowds out the actual work.
-3. **If it reviews something, is the reviewer blind?** Second opinions are only worth having if
-   they're independent. Don't show reviewer #2 what reviewer #1 (or the linter) said until it
-   has committed its own take - then synthesize. An anchored reviewer is a rubber stamp.
+3. **If it reviews something, is the reviewer blind, and is it a different model?**
+   Second opinions are only worth having if they're independent. Don't show reviewer #2 what
+   reviewer #1 (or the linter) said until it has committed its own take - then synthesize. An
+   anchored reviewer is a rubber stamp. And a model reviewing its own output is the weakest
+   review available: it re-reads its own reasoning and finds it persuasive. See
+   `docs/methodology/adversarial-review.md`.
 4. **Should runs compound?** If the skill runs repeatedly against the same thing (an audit, a
    critique, a brief), have it write a dated snapshot that the next run reads. Otherwise every
    run rediscovers the same findings from zero.
