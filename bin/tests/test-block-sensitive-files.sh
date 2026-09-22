@@ -63,10 +63,18 @@ bad() { FAIL=$((FAIL + 1)); printf '  FAIL %s\n     %s\n' "$1" "$2"; }
 TMPBIN="$(mktemp -d 2>/dev/null || mktemp -d -t blocktest)"
 trap 'rm -rf "$TMPBIN"' EXIT
 
-usable() { # $1 candidate PATH -> jq absent and the fallback's tools present
+# ONE list, used both to provision strategy 2 and to verify either strategy.
+# Two lists drift: the first version linked five tools and verified the same
+# five, while the hook also needs `dirname` to locate its helper. The runner
+# built a PATH that verified fine and could not run the hook, and only the two
+# cases expecting SUCCESS noticed - the ones expecting a refusal got one, for
+# entirely the wrong reason.
+NEEDED_TOOLS="bash sed grep head cat tr dirname"
+
+usable() { # $1 candidate PATH -> jq absent and every needed tool present
   PATH="$1" command -v jq >/dev/null 2>&1 && return 1
   local t
-  for t in bash sed grep head cat; do
+  for t in $NEEDED_TOOLS; do
     PATH="$1" command -v "$t" >/dev/null 2>&1 || return 1
   done
   return 0
@@ -90,7 +98,7 @@ if command -v jq >/dev/null 2>&1; then
   # Strategy 2: a directory of links to just what the fallback needs.
   if [ -z "$NOJQ_PATH" ]; then
     mkdir -p "$TMPBIN/bin"
-    for t in bash sed grep head cat tr; do
+    for t in $NEEDED_TOOLS; do
       src="$(command -v "$t" 2>/dev/null)" || continue
       ln -sf "$src" "$TMPBIN/bin/$t" 2>/dev/null || cp "$src" "$TMPBIN/bin/$t" 2>/dev/null || true
     done
