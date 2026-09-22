@@ -7,8 +7,12 @@ for building with AI coding agents - extracted from the real, daily-driven setup
 startup, then stripped of everything company-specific.
 
 **Who this is for:** founders and builders who are new to AI-assisted development ("vibe-coding")
-and want to start with good habits instead of discovering them the hard way. You don't need to
-be an engineer. If you can follow a checklist, you can use this.
+and want to start with good habits instead of discovering them the hard way. You don't need to be
+an experienced engineer. Setup involves a handful of terminal commands, and your AI can walk you
+through every one of them - open the repo and say *"walk me through SETUP.md"*.
+
+It also works as a no-ceremony starting point if you already build this way, and as a reference
+if you have an existing project and want to see what's worth borrowing.
 
 **The problem it solves:** AI coding tools are powerful on day 1 and chaotic by day 30. Without
 structure, you get inconsistent code, forgotten decisions, repeated bugs, secrets in git, and an
@@ -20,10 +24,10 @@ that prevents that - before the chaos starts.
 | Piece | What it does for you |
 |---|---|
 | `AGENTS.md` | One instruction file that every major AI tool reads (Claude Code, Cursor, Codex, Gemini CLI, Copilot). Your conventions, methodology, and project facts live here once - not re-explained every session. |
-| `SETUP.md` | A day-1 checklist: about 15 minutes for the core steps, plus a couple of optional extras. Fill in the blanks, delete what you don't need. |
+| `SETUP.md` | Day-1 setup, two ways: let your AI interview you and make the edits, or follow the checklist yourself. About 15 minutes for the core steps, plus a couple of optional extras. Explains what each piece is before asking you to touch it. |
 | `docs/methodology/` | Battle-tested working rules: test-first development, a disciplined bug-fix protocol, and habits for keeping AI sessions sharp. Plain markdown, works with any tool. |
 | `docs/common-gotchas.md` | A running "symptom, cause, fix" table. Your AI appends to it after every bug fix, so the same bug never costs you twice. |
-| `docs/decision-log.md` | One line per decision. Six months from now you'll know what you decided and why. |
+| `docs/decision-log.md` | What you decided, when, and why - at whatever length the reasoning takes. Six months from now, this is the file that answers "why did I do it that way?". |
 | `docs/about-me.md` | Tell the AI who you are (technical level, working style) so its advice actually fits you. |
 | `.claude/` | Claude Code extras: guardrail hooks (blocks edits to secrets, auto-formats code, injects context on session start), slash commands, and skills - a ranked daily brief, feature planning, safe dependency reviews, a pre-demo audit. |
 | `.githooks/` + `bin/verify-green.sh` | An optional push gate that works for humans AND agents: once you fill in your lint/test commands, `git push` refuses any commit whose checks were never seen passing. Off by default; self-installs its wiring at session start. |
@@ -37,7 +41,10 @@ that prevents that - before the chaos starts.
 
 1. Click **Use this template** on GitHub (or run
    `gh repo create my-project --template craigcossairt/trellis`).
-2. Open your new repo and work through **SETUP.md** - a 15-minute checklist.
+2. Open your new repo in your AI coding tool and say **"walk me through SETUP.md"**. It asks the
+   setup questions conversationally, makes the edits for you, and shows you each change before
+   it saves. Prefer to do it by hand? **SETUP.md** is the same steps as a checklist, about
+   15 minutes.
 3. Delete what you don't need. Every piece is independent; nothing breaks if you remove a
    skill, the brain, or an adapter you don't use.
 4. Optional but recommended: skim `docs/recommended-tooling.md` for curated third-party
