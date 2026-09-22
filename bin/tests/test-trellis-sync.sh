@@ -447,6 +447,105 @@ must git -C "$D" add x.md .trellis/source
 OUT="$(bash "$MANIFEST_SH" --write --root "$D" 2>&1)"; RC=$?
 c_rc "with no origin to compare, --write is allowed (a known hole)" 0
 
+echo "== G. what the cross-model review caught that the suite did not =="
+# Three defects found by a review after this suite was already green and
+# mutation-validated. Each one is a case here so the same hole cannot reopen.
+
+# G1. The host has to survive the identity check. upstream= is an owner/repo
+# pair that only ever means GitHub, so dropping the host made a remote on a
+# DIFFERENT host at the same path compare equal to the template and walk
+# straight through the --write guard.
+D="$(new_copy otherhost)"
+printf 'x\n' > "$D/x.md"
+must git -C "$D" add x.md .trellis/source
+printf '%s x.md\n' "$(H "$D" "$D/x.md")" > "$D/.trellis/manifest"
+must git -C "$D" remote add origin 'https://gitlab.com/example/tpl.git'
+OUT="$(bash "$MANIFEST_SH" --write --root "$D" 2>&1)"; RC=$?
+c_rc "same owner/repo path on another host still refuses --write" 2
+# The paired case is 'the template can still --write', which uses github.com
+# with the SAME path. Only the host differs, so the verdict is attributable.
+
+# G2. A path is data from the upstream manifest and gets checked like data.
+# `git ls-files` can never emit one of these, so its presence means the
+# manifest is wrong or hostile. Hash verification cannot catch it: it checks
+# what the bytes ARE, never where they are about to land.
+#
+# The fixture has to make the attack actually WORK without the guard, or the
+# case is vacuous - the first draft put the payload where the fetch would fail
+# anyway, so removing the guard still exited 2 and the case proved nothing.
+# Source dir is <evil>/sub, so `../pwned.md` resolves to <evil>/pwned.md and
+# hashes clean; destination is $D/../pwned.md, which is the victim in $TMP.
+D="$(new_copy traversal)"
+printf 'shipped\n' > "$D/keep.md"
+printf '%s keep.md\n' "$(H "$D" "$D/keep.md")" > "$D/.trellis/manifest"
+EVIL="$TMP/evilsrc"; rm -rf "$EVIL"; mkdir -p "$EVIL/sub"
+printf 'pwned\n' > "$EVIL/pwned.md"
+printf 'pwned\n' > "$EVIL/abs-victim.md"
+printf 'do not touch me\n' > "$TMP/pwned.md"
+printf 'do not touch me\n' > "$TMP/abs-victim.md"
+UEVIL="$TMP/up-evil"
+{ printf '%s keep.md\n'        "$(H "$D" "$D/keep.md")"
+  printf '%s ../pwned.md\n'    "$(H "$D" "$EVIL/pwned.md")"
+  printf '%s /%s\n' "$(H "$D" "$EVIL/abs-victim.md")" "${TMP#/}/abs-victim.md"; } > "$UEVIL"
+
+apply_run "$D" "$UEVIL" "$EVIL/sub" '../pwned.md'
+c_rc   "a manifest path that escapes the root exits 2" 2
+c_says "and names why, not just that something failed" 'escapes the project root'
+c_file "and the file outside the copy is untouched" "$TMP/pwned.md" 'do not touch me'
+
+# The absolute-path arm needs its own manifest entry, otherwise it exits 2
+# because the path is simply unknown and the case cannot tell the two
+# refusals apart - the same vacuousness the ledger records for the
+# not-in-manifest guard.
+apply_run "$D" "$UEVIL" "$EVIL" "/${TMP#/}/abs-victim.md"
+c_rc   "an absolute path exits 2 too" 2
+c_says "and for the same stated reason" 'escapes the project root'
+c_file "and its target is untouched" "$TMP/abs-victim.md" 'do not touch me'
+
+# G3. The rename replaces the destination INODE, so the mode travels with the
+# temp file - and a fetched file is 644. Applying an update to a git hook would
+# silently strip +x, and git skips a non-executable hook with NO output at all:
+# a guardrail that stops running and says nothing. The manifest records a hash
+# and a path, never a mode, so an existing file keeps the mode it had and a new
+# file is executable only if its content starts with a shebang.
+probe="$TMP/exec-probe"; printf '#!/bin/sh\n' > "$probe"; chmod +x "$probe" 2>/dev/null
+if [ -x "$probe" ]; then
+  D="$(new_copy execbit)"
+  mkdir -p "$D/.githooks"
+  printf '#!/usr/bin/env bash\necho old\n' > "$D/.githooks/pre-push"
+  chmod +x "$D/.githooks/pre-push"
+  printf 'plain\n' > "$D/notes.md"
+  { printf '%s .githooks/pre-push\n' "$(H "$D" "$D/.githooks/pre-push")"
+    printf '%s notes.md\n' "$(H "$D" "$D/notes.md")"; } > "$D/.trellis/manifest"
+  UPX="$TMP/upstream-exec"; rm -rf "$UPX"; mkdir -p "$UPX/.githooks"
+  printf '#!/usr/bin/env bash\necho new\n' > "$UPX/.githooks/pre-push"   # fetched: 644
+  printf 'plain v2\n'                      > "$UPX/notes.md"
+  printf '#!/usr/bin/env bash\necho brand new\n' > "$UPX/newhook.sh"
+  printf 'just text\n'                          > "$UPX/newdoc.md"
+  UEX="$TMP/up-exec"
+  { printf '%s .githooks/pre-push\n' "$(H "$D" "$UPX/.githooks/pre-push")"
+    printf '%s notes.md\n'           "$(H "$D" "$UPX/notes.md")"
+    printf '%s newhook.sh\n'         "$(H "$D" "$UPX/newhook.sh")"
+    printf '%s newdoc.md\n'          "$(H "$D" "$UPX/newdoc.md")"; } > "$UEX"
+
+  apply_run "$D" "$UEX" "$UPX" '.githooks/pre-push' 'notes.md' 'newhook.sh' 'newdoc.md'
+  c_rc "applying a mixed set exits 0" 0
+  if [ -x "$D/.githooks/pre-push" ]; then ok "an updated hook KEEPS its executable bit"
+  else bad "an updated hook KEEPS its executable bit" "git skips a non-executable hook silently"; fi
+  if [ -x "$D/notes.md" ]; then bad "an updated plain file does not gain one" "notes.md became executable"
+  else ok "an updated plain file does not gain one"; fi
+  if [ -x "$D/newhook.sh" ]; then ok "a NEW file with a shebang is executable"
+  else bad "a NEW file with a shebang is executable" "newhook.sh is not executable"; fi
+  if [ -x "$D/newdoc.md" ]; then bad "a NEW file without one is not" "newdoc.md became executable"
+  else ok "a NEW file without one is not"; fi
+else
+  # Stated rather than silently skipped. MSYS on NTFS reports 644 after chmod,
+  # so these four cases cannot run here and CI (Linux) is where they mean
+  # something. A skipped case reported as a pass is the thing this repo keeps
+  # warning about.
+  echo "  SKIP four exec-bit cases: this filesystem does not carry the mode"
+fi
+
 echo
 echo "passed: $PASS   failed: $FAIL"
 [ "$FAIL" -eq 0 ]

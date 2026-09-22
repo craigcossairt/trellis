@@ -80,10 +80,13 @@ bash bin/trellis-sync.sh
 
 It compares your copy against the current release by content and sorts every file into one of
 six buckets - changed upstream but not by you, new upstream, changed on both sides, and so on.
-Two buckets need a decision from you: files changed on both sides, and files upstream deleted
-that you still have. Nothing is written until you pick it, each file it writes is checked against
-the release it came from before it lands, and if it can't tell (no manifest, no network) it says
-so rather than reporting you as up to date.
+**Nothing is applied unless you name it.** Even the safe bucket needs an explicit
+`--apply <path>`; the report on its own writes nothing. Two buckets need more than a yes: files
+changed on both sides, which you review before selecting because taking an update is a
+whole-file write, and files upstream deleted that you still have, which the tool will not touch
+at all - removing them is your call. Each file it does write is checked against the release it
+came from before it lands, and if it can't tell (no manifest, no network) it says so rather than
+reporting you as up to date.
 
 This works because `.trellis/manifest` records what the template shipped at the version you
 copied. Keep that file, and never regenerate it from your own tree - that records your work as

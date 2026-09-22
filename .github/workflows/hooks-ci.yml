@@ -522,7 +522,7 @@ jobs:
           # The whole value of sync is one distinction: "I changed this" vs
           # "upstream changed this". Wrong in one direction it nags about files
           # you meant to change; wrong in the other it overwrites your work.
-          # 62 cases, and every one asserts the exact bucket rather than just
+          # 74 cases, and every one asserts the exact bucket rather than just
           # that something was reported.
           #
           # Mutation ledger, measured 2026-09-22 over 62 cases. Predictions were
@@ -554,6 +554,33 @@ jobs:
           #     too, so the run exited 2 because the READ failed and the case
           #     proved nothing whatsoever.
           #   --write copy guard removed                     4 -> 4 red
+          #
+          # Second pass, after a cross-model review found three defects this
+          # suite was already green and mutation-validated over. Each is now a
+          # case in section G; these are the mutations that keep them honest.
+          #
+          #   host dropped from the identity check           1 -> 1 red
+          #     Paired with "the template can still --write", which uses the
+          #     SAME owner/repo path on github.com. Only the host differs, so
+          #     the verdict is attributable to the host and nothing else.
+          #   traversal guard removed                        6 predicted, 4 red
+          #     The ../ arm goes fully red, including the file outside the copy
+          #     actually being overwritten - the first fixture could not do that
+          #     (the fetch failed anyway) and the case proved nothing until the
+          #     source dir was restructured so the attack works without the
+          #     guard. The ABSOLUTE arm keeps 2 green: `$ROOT/$p` with a leading
+          #     slash lands back under ROOT rather than escaping, and the read
+          #     then fails, so it exits 2 for a different reason. Only the
+          #     MESSAGE case can tell those apart, and it does. Same shape as
+          #     the not-in-manifest ledger entry above: where an exit code
+          #     cannot distinguish two refusals, the text is the assertion.
+          #   exec-bit preservation removed        named set matched, 2 red
+          #     Predicted count said 3 and named 2; the named set is what was
+          #     checked and it matched. "an updated plain file does not gain
+          #     one" stays green on purpose - a fetched file is already 644, so
+          #     that case is about not ADDING a bit and cannot go red here. It
+          #     earns its red under its own mutation (forcing chmod +x).
+          #   shebang arm only removed                       1 -> 1 red
           #
           # Ledger from the previous round, still standing:
           #

@@ -272,6 +272,19 @@ if [ "$DO_APPLY" -eq 1 ]; then
   failed=0
   for p in ${APPLY_PATHS[@]+"${APPLY_PATHS[@]}"}; do
     [ -n "$p" ] || continue
+    # A path is data from the upstream manifest, so it gets checked like data.
+    # `git ls-files` can never emit `..` or a leading slash, which is exactly
+    # why one appearing here means something is wrong - a hand-edited or
+    # hostile manifest - and why the answer is to refuse rather than normalise.
+    # Hash verification says nothing about this: it checks what the bytes ARE,
+    # never where they are about to land, so `../outside` would pass the hash
+    # check and then be written outside the copy entirely.
+    case "$p" in
+      /* | ../* | */../* | */.. | ..)
+        echo "trellis-sync: refusing the path $p - it escapes the project root." >&2
+        echo "  A manifest from this template never contains one. Check your upstream." >&2
+        failed=$((failed + 1)); continue ;;
+    esac
     want="$(lookup "$work/new" "$p")"
     if [ -z "$want" ]; then
       echo "trellis-sync: $p is not in the upstream manifest at $SRC_NOTE - not fetching." >&2
@@ -316,6 +329,21 @@ if [ "$DO_APPLY" -eq 1 ]; then
       failed=$((failed + 1)); continue
     fi
     mkdir -p "$(dirname "$ROOT/$p")"
+    # The rename replaces the destination INODE, so the mode travels with the
+    # temp file rather than with the path - and a fetched file is 644. Applying
+    # an update to a shell script or a git hook would therefore silently strip
+    # +x, and git skips a non-executable hook with no output at all. That is
+    # this repo's own stated worst case for a guardrail: not one that fails,
+    # one that stops running and says nothing. The manifest records a hash and
+    # a path, not a mode, so there are two cases. An existing file keeps the
+    # mode it already had. A NEW file is executable only if its content starts
+    # with a shebang, which is the one signal actually available here.
+    if [ -e "$ROOT/$p" ]; then
+      if [ -x "$ROOT/$p" ]; then chmod +x "$dest" 2>/dev/null || true
+      else chmod -x "$dest" 2>/dev/null || true; fi
+    elif [ "$(head -c 2 "$dest" 2>/dev/null)" = "#!" ]; then
+      chmod +x "$dest" 2>/dev/null || true
+    fi
     if mv "$dest" "$ROOT/$p"; then
       printf '%s\n' "$p" >> "$work/applied"
       echo "applied $p"

@@ -99,7 +99,10 @@ second is what later tells a file you edited on purpose from one the template ch
 either and there is no way to take a future improvement without hand-diffing. One rule comes with
 them: never run `bin/trellis-manifest.sh --write` in your project. That regenerates the record
 from *your* tree, which makes your own edits look like template files - it now refuses to run
-here, and this is why.
+here, and this is why. That refusal is a backstop, not a fence: it compares your `origin` to the
+upstream in `.trellis/source`, so a project with **no** git remote yet, or one whose remote is
+not on GitHub, is not protected by it. The rule is what protects you; the check only catches the
+common case.
 
 - [ ] **Skills you do not need** (`.claude/skills/*`). A skill is a saved procedure your AI can
       follow on request. `launch-check`, for example, only makes sense for an app real people

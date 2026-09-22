@@ -97,7 +97,13 @@ if [ "$MODE" = "write" ]; then
     declared="$(sed -n 's/^upstream=//p' "$ROOT/.trellis/source" | tr -d "$CR" | head -1)"
     originurl="$(git -C "$ROOT" remote get-url origin 2>/dev/null)"
     origin="$(printf '%s' "$originurl" | sed -e 's#^git@[^:]*:#/#' -e 's#^[a-z+]*://[^/]*/##' -e 's#\.git$##' -e 's#^/##')"
-    if [ -n "$declared" ] && [ -n "$origin" ] && [ "$declared" != "$origin" ]; then
+    # The HOST has to survive the comparison. upstream= is an owner/repo pair
+    # that only ever means GitHub - everything that reads it goes to
+    # api.github.com or raw.githubusercontent.com - so dropping the host made
+    # a GitLab remote at the same owner/repo path compare EQUAL to the
+    # template and walk straight through this guard.
+    originhost="$(printf '%s' "$originurl" | sed -n -e 's#^git@\([^:]*\):.*#\1#p' -e 's#^[a-z+]*://\([^/@]*@\)\{0,1\}\([^/]*\)/.*#\2#p' | head -1)"
+    if [ -n "$declared" ] && [ -n "$origin" ] &&        { [ "$originhost" != "github.com" ] || [ "$declared" != "$origin" ]; }; then
       echo "trellis-manifest: refusing --write. This looks like a COPY of $declared, not the template." >&2
       echo "  --write hashes every tracked file, so here it would record YOUR files as" >&2
       echo "  things the template shipped: your edits become 'safe to take' on the next" >&2
