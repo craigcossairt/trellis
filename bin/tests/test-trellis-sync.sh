@@ -122,42 +122,60 @@ c_bucket "we deleted it, upstream still ships it"          deleted    'deleted-h
 c_bucket "upstream added a file we do not have"            added      'brandnew.md'
 c_absent "a path containing a space is handled"            'with space.md'
 
-echo "== B. the setup baseline is what makes a filled-in file applicable =="
-# Identical inputs twice; only the presence of .trellis/baseline differs, so the
-# difference in outcome is attributable to the baseline and nothing else.
-mk_wizard_case() { # $1 name, $2 "with"|"without" baseline
+echo "== B. a file setup filled in is never silently replaced =="
+# This section used to assert the OPPOSITE, and that is the point of keeping the
+# history in the comment. It read an optional .trellis/baseline - "what your tree
+# looked like once setup had run" - and asserted that a filled-in AGENTS.md was
+# therefore `apply`, SAFE TO TAKE. Taking an update here is a WHOLE-FILE write,
+# so "safe to take" on a file holding the project name, stack and rules the
+# adopter typed in at setup means replacing all of it with the blank template.
+# Nothing ever wrote a baseline, so the harm was never reached - the mechanism
+# was armed, not firing, which is why reading the code did not surface it and
+# why the suite went green over it. A baseline is only meaningful with a
+# three-way merge. There is none, so the file is a conflict, and a conflict is
+# the answer that keeps the adopter's answers.
+mk_wizard_case() { # $1 name, $2 "with"|"without" a stray baseline file
   local d; d="$(new_copy "$1")"
-  printf 'AGENTS shipped\n' > "$d/AGENTS.md"
-  printf '%s AGENTS.md\n' "$(H "$d" "$d/AGENTS.md")" > "$d/.trellis/manifest"
-  printf 'AGENTS filled in by setup\n' > "$d/AGENTS.md"     # the wizard's write
+  printf 'AGENTS shipped
+' > "$d/AGENTS.md"
+  printf '%s AGENTS.md
+' "$(H "$d" "$d/AGENTS.md")" > "$d/.trellis/manifest"
+  printf 'AGENTS filled in by setup
+' > "$d/AGENTS.md"     # what a wizard writes
   if [ "$2" = with ]; then
-    printf '%s AGENTS.md\n' "$(H "$d" "$d/AGENTS.md")" > "$d/.trellis/baseline"
+    printf '%s AGENTS.md
+' "$(H "$d" "$d/AGENTS.md")" > "$d/.trellis/baseline"
   fi
   printf '%s' "$d"
 }
-UP="$TMP/up-wizard"; printf 'd%039d AGENTS.md\n' 1 > "$UP"
+UP="$TMP/up-wizard"; printf 'd%039d AGENTS.md
+' 1 > "$UP"
 
-D="$(mk_wizard_case wizard-with with)"
-sync_run "$D" "$UP"
-c_bucket "with a baseline, a setup-filled file is applicable"    apply    'AGENTS.md'
 D="$(mk_wizard_case wizard-without without)"
 sync_run "$D" "$UP"
-c_bucket "without one, the same file reads as a conflict"        conflict 'AGENTS.md'
+c_bucket "a setup-filled file upstream also changed is a conflict"  conflict 'AGENTS.md'
 
-# The case that matters most, and the one the first draft of this suite did not
-# have. A file setup filled in, which upstream has NOT changed, must be left
-# alone. Without this, nothing stops sync offering to replace a filled-in
-# AGENTS.md with the blank template - the single most damaging thing it could
-# do. Found by mutation: dropping the "did upstream actually change?" half of
-# the apply test broke nothing, because every other case is caught earlier by
-# the converged-content check and never reaches that line.
-D="$(mk_wizard_case wizard-quiet with)"
+# The pair case, and the one that would go red if the baseline were ever wired
+# back in: IDENTICAL inputs, differing only by the presence of the file. The
+# outcome must not move. A mechanism that changes a verdict without anything
+# else changing is the mechanism this case exists to keep out.
+D="$(mk_wizard_case wizard-with with)"
+sync_run "$D" "$UP"
+c_bucket "a stray .trellis/baseline does not make it applicable"    conflict 'AGENTS.md'
+
+# And the quiet case: upstream did NOT touch the file the adopter filled in, so
+# there is nothing to take and nothing to ask about. It is their edit, reported
+# as theirs. Without the "did upstream actually change?" half of the apply test
+# this would offer to replace a filled-in AGENTS.md with the blank template,
+# which is the single most damaging thing this tool could do.
+D="$(mk_wizard_case wizard-quiet without)"
+printf 'AGENTS shipped
+' > "$TMP/shipped-agents"
 UP_SAME="$TMP/up-wizard-unchanged"
-printf '%s AGENTS.md\n' "$(H "$D" "$TMP/shipped-agents")" > "$UP_SAME" 2>/dev/null || true
-printf 'AGENTS shipped\n' > "$TMP/shipped-agents"
-printf '%s AGENTS.md\n' "$(H "$D" "$TMP/shipped-agents")" > "$UP_SAME"
+printf '%s AGENTS.md
+' "$(H "$D" "$TMP/shipped-agents")" > "$UP_SAME"
 sync_run "$D" "$UP_SAME"
-c_absent "a setup-filled file upstream did not change is left alone" 'AGENTS.md'
+c_bucket "a setup-filled file upstream did not change is theirs"  localonly 'AGENTS.md'
 c_rc     "and that alone means there is nothing to take" 0
 
 echo "== B2. a CRLF manifest still works =="
@@ -273,6 +291,103 @@ c_rc "a non-repo root exits 2" 2
 
 OUT="$(bash "$MANIFEST_SH" --root "$D" 2>&1)"; RC=$?
 c_rc "neither --write nor --check exits 2" 2
+
+# =============================================================================
+echo "== E. --apply writes only what was taken, and records only that =="
+# This whole section exists because of what the FIRST version did. Applying was
+# prose in the skill - fetch with `gh api ... > "<path>"`, then "regenerate the
+# manifest" with `trellis-manifest.sh --write`. Both halves were wrong in ways
+# no amount of rewording could fix, and neither was covered by a single case.
+#
+#   --write hashes `git ls-files`, i.e. the adopter's whole tree. Reproduced on
+#   a fixture: a file they edited and DECLINED went localonly -> apply ("SAFE TO
+#   TAKE") on the next run, and their own src/app.ts appeared under "REMOVED
+#   UPSTREAM - decide whether to keep". The recording step offered to overwrite
+#   their edits and delete their application.
+#
+#   The `>` redirect truncates the destination before the fetch runs, so a
+#   failed fetch left an empty file: measured, 42 bytes to 0.
+#
+# So the cases below are not general coverage of a new flag. Each one is a
+# specific defect that shipped, written so that reinstating the defect goes red.
+apply_run() { # $1 root, $2 upstream manifest, $3 from-dir, rest: paths
+  local r="$1" u="$2" f="$3"; shift 3
+  local args=()
+  local x; for x in "$@"; do args[${#args[@]}]="--apply"; args[${#args[@]}]="$x"; done
+  OUT="$(bash "$SYNC" --root "$r" --upstream-manifest "$u" --from-dir "$f" ${args[@]+"${args[@]}"} 2>&1)"; RC=$?
+}
+c_file() { # $1 name, $2 path, $3 expected content
+  local got; got="$(cat "$2" 2>/dev/null)"
+  if [ "$got" = "$3" ]; then ok "$1"; else bad "$1" "expected '$3' in $2, got '${got:-<empty or missing>}'"; fi
+}
+
+# One copy carrying all three shapes at once, because the bug was an
+# INTERACTION: recording the taken file is what moved the other two.
+D="$(new_copy applyall)"
+mkdir -p "$D/src"
+printf 'shipped a\n' > "$D/a.md"
+printf 'shipped b\n' > "$D/b.md"
+{ printf '%s a.md\n' "$(H "$D" "$D/a.md")"
+  printf '%s b.md\n' "$(H "$D" "$D/b.md")"; } > "$D/.trellis/manifest"
+printf 'MY edit of b\n'   > "$D/b.md"          # edited here, declined below
+printf 'console.log(1)\n' > "$D/src/app.ts"    # their own code; template never shipped it
+
+UPD="$TMP/upstream-tree"; rm -rf "$UPD"; mkdir -p "$UPD"
+printf 'upstream a v2\n' > "$UPD/a.md"
+printf 'shipped b\n'     > "$UPD/b.md"         # upstream did NOT touch b.md
+UA="$TMP/up-apply"
+{ printf '%s a.md\n' "$(H "$D" "$UPD/a.md")"
+  printf '%s b.md\n' "$(H "$D" "$UPD/b.md")"; } > "$UA"
+
+apply_run "$D" "$UA" "$UPD" 'a.md'
+c_rc   "applying one file exits 0" 0
+c_file "the taken file now holds the upstream bytes" "$D/a.md" 'upstream a v2'
+c_file "a file that was NOT taken is left exactly alone" "$D/b.md" 'MY edit of b'
+
+# The regression that matters most. Re-classify the same copy against the same
+# upstream. Before this fix, recording rewrote the whole manifest from the
+# working tree and b.md came back as `apply` - their edit, labelled safe to
+# overwrite - while src/app.ts came back as `removed`.
+sync_run "$D" "$UA"
+c_absent "the file just taken is settled and no longer reported" 'a.md'
+c_bucket "a DECLINED local edit stays theirs, it does not become applicable" localonly 'b.md'
+c_absent "their own source file stays invisible, not 'removed upstream'" 'src/app.ts'
+c_rc     "and nothing is outstanding" 0
+
+# Recording is scoped: the manifest gained no line for a file the template
+# never shipped. A grep for the path is the whole assertion.
+if grep -q 'src/app\.ts' "$D/.trellis/manifest"; then
+  bad "recording does not add the adopter's own files to the manifest" "src/app.ts is in the manifest"
+else ok "recording does not add the adopter's own files to the manifest"; fi
+
+echo "== E2. --apply refuses rather than writing something it cannot vouch for =="
+# The destination must never be opened for writing before the bytes are known
+# good. Each case below asserts the ORIGINAL CONTENT survives, which is the
+# assertion that would have caught the truncating redirect - an exit code alone
+# cannot see the difference between "refused" and "refused after emptying it".
+D2="$(new_copy applyrefuse)"
+printf 'shipped x\n' > "$D2/x.md"
+printf '%s x.md\n' "$(H "$D2" "$D2/x.md")" > "$D2/.trellis/manifest"
+BAD="$TMP/upstream-bad"; rm -rf "$BAD"; mkdir -p "$BAD"
+printf 'not what the manifest promised\n' > "$BAD/x.md"
+UB="$TMP/up-bad"; printf 'a%039d x.md\n' 1 > "$UB"
+
+apply_run "$D2" "$UB" "$BAD" 'x.md'
+c_rc   "content that does not match its manifest hash exits 2" 2
+c_says "and says which hash it wanted" 'does not match the upstream manifest'
+c_file "and the destination still holds the ORIGINAL bytes" "$D2/x.md" 'shipped x'
+
+MISSING="$TMP/upstream-missing"; rm -rf "$MISSING"; mkdir -p "$MISSING"
+apply_run "$D2" "$UB" "$MISSING" 'x.md'
+c_rc   "an unreadable upstream file exits 2" 2
+c_file "and the destination is NOT truncated to empty" "$D2/x.md" 'shipped x'
+
+apply_run "$D2" "$UB" "$BAD" 'never-shipped.md'
+c_rc   "a path upstream does not ship exits 2" 2
+c_says "and says removing it is the user's call" 'your call, by hand'
+
+OUT="$(bash "$SYNC" --root "$D2" --apply 2>&1)"; RC=$?
+c_rc "--apply with no path exits 2" 2
 
 echo
 echo "passed: $PASS   failed: $FAIL"
