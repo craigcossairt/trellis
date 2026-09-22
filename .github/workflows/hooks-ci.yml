@@ -392,6 +392,57 @@ jobs:
           #   claim layer skips deletions                      1 -> 1 red
           bash bin/tests/test-push-gate.sh
 
+      - name: Every recommended tool is credited
+        run: |
+          # CREDITS.md only works if adding a tool and crediting it are one
+          # action. Left to memory they separate immediately, and the file
+          # becomes a partial list nobody trusts - which is worse than no file,
+          # because it answers "is this everything?" with an apparent yes.
+          #
+          # Matched on the `Source:` URL rather than the project name: names get
+          # written three ways (gstack, GStack, Garry's stack) and a fuzzy match
+          # would pass on a near-miss. The URL is exact or it is absent.
+          #
+          # Three outcomes kept apart on purpose. Missing credit is a FAILURE.
+          # Either file being absent or yielding no URLs is a could-not-run and
+          # exits non-zero too, because a check that silently examined nothing
+          # is the thing this repo keeps warning about.
+          fail=0
+          [ -f docs/recommended-tooling.md ] || { echo "::error::docs/recommended-tooling.md is missing - this check examined nothing"; exit 1; }
+          [ -f CREDITS.md ] || { echo "::error::CREDITS.md is missing - this check examined nothing"; exit 1; }
+          # Trailing content after the URL is allowed. Anchoring to end-of-line
+          # looked right and silently skipped the one entry written as
+          # `Source: <url> (owner/repo)` - the check then reported success over
+          # a set it had quietly under-collected, which is the failure this repo
+          # keeps warning about wearing a different hat.
+          urls="$(sed -n 's|^Source: *\(https\?://[^ ]*\).*|\1|p' docs/recommended-tooling.md | sed 's|[.,)]*$||' | sort -u)"
+          if [ -z "$urls" ]; then
+            echo "::error file=docs/recommended-tooling.md::found no 'Source:' URLs - the extractor is broken, or the file's format changed"
+            exit 1
+          fi
+          # The extractor must account for every Source: line, not just the ones
+          # it happened to parse. Without this, a future format change makes the
+          # check cover less and say nothing about it.
+          declared="$(grep -c '^Source:' docs/recommended-tooling.md || true)"
+          extracted="$(printf '%s\n' "$urls" | grep -c .)"
+          if [ "$declared" != "$extracted" ]; then
+            echo "::error file=docs/recommended-tooling.md::$declared 'Source:' lines but only $extracted URLs parsed - the extractor is missing entries"
+            exit 1
+          fi
+          n=0
+          while IFS= read -r u; do
+            [ -n "$u" ] || continue
+            n=$((n + 1))
+            if grep -qF "$u" CREDITS.md; then
+              echo "ok   $u"
+            else
+              echo "::error file=CREDITS.md::$u is recommended in docs/recommended-tooling.md but has no line in CREDITS.md"
+              fail=1
+            fi
+          done <<< "$urls"
+          echo "checked $n recommended source(s)"
+          exit $fail
+
       - name: JSON config is parseable
         run: |
           # settings.json wires every hook in this repo, and hooks.json does the

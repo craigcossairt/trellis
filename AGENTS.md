@@ -69,7 +69,7 @@ If no, it goes in the issue tracker, not here.
 ├── docs/
 │   ├── common-gotchas.md    # symptom → root cause → fix table (append after every bug fix)
 │   ├── decision-log.md      # what was decided, when, and why
-│   └── methodology/         # TDD workflow, bug protocol, session habits
+│   └── methodology/         # TDD workflow, bug protocol, verification gates, session habits
 ├── .claude/                 # Claude Code adapter (hooks, commands, skills, agents)
 ├── .cursor/                 # Cursor adapter (rules + hooks + skill routers)
 ├── .grok/                   # Grok Build adapter (config + hooks)
@@ -172,6 +172,12 @@ format; delete the adapter and the rule goes with it.
   automatically. If details are missing, ask for them.
 - **TDD by default** - for code work, follow `docs/methodology/tdd.md`. Write failing tests first,
   then implement.
+- **Anything that writes data, or that ranks findings from a fan-out, follows
+  `docs/methodology/verification-gate.md`.** Gate A: a write counts as successful only from its
+  own return value, never from the absence of an error, and you read it back and count. Gate B: a
+  deterministic script decides which findings survive, and synthesis reads only that script's
+  output - so skipping the gate leaves nothing to synthesise rather than merely being discouraged.
+  Reference that file; never restate it inside a procedure.
 - **"This can't be unit tested" is a claim about the layer you are looking at, not about the
   code.** Before recording that something is reachable only by a device run, a live service, or
   a harness that does not exist, ask whether the *invariant* can be lifted out of the
@@ -319,6 +325,12 @@ Refresh the model names when the model family turns over; the tier structure is 
 **After fixing a recurring issue or learning a new codebase pattern:**
 - Update this file if it's a convention agents need every session
 - Update `docs/common-gotchas.md` if it's a symptom-to-fix pattern
+
+**After adopting an idea, a rule, or a tool from somewhere else:**
+- Add its line to `CREDITS.md` **in the same commit**, with who it came from and where it shows
+  up here. Same rule as a skill and its harness router, for the same reason: a credit recorded
+  only in the file that happens to use the idea is one nobody looking for it will find, and an
+  idea that gets adapted and renamed loses its parent without anyone deciding that it should.
 
 **When new knowledge contradicts recorded knowledge (write-time invalidation):**
 - Update or supersede the old entry in the SAME session you write the new one - never write a

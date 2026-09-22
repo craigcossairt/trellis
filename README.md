@@ -31,6 +31,7 @@ that prevents that - before the chaos starts.
 | `brain/` | Optional: a local search index over your project's docs and history that feeds relevant context into every prompt. Off by default; 10 minutes to enable when the project has real history. |
 | `docs/growing-into-a-workspace.md` | The graduation path for when your project becomes a company: where legal docs, brand assets, and a second repo go, and how the AI context scales with you. |
 | `docs/writing-your-own-skills.md` | The 10-minute guide to teaching your AI a repeatable procedure, plus a six-question hardening checklist for making skills that survive contact with reality. |
+| `CREDITS.md` | Whose ideas these are. This template is an extraction, not an invention - every borrowed rule and every recommended tool is named with its source, and CI fails if a recommendation has no credit line. |
 | Hooks CI | A tiny GitHub Actions workflow that lint-gates the guardrail scripts themselves (line endings, syntax, shellcheck, exec bits) - because a hook that breaks silently is worse than no hook. |
 
 ## Quick start
