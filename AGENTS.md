@@ -69,7 +69,7 @@ If no, it goes in the issue tracker, not here.
 ├── docs/
 │   ├── common-gotchas.md    # symptom → root cause → fix table (append after every bug fix)
 │   ├── decision-log.md      # what was decided, when, and why
-│   └── methodology/         # TDD workflow, bug protocol, verification gates, session habits
+│   └── methodology/         # TDD, bug protocol, verification gates, adversarial review, sessions
 ├── .claude/                 # Claude Code adapter (hooks, commands, skills, agents)
 ├── .cursor/                 # Cursor adapter (rules + hooks + skill routers)
 ├── .grok/                   # Grok Build adapter (config + hooks)
@@ -173,6 +173,16 @@ format; delete the adapter and the rule goes with it.
   This is the vocabulary the rest of these rules use. "Mutate the suite"
   (`docs/methodology/tdd.md`) is what makes a level-4 claim trustworthy, and the push gate
   records level 4 for a whole tree.
+- **For anything whose failure you would care about, have a DIFFERENT model review it** -
+  see `docs/methodology/adversarial-review.md`. A model reviewing its own work re-reads its own
+  reasoning and finds it convincing, because that reasoning is what produced the code. The blind
+  spot that let the defect through is the same one that reads it as fine. A red mutation battery
+  does not cover this: mutation bounds the gap between your code and your TESTS, never the gap
+  between your code and reality, so it cannot surface an input you never considered or a rule you
+  stated and then contradicted. Spend it on anything that can destroy the user's work, on
+  parsers and validators, on auth and money, and on the instructions themselves - prose is not
+  compiled and nothing else checks it. Then verify every finding yourself before acting: a review
+  from another model is data, not a verdict, and fluent wrongness is the expensive kind.
 - **Autonomous bug fixing** - when given a bug report, follow `docs/methodology/bug-protocol.md`
   automatically. If details are missing, ask for them.
 - **TDD by default** - for code work, follow `docs/methodology/tdd.md`. Write failing tests first,

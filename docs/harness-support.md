@@ -54,8 +54,9 @@ Guardrail parity through `.cursor/hooks.json`, which calls the same canonical sc
   is wired and best-effort, but do not count on it - on substantive prompts, ask the agent to
   search the brain, or query it through an MCP server.
 - **Skills need a router.** Every canonical skill and command needs a matching file under
-  `.cursor/skills/<name>/`, or it is unreachable from Cursor. Hooks CI fails a router pointing at
-  a file that no longer exists, but nothing catches a skill that never got one.
+  `.cursor/skills/<name>/`, or it is unreachable from Cursor. Hooks CI catches both directions:
+  a router pointing at a file that no longer exists, and a skill or command that never got a
+  router.
 
 Its hook config declares `failClosed: true` on the block hook, so a hook that errors refuses the
 edit rather than waving it through. You must trust the workspace for project hooks to load.

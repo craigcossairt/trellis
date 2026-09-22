@@ -25,7 +25,7 @@ that prevents that - before the chaos starts.
 |---|---|
 | `AGENTS.md` | One instruction file that every major AI tool reads (Claude Code, Cursor, Codex, Gemini CLI, Copilot). Your conventions, methodology, and project facts live here once - not re-explained every session. |
 | `SETUP.md` | Day-1 setup, two ways: let your AI interview you and make the edits, or follow the checklist yourself. About 15 minutes for the core steps, plus a couple of optional extras. Explains what each piece is before asking you to touch it. |
-| `docs/methodology/` | Battle-tested working rules: test-first development, a disciplined bug-fix protocol, and habits for keeping AI sessions sharp. Plain markdown, works with any tool. |
+| `docs/methodology/` | Battle-tested working rules: test-first development, a disciplined bug-fix protocol, why a second model should review anything you would hate to get wrong, and habits for keeping AI sessions sharp. Plain markdown, works with any tool. |
 | `docs/common-gotchas.md` | A running "symptom, cause, fix" table. Your AI appends to it after every bug fix, so the same bug never costs you twice. |
 | `docs/decision-log.md` | What you decided, when, and why - at whatever length the reasoning takes. Six months from now, this is the file that answers "why did I do it that way?". |
 | `docs/about-me.md` | Tell the AI who you are (technical level, working style) so its advice actually fits you. |
@@ -80,12 +80,18 @@ bash bin/trellis-sync.sh
 
 It compares your copy against the current release by content and sorts every file into one of
 six buckets - changed upstream but not by you, new upstream, changed on both sides, and so on.
-Only the both-sides bucket needs a decision from you. Nothing is written until you pick it, and
-if it can't tell (no manifest, no network) it says so rather than reporting you as up to date.
+**Nothing is applied unless you name it.** Even the safe bucket needs an explicit
+`--apply <path>`; the report on its own writes nothing. Two buckets need more than a yes: files
+changed on both sides, which you review before selecting because taking an update is a
+whole-file write, and files upstream deleted that you still have, which the tool will not touch
+at all - removing them is your call. Each file it does write is checked against the release it
+came from before it lands, and if it can't tell (no manifest, no network) it says so rather than
+reporting you as up to date.
 
 This works because `.trellis/manifest` records what the template shipped at the version you
-copied. Keep that file. Without it there is no way to tell a file you deliberately edited from
-one upstream changed, and every later sync is guesswork.
+copied. Keep that file, and never regenerate it from your own tree - that records your work as
+though the template had shipped it, and every later sync inherits it. `bin/trellis-sync.sh
+--apply` updates it for you, for the files you actually took and nothing else.
 
 If you maintain your own fork of the template for your team: improvements land in whichever
 project discovered them, then get PR'd back to the template.

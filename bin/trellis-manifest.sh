@@ -25,8 +25,18 @@
 # does NOT require it to match the working tree - only that it is well formed
 # and that nothing it names has vanished.
 #
+# --write IS FOR CUTTING A RELEASE OF THE TEMPLATE, NOT FOR A COPY. It hashes
+# `git ls-files`, so in a copy it records the ADOPTER's tree as though the
+# template had shipped it. Measured on a fixture: a template file they had
+# edited and declined went from `localonly` to `apply` - "SAFE TO TAKE" - on the
+# very next sync, and their own src/app.ts turned up under "REMOVED UPSTREAM -
+# decide whether to keep". The skill used to instruct exactly this as the
+# recording step after an update. A copy records what it took with
+# `trellis-sync.sh --apply`, which rewrites only the lines for files it fetched
+# and verified. So --write refuses when this repo is not the template itself.
+#
 # Usage:
-#   trellis-manifest.sh --write [--root DIR]   regenerate the manifest
+#   trellis-manifest.sh --write [--root DIR]   regenerate the manifest (template only)
 #   trellis-manifest.sh --check [--root DIR]   validate it
 #
 # Exit: 0 ok / 1 problem found / 2 could not run (not a repo, no manifest, ...)
@@ -41,9 +51,11 @@ CR=$(printf '\r')
 
 MODE=""
 ROOT=""
+FORCE=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --write) MODE="write"; shift ;;
+    --force) FORCE=1; shift ;;
     --check) MODE="check"; shift ;;
     --root)  ROOT="${2:-}"; shift 2 ;;
     -h|--help) sed -n '2,34p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
@@ -77,6 +89,36 @@ excluded() {
 }
 
 if [ "$MODE" = "write" ]; then
+  # Is this the template, or a copy of it? .trellis/source names the upstream;
+  # if this repo's own origin is a DIFFERENT repo, this is somebody's project
+  # and regenerating the manifest from its tree is the defect described above.
+  # Refuse rather than warn: a warning on a destructive default is read once.
+  if [ "$FORCE" -eq 0 ] && [ -f "$ROOT/.trellis/source" ]; then
+    declared="$(sed -n 's/^upstream=//p' "$ROOT/.trellis/source" | tr -d "$CR" | head -1)"
+    originurl="$(git -C "$ROOT" remote get-url origin 2>/dev/null)"
+    origin="$(printf '%s' "$originurl" | sed -e 's#^git@[^:]*:#/#' -e 's#^[a-z+]*://[^/]*/##' -e 's#\.git$##' -e 's#^/##')"
+    # The HOST has to survive the comparison. upstream= is an owner/repo pair
+    # that only ever means GitHub - everything that reads it goes to
+    # api.github.com or raw.githubusercontent.com - so dropping the host made
+    # a GitLab remote at the same owner/repo path compare EQUAL to the
+    # template and walk straight through this guard.
+    _hostraw="$(printf '%s' "$originurl" | sed -n -e 's#^git@\([^:]*\):.*#\1#p' -e 's#^[a-z+]*://\([^/@]*@\)\{0,1\}\([^/]*\)/.*#\2#p' | head -1)"
+    # Lowercased and with any port removed before comparison. A URL authority
+    # is case-insensitive and may carry :443, so https://GitHub.com:443/o/r is
+    # the SAME host as github.com - comparing it as exact text refused the
+    # template's own release cut and sent the maintainer to --force, which is
+    # how a guard teaches people to bypass it.
+    originhost="$(printf '%s' "$_hostraw" | tr '[:upper:]' '[:lower:]' | sed 's#:[0-9]*$##')"
+    if [ -n "$declared" ] && [ -n "$origin" ] &&        { [ "$originhost" != "github.com" ] || [ "$declared" != "$origin" ]; }; then
+      echo "trellis-manifest: refusing --write. This looks like a COPY of $declared, not the template." >&2
+      echo "  --write hashes every tracked file, so here it would record YOUR files as" >&2
+      echo "  things the template shipped: your edits become 'safe to take' on the next" >&2
+      echo "  sync, and your own source turns up as 'removed upstream'." >&2
+      echo "  To record an update you accepted, use: trellis-sync.sh --apply <path>" >&2
+      echo "  If you really are cutting a release of this template, pass --force." >&2
+      exit 2
+    fi
+  fi
   mkdir -p "$ROOT/.trellis"
   tmp="$MANIFEST.tmp.$$"
   : > "$tmp"

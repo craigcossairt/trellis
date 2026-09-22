@@ -93,6 +93,19 @@ in step 7). They are already wired up. This step is only checking they fit your 
 
 Everything here is optional. A smaller template you understand beats a larger one you do not.
 
+**Two things to keep even though you will not touch them:** `.trellis/` and
+`bin/trellis-sync.sh`. The first records what the template shipped when you copied it, and the
+second is what later tells a file you edited on purpose from one the template changed. Delete
+either and there is no way to take a future improvement without hand-diffing. One rule comes with
+them: never run `bin/trellis-manifest.sh --write` in your project. That regenerates the record
+from *your* tree, which makes your own edits look like template files - it now refuses to run
+here, and this is why. That refusal is a backstop, not a fence. It compares your `origin` to the
+upstream recorded in `.trellis/source` and refuses unless both the host is `github.com` and the
+owner/repo matches - so a non-GitHub origin is refused too, and `--force` is the only way past
+either. The one case it cannot judge is a project with **no** `origin` set yet, which it allows,
+because a repo with no remote is indistinguishable from the template's own checkout. The rule is
+what protects you; the check only catches the common case.
+
 - [ ] **Skills you do not need** (`.claude/skills/*`). A skill is a saved procedure your AI can
       follow on request. `launch-check`, for example, only makes sense for an app real people
       will use. If you delete a skill, delete its matching file in `.cursor/skills/<name>/` in

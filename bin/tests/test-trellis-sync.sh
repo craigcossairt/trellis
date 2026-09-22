@@ -122,42 +122,60 @@ c_bucket "we deleted it, upstream still ships it"          deleted    'deleted-h
 c_bucket "upstream added a file we do not have"            added      'brandnew.md'
 c_absent "a path containing a space is handled"            'with space.md'
 
-echo "== B. the setup baseline is what makes a filled-in file applicable =="
-# Identical inputs twice; only the presence of .trellis/baseline differs, so the
-# difference in outcome is attributable to the baseline and nothing else.
-mk_wizard_case() { # $1 name, $2 "with"|"without" baseline
+echo "== B. a file setup filled in is never silently replaced =="
+# This section used to assert the OPPOSITE, and that is the point of keeping the
+# history in the comment. It read an optional .trellis/baseline - "what your tree
+# looked like once setup had run" - and asserted that a filled-in AGENTS.md was
+# therefore `apply`, SAFE TO TAKE. Taking an update here is a WHOLE-FILE write,
+# so "safe to take" on a file holding the project name, stack and rules the
+# adopter typed in at setup means replacing all of it with the blank template.
+# Nothing ever wrote a baseline, so the harm was never reached - the mechanism
+# was armed, not firing, which is why reading the code did not surface it and
+# why the suite went green over it. A baseline is only meaningful with a
+# three-way merge. There is none, so the file is a conflict, and a conflict is
+# the answer that keeps the adopter's answers.
+mk_wizard_case() { # $1 name, $2 "with"|"without" a stray baseline file
   local d; d="$(new_copy "$1")"
-  printf 'AGENTS shipped\n' > "$d/AGENTS.md"
-  printf '%s AGENTS.md\n' "$(H "$d" "$d/AGENTS.md")" > "$d/.trellis/manifest"
-  printf 'AGENTS filled in by setup\n' > "$d/AGENTS.md"     # the wizard's write
+  printf 'AGENTS shipped
+' > "$d/AGENTS.md"
+  printf '%s AGENTS.md
+' "$(H "$d" "$d/AGENTS.md")" > "$d/.trellis/manifest"
+  printf 'AGENTS filled in by setup
+' > "$d/AGENTS.md"     # what a wizard writes
   if [ "$2" = with ]; then
-    printf '%s AGENTS.md\n' "$(H "$d" "$d/AGENTS.md")" > "$d/.trellis/baseline"
+    printf '%s AGENTS.md
+' "$(H "$d" "$d/AGENTS.md")" > "$d/.trellis/baseline"
   fi
   printf '%s' "$d"
 }
-UP="$TMP/up-wizard"; printf 'd%039d AGENTS.md\n' 1 > "$UP"
+UP="$TMP/up-wizard"; printf 'd%039d AGENTS.md
+' 1 > "$UP"
 
-D="$(mk_wizard_case wizard-with with)"
-sync_run "$D" "$UP"
-c_bucket "with a baseline, a setup-filled file is applicable"    apply    'AGENTS.md'
 D="$(mk_wizard_case wizard-without without)"
 sync_run "$D" "$UP"
-c_bucket "without one, the same file reads as a conflict"        conflict 'AGENTS.md'
+c_bucket "a setup-filled file upstream also changed is a conflict"  conflict 'AGENTS.md'
 
-# The case that matters most, and the one the first draft of this suite did not
-# have. A file setup filled in, which upstream has NOT changed, must be left
-# alone. Without this, nothing stops sync offering to replace a filled-in
-# AGENTS.md with the blank template - the single most damaging thing it could
-# do. Found by mutation: dropping the "did upstream actually change?" half of
-# the apply test broke nothing, because every other case is caught earlier by
-# the converged-content check and never reaches that line.
-D="$(mk_wizard_case wizard-quiet with)"
+# The pair case, and the one that would go red if the baseline were ever wired
+# back in: IDENTICAL inputs, differing only by the presence of the file. The
+# outcome must not move. A mechanism that changes a verdict without anything
+# else changing is the mechanism this case exists to keep out.
+D="$(mk_wizard_case wizard-with with)"
+sync_run "$D" "$UP"
+c_bucket "a stray .trellis/baseline does not make it applicable"    conflict 'AGENTS.md'
+
+# And the quiet case: upstream did NOT touch the file the adopter filled in, so
+# there is nothing to take and nothing to ask about. It is their edit, reported
+# as theirs. Without the "did upstream actually change?" half of the apply test
+# this would offer to replace a filled-in AGENTS.md with the blank template,
+# which is the single most damaging thing this tool could do.
+D="$(mk_wizard_case wizard-quiet without)"
+printf 'AGENTS shipped
+' > "$TMP/shipped-agents"
 UP_SAME="$TMP/up-wizard-unchanged"
-printf '%s AGENTS.md\n' "$(H "$D" "$TMP/shipped-agents")" > "$UP_SAME" 2>/dev/null || true
-printf 'AGENTS shipped\n' > "$TMP/shipped-agents"
-printf '%s AGENTS.md\n' "$(H "$D" "$TMP/shipped-agents")" > "$UP_SAME"
+printf '%s AGENTS.md
+' "$(H "$D" "$TMP/shipped-agents")" > "$UP_SAME"
 sync_run "$D" "$UP_SAME"
-c_absent "a setup-filled file upstream did not change is left alone" 'AGENTS.md'
+c_bucket "a setup-filled file upstream did not change is theirs"  localonly 'AGENTS.md'
 c_rc     "and that alone means there is nothing to take" 0
 
 echo "== B2. a CRLF manifest still works =="
@@ -273,6 +291,334 @@ c_rc "a non-repo root exits 2" 2
 
 OUT="$(bash "$MANIFEST_SH" --root "$D" 2>&1)"; RC=$?
 c_rc "neither --write nor --check exits 2" 2
+
+# =============================================================================
+echo "== E. --apply writes only what was taken, and records only that =="
+# This whole section exists because of what the FIRST version did. Applying was
+# prose in the skill - fetch with `gh api ... > "<path>"`, then "regenerate the
+# manifest" with `trellis-manifest.sh --write`. Both halves were wrong in ways
+# no amount of rewording could fix, and neither was covered by a single case.
+#
+#   --write hashes `git ls-files`, i.e. the adopter's whole tree. Reproduced on
+#   a fixture: a file they edited and DECLINED went localonly -> apply ("SAFE TO
+#   TAKE") on the next run, and their own src/app.ts appeared under "REMOVED
+#   UPSTREAM - decide whether to keep". The recording step offered to overwrite
+#   their edits and delete their application.
+#
+#   The `>` redirect truncates the destination before the fetch runs, so a
+#   failed fetch left an empty file: measured, 42 bytes to 0.
+#
+# So the cases below are not general coverage of a new flag. Each one is a
+# specific defect that shipped, written so that reinstating the defect goes red.
+apply_run() { # $1 root, $2 upstream manifest, $3 from-dir, rest: paths
+  local r="$1" u="$2" f="$3"; shift 3
+  local args=()
+  local x; for x in "$@"; do args[${#args[@]}]="--apply"; args[${#args[@]}]="$x"; done
+  OUT="$(bash "$SYNC" --root "$r" --upstream-manifest "$u" --from-dir "$f" ${args[@]+"${args[@]}"} 2>&1)"; RC=$?
+}
+c_file() { # $1 name, $2 path, $3 expected content
+  local got; got="$(cat "$2" 2>/dev/null)"
+  if [ "$got" = "$3" ]; then ok "$1"; else bad "$1" "expected '$3' in $2, got '${got:-<empty or missing>}'"; fi
+}
+
+# One copy carrying all three shapes at once, because the bug was an
+# INTERACTION: recording the taken file is what moved the other two.
+D="$(new_copy applyall)"
+mkdir -p "$D/src"
+printf 'shipped a\n' > "$D/a.md"
+printf 'shipped b\n' > "$D/b.md"
+{ printf '%s a.md\n' "$(H "$D" "$D/a.md")"
+  printf '%s b.md\n' "$(H "$D" "$D/b.md")"; } > "$D/.trellis/manifest"
+printf 'MY edit of b\n'   > "$D/b.md"          # edited here, declined below
+printf 'console.log(1)\n' > "$D/src/app.ts"    # their own code; template never shipped it
+
+UPD="$TMP/upstream-tree"; rm -rf "$UPD"; mkdir -p "$UPD"
+printf 'upstream a v2\n' > "$UPD/a.md"
+printf 'shipped b\n'     > "$UPD/b.md"         # upstream did NOT touch b.md
+UA="$TMP/up-apply"
+{ printf '%s a.md\n' "$(H "$D" "$UPD/a.md")"
+  printf '%s b.md\n' "$(H "$D" "$UPD/b.md")"; } > "$UA"
+
+apply_run "$D" "$UA" "$UPD" 'a.md'
+c_rc   "applying one file exits 0" 0
+c_file "the taken file now holds the upstream bytes" "$D/a.md" 'upstream a v2'
+c_file "a file that was NOT taken is left exactly alone" "$D/b.md" 'MY edit of b'
+
+# The regression that matters most. Re-classify the same copy against the same
+# upstream. Before this fix, recording rewrote the whole manifest from the
+# working tree and b.md came back as `apply` - their edit, labelled safe to
+# overwrite - while src/app.ts came back as `removed`.
+sync_run "$D" "$UA"
+c_absent "the file just taken is settled and no longer reported" 'a.md'
+c_bucket "a DECLINED local edit stays theirs, it does not become applicable" localonly 'b.md'
+c_absent "their own source file stays invisible, not 'removed upstream'" 'src/app.ts'
+c_rc     "and nothing is outstanding" 0
+
+# Recording is scoped: the manifest gained no line for a file the template
+# never shipped. A grep for the path is the whole assertion.
+if grep -q 'src/app\.ts' "$D/.trellis/manifest"; then
+  bad "recording does not add the adopter's own files to the manifest" "src/app.ts is in the manifest"
+else ok "recording does not add the adopter's own files to the manifest"; fi
+
+echo "== E2. --apply refuses rather than writing something it cannot vouch for =="
+# The destination must never be opened for writing before the bytes are known
+# good. Each case below asserts the ORIGINAL CONTENT survives, which is the
+# assertion that would have caught the truncating redirect - an exit code alone
+# cannot see the difference between "refused" and "refused after emptying it".
+D2="$(new_copy applyrefuse)"
+printf 'shipped x\n' > "$D2/x.md"
+printf '%s x.md\n' "$(H "$D2" "$D2/x.md")" > "$D2/.trellis/manifest"
+BAD="$TMP/upstream-bad"; rm -rf "$BAD"; mkdir -p "$BAD"
+printf 'not what the manifest promised\n' > "$BAD/x.md"
+UB="$TMP/up-bad"; printf 'a%039d x.md\n' 1 > "$UB"
+
+apply_run "$D2" "$UB" "$BAD" 'x.md'
+c_rc   "content that does not match its manifest hash exits 2" 2
+c_says "and says which hash it wanted" 'does not match the upstream manifest'
+c_file "and the destination still holds the ORIGINAL bytes" "$D2/x.md" 'shipped x'
+
+# A FRESH copy, deliberately. Run against $D2 this case shares a fixture with
+# the one above, and a mutation that lets the mismatch through corrupts x.md
+# there - so this case goes red for the PREVIOUS case's reason and the result
+# reads as coverage it does not have. Found by mutation: dropping the hash
+# verification turned this case red while nothing about truncation had changed.
+D3="$(new_copy applymissing)"
+printf 'shipped x
+' > "$D3/x.md"
+printf '%s x.md
+' "$(H "$D3" "$D3/x.md")" > "$D3/.trellis/manifest"
+MISSING="$TMP/upstream-missing"; rm -rf "$MISSING"; mkdir -p "$MISSING"
+apply_run "$D3" "$UB" "$MISSING" 'x.md'
+c_rc   "an unreadable upstream file exits 2" 2
+c_file "and the destination is NOT truncated to empty" "$D3/x.md" 'shipped x'
+
+# never-shipped.md EXISTS in the source dir and is absent from the manifest, so
+# the fetch would succeed and only the guard can stop it. The first draft left
+# the file out, which made the exit-2 assertion vacuous: deleting the guard
+# still exited 2, because the read failed instead. Mutation caught that - the
+# exit-code case stayed green and only the message case went red.
+printf 'something upstream has but never shipped
+' > "$BAD/never-shipped.md"
+apply_run "$D2" "$UB" "$BAD" 'never-shipped.md'
+c_rc   "a path upstream does not ship exits 2 even when readable" 2
+c_says "and says removing it is the user's call" 'your call, by hand'
+if [ -e "$D2/never-shipped.md" ]; then
+  bad "and it is not written into the copy" "never-shipped.md was written anyway"
+else ok "and it is not written into the copy"; fi
+
+OUT="$(bash "$SYNC" --root "$D2" --apply 2>&1)"; RC=$?
+c_rc "--apply with no path exits 2" 2
+
+echo "== F. --write refuses to run inside a copy =="
+# The dangerous command is now unavailable where it is dangerous. A copy's own
+# origin is a different repo from the upstream recorded in .trellis/source, and
+# that difference is the whole test. Refuse rather than warn: a warning printed
+# on a destructive default gets read once and then scrolled past.
+D="$(new_copy iscopy)"
+printf 'x\n' > "$D/x.md"
+must git -C "$D" add x.md .trellis/source
+printf '%s x.md\n' "$(H "$D" "$D/x.md")" > "$D/.trellis/manifest"
+must git -C "$D" remote add origin 'https://github.com/someone/their-project.git'
+
+OUT="$(bash "$MANIFEST_SH" --write --root "$D" 2>&1)"; RC=$?
+c_rc   "--write in a copy exits 2, it does not quietly rewrite the manifest" 2
+c_says "and says what it would have done to their files" 'removed upstream|safe to take'
+c_says "and names the command that IS right for a copy" 'trellis-sync.sh --apply'
+# The refusal has to leave the manifest alone, not refuse after clobbering it.
+c_file "and the manifest is untouched" "$D/.trellis/manifest" "$(H "$D" "$D/x.md") x.md"
+
+OUT="$(bash "$MANIFEST_SH" --write --root "$D" --force 2>&1)"; RC=$?
+c_rc "--force is the deliberate escape for cutting a release" 0
+
+# The template itself must still be able to cut a release: same-repo origin.
+D="$(new_copy istemplate)"
+printf 'x\n' > "$D/x.md"
+must git -C "$D" add x.md .trellis/source
+must git -C "$D" remote add origin 'https://github.com/example/tpl.git'
+OUT="$(bash "$MANIFEST_SH" --write --root "$D" 2>&1)"; RC=$?
+c_rc "the template's own checkout can still --write without a flag" 0
+
+# A copy with no origin at all cannot be told apart from the template, so it is
+# allowed rather than refused. Stated out loud because it is the hole in this
+# guard, and a hole named in a test is one somebody can close later.
+D="$(new_copy noorigin)"
+printf 'x\n' > "$D/x.md"
+must git -C "$D" add x.md .trellis/source
+OUT="$(bash "$MANIFEST_SH" --write --root "$D" 2>&1)"; RC=$?
+c_rc "with no origin to compare, --write is allowed (a known hole)" 0
+
+echo "== G. what the cross-model review caught that the suite did not =="
+# Three defects found by a review after this suite was already green and
+# mutation-validated. Each one is a case here so the same hole cannot reopen.
+
+# G1. The host has to survive the identity check. upstream= is an owner/repo
+# pair that only ever means GitHub, so dropping the host made a remote on a
+# DIFFERENT host at the same path compare equal to the template and walk
+# straight through the --write guard.
+D="$(new_copy otherhost)"
+printf 'x\n' > "$D/x.md"
+must git -C "$D" add x.md .trellis/source
+printf '%s x.md\n' "$(H "$D" "$D/x.md")" > "$D/.trellis/manifest"
+must git -C "$D" remote add origin 'https://gitlab.com/example/tpl.git'
+OUT="$(bash "$MANIFEST_SH" --write --root "$D" 2>&1)"; RC=$?
+c_rc "same owner/repo path on another host still refuses --write" 2
+# The paired case is 'the template can still --write', which uses github.com
+# with the SAME path. Only the host differs, so the verdict is attributable.
+
+# G2. A path is data from the upstream manifest and gets checked like data.
+# `git ls-files` can never emit one of these, so its presence means the
+# manifest is wrong or hostile. Hash verification cannot catch it: it checks
+# what the bytes ARE, never where they are about to land.
+#
+# The fixture has to make the attack actually WORK without the guard, or the
+# case is vacuous - the first draft put the payload where the fetch would fail
+# anyway, so removing the guard still exited 2 and the case proved nothing.
+# Source dir is <evil>/sub, so `../pwned.md` resolves to <evil>/pwned.md and
+# hashes clean; destination is $D/../pwned.md, which is the victim in $TMP.
+D="$(new_copy traversal)"
+printf 'shipped\n' > "$D/keep.md"
+printf '%s keep.md\n' "$(H "$D" "$D/keep.md")" > "$D/.trellis/manifest"
+EVIL="$TMP/evilsrc"; rm -rf "$EVIL"; mkdir -p "$EVIL/sub"
+printf 'pwned\n' > "$EVIL/pwned.md"
+printf 'pwned\n' > "$EVIL/abs-victim.md"
+printf 'do not touch me\n' > "$TMP/pwned.md"
+printf 'do not touch me\n' > "$TMP/abs-victim.md"
+UEVIL="$TMP/up-evil"
+{ printf '%s keep.md\n'        "$(H "$D" "$D/keep.md")"
+  printf '%s ../pwned.md\n'    "$(H "$D" "$EVIL/pwned.md")"
+  printf '%s /%s\n' "$(H "$D" "$EVIL/abs-victim.md")" "${TMP#/}/abs-victim.md"; } > "$UEVIL"
+
+apply_run "$D" "$UEVIL" "$EVIL/sub" '../pwned.md'
+c_rc   "a manifest path that escapes the root exits 2" 2
+c_says "and names why, not just that something failed" 'escapes the project root'
+c_file "and the file outside the copy is untouched" "$TMP/pwned.md" 'do not touch me'
+
+# The absolute-path arm needs its own manifest entry, otherwise it exits 2
+# because the path is simply unknown and the case cannot tell the two
+# refusals apart - the same vacuousness the ledger records for the
+# not-in-manifest guard.
+apply_run "$D" "$UEVIL" "$EVIL" "/${TMP#/}/abs-victim.md"
+c_rc   "an absolute path exits 2 too" 2
+c_says "and for the same stated reason" 'escapes the project root'
+c_file "and its target is untouched" "$TMP/abs-victim.md" 'do not touch me'
+
+# G3. The rename replaces the destination INODE, so the mode travels with the
+# temp file - and a fetched file is 644. Applying an update to a git hook would
+# silently strip +x, and git skips a non-executable hook with NO output at all:
+# a guardrail that stops running and says nothing. The manifest records a hash
+# and a path, never a mode, so an existing file keeps the mode it had and a new
+# file is executable only if its content starts with a shebang.
+probe="$TMP/exec-probe"; printf '#!/bin/sh\n' > "$probe"; chmod +x "$probe" 2>/dev/null
+if [ -x "$probe" ]; then
+  D="$(new_copy execbit)"
+  mkdir -p "$D/.githooks"
+  printf '#!/usr/bin/env bash\necho old\n' > "$D/.githooks/pre-push"
+  chmod +x "$D/.githooks/pre-push"
+  printf 'plain\n' > "$D/notes.md"
+  { printf '%s .githooks/pre-push\n' "$(H "$D" "$D/.githooks/pre-push")"
+    printf '%s notes.md\n' "$(H "$D" "$D/notes.md")"; } > "$D/.trellis/manifest"
+  UPX="$TMP/upstream-exec"; rm -rf "$UPX"; mkdir -p "$UPX/.githooks"
+  printf '#!/usr/bin/env bash\necho new\n' > "$UPX/.githooks/pre-push"   # fetched: 644
+  printf 'plain v2\n'                      > "$UPX/notes.md"
+  printf '#!/usr/bin/env bash\necho brand new\n' > "$UPX/newhook.sh"
+  printf 'just text\n'                          > "$UPX/newdoc.md"
+  UEX="$TMP/up-exec"
+  { printf '%s .githooks/pre-push\n' "$(H "$D" "$UPX/.githooks/pre-push")"
+    printf '%s notes.md\n'           "$(H "$D" "$UPX/notes.md")"
+    printf '%s newhook.sh\n'         "$(H "$D" "$UPX/newhook.sh")"
+    printf '%s newdoc.md\n'          "$(H "$D" "$UPX/newdoc.md")"; } > "$UEX"
+
+  apply_run "$D" "$UEX" "$UPX" '.githooks/pre-push' 'notes.md' 'newhook.sh' 'newdoc.md'
+  c_rc "applying a mixed set exits 0" 0
+  if [ -x "$D/.githooks/pre-push" ]; then ok "an updated hook KEEPS its executable bit"
+  else bad "an updated hook KEEPS its executable bit" "git skips a non-executable hook silently"; fi
+  if [ -x "$D/notes.md" ]; then bad "an updated plain file does not gain one" "notes.md became executable"
+  else ok "an updated plain file does not gain one"; fi
+  if [ -x "$D/newhook.sh" ]; then ok "a NEW file with a shebang is executable"
+  else bad "a NEW file with a shebang is executable" "newhook.sh is not executable"; fi
+  if [ -x "$D/newdoc.md" ]; then bad "a NEW file without one is not" "newdoc.md became executable"
+  else ok "a NEW file without one is not"; fi
+else
+  # Stated rather than silently skipped. MSYS on NTFS reports 644 after chmod,
+  # so these four cases cannot run here and CI (Linux) is where they mean
+  # something. A skipped case reported as a pass is the thing this repo keeps
+  # warning about.
+  echo "  SKIP four exec-bit cases: this filesystem does not carry the mode"
+fi
+
+echo "== H. second review round =="
+# Three more from the same cross-model review, after the first round was fixed.
+# Each one is a case here for the same reason as section G.
+
+# H1. A URL authority is case-insensitive and may carry a port, so comparing it
+# as exact text made https://GitHub.com:443/o/r read as a different host from
+# github.com - refusing the template's OWN release cut and sending the
+# maintainer to --force. A guard that misfires on the canonical case is how
+# people learn to reach for the bypass.
+D="$(new_copy canonhost)"
+printf 'x\n' > "$D/x.md"
+must git -C "$D" add x.md .trellis/source
+must git -C "$D" remote add origin 'https://GitHub.com:443/example/tpl.git'
+OUT="$(bash "$MANIFEST_SH" --write --root "$D" 2>&1)"; RC=$?
+c_rc "an equivalent GitHub URL is still the template, no --force needed" 0
+
+# H2. A LEXICAL path check cannot see a symlinked ancestor. `hooks/pre-commit`
+# is fine as text; if $ROOT/hooks is a link elsewhere, mkdir -p and mv both
+# follow it and the write lands outside the copy. git checks out symlinks, so
+# a template could ship one and a later manifest entry write through it.
+# The probe is gated on the PLATFORM, not attempted and caught. On MSYS without
+# developer mode `ln -s` does not fail, it HANGS - measured, rc 124 under a 10s
+# timeout - so a try-and-see probe wedges the whole suite rather than skipping
+# one section. CI is Linux, which is where these three cases mean something.
+case "$(uname -s 2>/dev/null)" in
+  MINGW*|MSYS*|CYGWIN*) can_symlink=0 ;;
+  *) can_symlink=0
+     if ln -s /tmp "$TMP/lnprobe" 2>/dev/null && [ -L "$TMP/lnprobe" ]; then can_symlink=1; fi
+     rm -f "$TMP/lnprobe" ;;
+esac
+if [ "$can_symlink" = 1 ]; then
+  D="$(new_copy symlink)"
+  OUTSIDE="$TMP/outside-dir"; rm -rf "$OUTSIDE"; mkdir -p "$OUTSIDE"
+  printf 'do not touch me\n' > "$OUTSIDE/pre-commit"
+  must ln -s "$OUTSIDE" "$D/hooks"
+  printf 'x\n' > "$D/x.md"
+  printf '%s x.md\n' "$(H "$D" "$D/x.md")" > "$D/.trellis/manifest"
+  SRC="$TMP/symsrc"; rm -rf "$SRC"; mkdir -p "$SRC/hooks"
+  printf 'payload\n' > "$SRC/hooks/pre-commit"
+  USYM="$TMP/up-sym"
+  { printf '%s x.md\n' "$(H "$D" "$D/x.md")"
+    printf '%s hooks/pre-commit\n' "$(H "$D" "$SRC/hooks/pre-commit")"; } > "$USYM"
+  apply_run "$D" "$USYM" "$SRC" 'hooks/pre-commit'
+  c_rc   "a symlinked ancestor is refused, not followed" 2
+  c_says "and names the link rather than the path"       'is a symlink'
+  c_file "and the file it points at is untouched" "$OUTSIDE/pre-commit" 'do not touch me'
+else
+  echo "  SKIP three symlink cases: this filesystem will not make one"
+fi
+
+# H3. Preserving "the mode" means all of it. chmod -x on a fetched 0644 temp
+# file leaves it 0644, so replacing a 0600 file that way WIDENS it - the update
+# silently makes a private file world-readable.
+mprobe="$TMP/mprobe"; printf 'x\n' > "$mprobe"; chmod 600 "$mprobe" 2>/dev/null
+mp="$(stat -c '%a' "$mprobe" 2>/dev/null || stat -f '%Lp' "$mprobe" 2>/dev/null || echo '')"
+if [ "$mp" = "600" ]; then
+  D="$(new_copy exactmode)"
+  printf 'secret v1\n' > "$D/private.txt"
+  chmod 600 "$D/private.txt"
+  printf '%s private.txt\n' "$(H "$D" "$D/private.txt")" > "$D/.trellis/manifest"
+  SRC2="$TMP/modesrc"; rm -rf "$SRC2"; mkdir -p "$SRC2"
+  printf 'secret v2\n' > "$SRC2/private.txt"; chmod 644 "$SRC2/private.txt"
+  UMODE="$TMP/up-mode"
+  printf '%s private.txt\n' "$(H "$D" "$SRC2/private.txt")" > "$UMODE"
+  apply_run "$D" "$UMODE" "$SRC2" 'private.txt'
+  c_rc "applying over a 0600 file exits 0" 0
+  got="$(stat -c '%a' "$D/private.txt" 2>/dev/null || stat -f '%Lp' "$D/private.txt" 2>/dev/null)"
+  if [ "$got" = "600" ]; then ok "and the file keeps 0600 rather than widening to 0644"
+  else bad "and the file keeps 0600 rather than widening to 0644" "mode is now $got"; fi
+  c_file "and the content did update" "$D/private.txt" 'secret v2'
+else
+  echo "  SKIP three exact-mode cases: this filesystem reports $mp for a chmod 600 file"
+fi
 
 echo
 echo "passed: $PASS   failed: $FAIL"
