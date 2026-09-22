@@ -42,19 +42,23 @@ available:
 2. **Does it load only what it needs?** If the skill has a big reference (a style guide, an API
    doc), keep it in a separate file and have the skill read it only when the task needs it.
    A skill that dumps everything into context every time crowds out the actual work.
-3. **If it reviews something, is the reviewer blind, and is it a different model?**
+3. **If it guards something, is the guard itself pinned?** A hook with no behavioral test
+   asserts nothing, and CI checking that a script parses says nothing about whether it blocks.
+   `/pin-guardrail` is the procedure: name the behaviours, write the suite, then break the code
+   on purpose and check that the cases you *predicted* went red. A green suite is not evidence.
+4. **If it reviews something, is the reviewer blind, and is it a different model?**
    Second opinions are only worth having if they're independent. Don't show reviewer #2 what
    reviewer #1 (or the linter) said until it has committed its own take - then synthesize. An
    anchored reviewer is a rubber stamp. And a model reviewing its own output is the weakest
    review available: it re-reads its own reasoning and finds it persuasive. See
    `docs/methodology/adversarial-review.md`.
-4. **Should runs compound?** If the skill runs repeatedly against the same thing (an audit, a
+5. **Should runs compound?** If the skill runs repeatedly against the same thing (an audit, a
    critique, a brief), have it write a dated snapshot that the next run reads. Otherwise every
    run rediscovers the same findings from zero.
-5. **Will the weakest model follow it?** You may run cheaper models for routine work. Write
+6. **Will the weakest model follow it?** You may run cheaper models for routine work. Write
    gates they can't rationalize past: "NEVER X", "STOP and ask if Y", numbered hard steps -
    not "use good judgment", which strong models interpret and weak models skip.
-6. **Does it degrade loudly?** If the skill needs a tool, key, or capability that might be
+7. **Does it degrade loudly?** If the skill needs a tool, key, or capability that might be
    missing, make step 1 check for it and stop with a clear message. A skill that silently
    half-works is worse than one that says exactly what it's missing.
 
