@@ -22,3 +22,4 @@ Format: `- **YYYY-MM-DD** - Decision description. See <issue-ref>.`
 
 - **2026-07-01** - (Example - delete me) Chose Supabase over a custom backend: solo team, auth +
   database + storage in one service. See #12.
+- **2026-09-21** - Cut v1.0 and adopted tagged releases. A template copy has no git ancestry with the template, so there was no way to tell a file the owner edited from one the template changed, and the README's advice was to skim upstream commits by hand once a month. .trellis/manifest now records what each release shipped, and bin/trellis-sync.sh classifies a copy against it. Tagging is what makes the manifest mean something: it describes a RELEASE, so it is regenerated when one is cut rather than on every commit, and CI deliberately does not require it to match main.

@@ -71,6 +71,21 @@ responses aren't guaranteed and there is no support commitment. Fork freely - it
 
 ## Keeping your copy fresh
 
-Template copies don't auto-update. Once a month, skim this repo's recent commits and pull in
-what's useful. If you maintain your own fork of the template for your team: improvements land
-in whichever project discovered them, then get PR'd back to the template.
+Template copies still don't auto-update, but you no longer have to read commits to find out
+what changed. Ask your agent to **check for template updates**, or run:
+
+```bash
+bash bin/trellis-sync.sh
+```
+
+It compares your copy against the current release by content and sorts every file into one of
+six buckets - changed upstream but not by you, new upstream, changed on both sides, and so on.
+Only the both-sides bucket needs a decision from you. Nothing is written until you pick it, and
+if it can't tell (no manifest, no network) it says so rather than reporting you as up to date.
+
+This works because `.trellis/manifest` records what the template shipped at the version you
+copied. Keep that file. Without it there is no way to tell a file you deliberately edited from
+one upstream changed, and every later sync is guesswork.
+
+If you maintain your own fork of the template for your team: improvements land in whichever
+project discovered them, then get PR'd back to the template.
