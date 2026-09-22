@@ -13,14 +13,21 @@ The suite is the deliverable. **The mutation run is what makes the suite believa
 of this file is about the ways a green suite lies to you, because every one of them has actually
 happened in this repo.
 
+Scope: this is written for **shell guardrails** - the concrete fixture rules, directory and CI
+wiring below assume them. The mutation discipline in §3 to §5 is not shell-specific and carries
+over to anything you can break on purpose.
+
 ## 0. Is it gated? If not, stop
 
-Check the CI workflow actually runs the directory you are about to write into. A suite CI never
-executes is decoration that reads as coverage, which is worse than no suite at all.
+Open the CI workflow and confirm it runs the directory you are about to write into. Do this by
+reading it, not by assuming - a suite CI never executes is decoration that reads as coverage,
+which is worse than no suite at all.
 
-In this template all suites live in `bin/tests/` and `.github/workflows/hooks-ci.yml` runs each
-one as its own **named step**. A named step matters: read step conclusions rather than the job
-conclusion, because a job can be green while a step inside it was skipped.
+At the time of writing that means `bin/tests/`, with `.github/workflows/hooks-ci.yml` running
+each suite as its own **named step**. Treat that as the answer to check against, not as a reason
+to skip checking: the layout is exactly the kind of thing that moves. A named step matters
+either way - read step conclusions rather than the job conclusion, because a job can be green
+while a step inside it was skipped.
 
 ## 1. Name the behaviours before you write a single case
 
@@ -129,8 +136,9 @@ Add a named step to the workflow:
 cannot tell a considered suite from a careless one without it.
 
 **Record the misses, not just the wins.** The most useful line in the block is the one saying a
-case proved nothing and why it is kept anyway. Every one of the five failures in §5 belongs in
-the ledger of the suite it happened to.
+case proved nothing and why it is kept anyway. §5 is a list of what to watch for, not a list of
+entries you owe - record the ones that actually happened, and if none did, the ledger is just
+the figures.
 
 Check in the same change: git hooks are executable (git skips a non-executable hook silently, and
 on a machine with `core.fileMode=false` a `chmod` never reaches the index - use
