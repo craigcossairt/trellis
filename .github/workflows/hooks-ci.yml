@@ -727,14 +727,20 @@ jobs:
           #   a real decision-log entry appended           -> 1, names the line
           #   a real gotchas row appended                  -> 1, names the line
           #   docs/decision-log.md missing                 -> 2
+          #   a real row under a '| --- |' separator       -> 1 (was 0: fail open)
           fail=0
           for f in docs/decision-log.md docs/common-gotchas.md; do
             [ -r "$f" ] || { echo "::error::cannot read $f - the check did not run"; exit 2; }
           done
           out=$(awk '
             FILENAME ~ /decision-log/ && /^- \*\*[0-9][0-9][0-9][0-9]-/ && !/\(Example - delete me\)/ { print FILENAME ":" FNR }
-            FILENAME ~ /common-gotchas/ && /^\|---/ { t = 1; next }
-            FILENAME ~ /common-gotchas/ && t && /^\|/ && !/\(Example - delete me\)/ { print FILENAME ":" FNR }
+            # Separator rows are recognised by shape (only | - : and spaces), not
+            # by an exact "|---" prefix: "| --- |" and "|:---|" are just as valid
+            # Markdown, and a separator the check failed to see used to leave it
+            # blind to every row below (fail open; Grok review on #24).
+            FILENAME ~ /common-gotchas/ && /^\|[ :|-]*$/ { next }
+            FILENAME ~ /common-gotchas/ && /^\|/ && !hdr { hdr = 1; next }
+            FILENAME ~ /common-gotchas/ && /^\|/ && !/\(Example - delete me\)/ { print FILENAME ":" FNR }
           ' docs/decision-log.md docs/common-gotchas.md) || { echo "::error::awk failed - the check did not run"; exit 2; }
           if [ -n "$out" ]; then
             while IFS=: read -r file line; do
