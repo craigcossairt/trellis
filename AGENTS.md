@@ -67,6 +67,7 @@ If no, it goes in the issue tracker, not here.
 ```
 .
 ├── docs/
+│   ├── coding-standards.md  # judgment standards the REVIEWER reads (not always loaded)
 │   ├── common-gotchas.md    # symptom → root cause → fix table (append after every bug fix)
 │   ├── decision-log.md      # what was decided, when, and why
 │   └── methodology/         # TDD, bug protocol, verification gates, adversarial review, sessions
@@ -183,6 +184,21 @@ format; delete the adapter and the rule goes with it.
   parsers and validators, on auth and money, and on the instructions themselves - prose is not
   compiled and nothing else checks it. Then verify every finding yourself before acting: a review
   from another model is data, not a verdict, and fluent wrongness is the expensive kind.
+- **Keep this file for the implementer; put standards where the reviewer reads them.** An agent
+  writing code is already spending its context exploring, editing and debugging, so a long list
+  of standards here gets read and then crowded out. This file holds short rules, the commands, and
+  pointers. Judgment standards go in `docs/coding-standards.md`, which a review in a fresh
+  context (or a different model) reads in full: implement to make it work, review to make it
+  good. When you shrink this file, move rules rather than delete them, and check that each rule
+  an implementer needs BEFORE writing a line is still stated here, not only pointed to.
+- **Every PR body states its merge danger** - a one-way or two-way door plus the blast radius,
+  per `.github/pull_request_template.md`, which lists the one-way triggers. A command-line
+  `--body` bypasses the template, so write the lines yourself. A reviewer treats a door that
+  understates the diff as blocking: two-way doors get skimmed.
+- **A user-facing change is verified by driving the running app, not by reading the code.** Once
+  per project, build the lever and the feature map with `/build-verification-skill`; after that,
+  reproduce bugs and prove fixes through it. Expect the first real run to find defects no stubbed
+  test could.
 - **Autonomous bug fixing** - when given a bug report, follow `docs/methodology/bug-protocol.md`
   automatically. If details are missing, ask for them.
 - **TDD by default** - for code work, follow `docs/methodology/tdd.md`. Write failing tests first,
