@@ -41,7 +41,7 @@ Things to SKIP:
 |---|---|---|
 | Bug pattern | `docs/common-gotchas.md` | Append a row using the file's format. Include commit SHA + issue ID if known. Auto-apply. |
 | Tool gotcha | `docs/common-gotchas.md` (or agent memory if not project-specific) | Auto-apply. |
-| Convention | **The rung the correction ladder (below) picks.** Only rung 5 goes in `AGENTS.md`. | Propose first; on approval, apply it in this run. |
+| Convention | **The rung the correction ladder (below) picks.** Only rung 5 goes in `AGENTS.md`. | Propose first. On approval, apply a rung 3-5 text fix in this run; a rung 1-2 fix becomes an issue or follow-up change. |
 | Cross-session knowledge | Your harness's persistent memory, if available | Auto-apply per its conventions. |
 | Context drift | Flag to the user | Don't fix silently; say what's stale and where. |
 | Navigation miss | A pointer where the agent looked first (the relevant AGENTS.md section, a doc's index, a skill's opening lines) | Propose first. One line that points, not one that explains. |
@@ -91,8 +91,8 @@ it in the same run.
 3. **For auto-apply categories** (bug patterns, tool gotchas, cross-session knowledge): make the
    edits, then list them in the output.
 4. **For propose-first categories** (conventions, navigation misses, tool economy, steering
-   bloat): show the proposed diff and ask for approval before editing, then apply what is
-   approved in this run.
+   bloat): show the proposed diff and ask for approval before editing, then apply the approved
+   text fixes in this run. A rung 1-2 convention stays a proposed issue, never an edit here.
 5. **At the end**, output a short summary:
    - **Captured:** X entries applied (list files + one-line descriptions)
    - **Superseded:** entries invalidated/updated by this session's captures (list old -> new)
