@@ -70,6 +70,7 @@ fill_green() { # $1 command to run
     { print }
     END { exit !injected }
   ' "$VERIFY_SRC" > "$out" || { echo "FIXTURE FAILED: GREEN_COMMANDS not found in $VERIFY_SRC" >&2; exit 1; }
+  must git -C "$WORK" add bin/verify-green.sh
 }
 fill_green 'true'
 if bash "$WORK/bin/verify-green.sh" --check-configured; then
@@ -116,8 +117,7 @@ else bad "a failing check writes no marker" "markers exist: $(ls -A "$(marker_di
 # THE mid-run guard. The check itself stages a file, which is exactly what an
 # agent session does while a slow suite runs: the index moves, so the tree the
 # marker would name is not the tree anything ran against.
-printf 'later\n' > "$WORK/staged-midrun.txt"
-fill_green 'git add staged-midrun.txt'
+fill_green 'echo later > staged-midrun.txt && git add staged-midrun.txt'
 rm -rf "$(marker_dir)"
 OUT="$( cd "$WORK" && bash bin/verify-green.sh 2>&1 )"; RC=$?
 if [ "$RC" -ne 0 ]; then ok "an index that MOVES mid-run refuses the marker"
@@ -141,6 +141,117 @@ if [ "$RC" -eq 0 ]; then ok "COMMITTING mid-run is still allowed (the index does
 else bad "COMMITTING mid-run is still allowed (the index does not move)" "exit $RC: $OUT"; fi
 
 fill_green 'true'
+must git -C "$WORK" commit -qm 'restore passing checks'
+
+# A passing unstaged repair must not certify the failing version in the index.
+fill_green 'grep -qx repaired f.txt && git restore f.txt'
+printf 'broken\n' > "$WORK/f.txt"
+must git -C "$WORK" add f.txt
+printf 'repaired\n' > "$WORK/f.txt"
+rm -rf "$(marker_dir)"
+OUT="$( cd "$WORK" && bash bin/verify-green.sh 2>&1 )"; RC=$?
+if [ "$RC" -ne 0 ] && [ ! -f "$(marker_dir)/$(index_tree)" ]; then
+  ok "an unstaged passing repair cannot certify the failing index"
+else bad "an unstaged passing repair cannot certify the failing index" "exit $RC: $OUT"; fi
+must git -C "$WORK" restore --source=HEAD --staged --worktree f.txt
+for index_flag in assume-unchanged skip-worktree; do
+  fill_green 'grep -qx repaired f.txt'
+  printf 'broken\n' > "$WORK/f.txt"
+  must git -C "$WORK" add f.txt
+  must git -C "$WORK" update-index "--$index_flag" f.txt
+  FLAG_BEFORE="$(git -C "$WORK" ls-files -v f.txt)"
+  printf 'repaired\n' > "$WORK/f.txt"
+  rm -rf "$(marker_dir)"
+  OUT="$( cd "$WORK" && bash bin/verify-green.sh 2>&1 )"; RC=$?
+  if [ "$RC" -ne 0 ] && [ ! -f "$(marker_dir)/$(index_tree)" ]; then
+    ok "$index_flag cannot hide a passing repair from verification"
+  else bad "$index_flag cannot hide a passing repair from verification" "exit $RC: $OUT"; fi
+  if [ "$(git -C "$WORK" ls-files -v f.txt)" = "$FLAG_BEFORE" ]; then
+    ok "verification preserves the user's $index_flag flag"
+  else bad "verification preserves the user's $index_flag flag" "index flag changed"; fi
+  must git -C "$WORK" update-index "--no-$index_flag" f.txt
+  must git -C "$WORK" restore --source=HEAD --staged --worktree f.txt
+
+  fill_green "git update-index --$index_flag f.txt && echo repaired > f.txt"
+  rm -rf "$(marker_dir)"
+  OUT="$( cd "$WORK" && bash bin/verify-green.sh 2>&1 )"; RC=$?
+  if [ "$RC" -ne 0 ] && [ ! -f "$(marker_dir)/$(index_tree)" ]; then
+    ok "$index_flag introduced during checks prevents a marker"
+  else bad "$index_flag introduced during checks prevents a marker" "exit $RC: $OUT"; fi
+  must git -C "$WORK" update-index "--no-$index_flag" f.txt
+  must git -C "$WORK" restore f.txt
+done
+fill_green 'test -f local-input.txt'
+printf 'only on this machine\n' > "$WORK/local-input.txt"
+rm -rf "$(marker_dir)"
+OUT="$( cd "$WORK" && bash bin/verify-green.sh 2>&1 )"; RC=$?
+if [ "$RC" -ne 0 ] && [ ! -f "$(marker_dir)/$(index_tree)" ]; then
+  ok "an untracked input cannot satisfy checks for a commit without it"
+else bad "an untracked input cannot satisfy checks for a commit without it" "exit $RC: $OUT"; fi
+must git -C "$WORK" add local-input.txt
+fill_green 'true'
+
+# A filesystem failure must not become a successful verification receipt.
+rm -rf "$(marker_dir)"
+printf 'occupied\n' > "$(marker_dir)"
+OUT="$( cd "$WORK" && bash bin/verify-green.sh 2>&1 )"; RC=$?
+if [ "$RC" -ne 0 ] && [[ "$OUT" != *"GREEN - marker recorded"* ]]; then
+  ok "a failed marker directory creation reports failure, never GREEN"
+else bad "a failed marker directory creation reports failure, never GREEN" "exit $RC: $OUT"; fi
+rm -f "$(marker_dir)"
+
+must mkdir -p "$(marker_dir)/$(index_tree)"
+OUT="$( cd "$WORK" && bash bin/verify-green.sh 2>&1 )"; RC=$?
+if [ "$RC" -ne 0 ] && [[ "$OUT" != *"GREEN - marker recorded"* ]]; then
+  ok "a failed marker file write reports failure, never GREEN"
+else bad "a failed marker file write reports failure, never GREEN" "exit $RC: $OUT"; fi
+rm -rf "$(marker_dir)"
+
+fill_green 'echo changed > f.txt'
+OUT="$( cd "$WORK" && bash bin/verify-green.sh 2>&1 )"; RC=$?
+if [ "$RC" -ne 0 ] && [ ! -f "$(marker_dir)/$(index_tree)" ]; then
+  ok "tracked changes made during checks prevent a marker"
+else bad "tracked changes made during checks prevent a marker" "exit $RC: $OUT"; fi
+must git -C "$WORK" restore f.txt
+
+fill_green 'echo new > during-check.txt'
+OUT="$( cd "$WORK" && bash bin/verify-green.sh 2>&1 )"; RC=$?
+if [ "$RC" -ne 0 ] && [ ! -f "$(marker_dir)/$(index_tree)" ]; then
+  ok "untracked inputs created during checks prevent a marker"
+else bad "untracked inputs created during checks prevent a marker" "exit $RC: $OUT"; fi
+must git -C "$WORK" add during-check.txt
+
+printf 'build/\n' > "$WORK/.gitignore"
+must git -C "$WORK" add .gitignore
+must mkdir -p "$WORK/build"
+printf 'existing dependency\n' > "$WORK/build/dependency"
+fill_green 'test -f build/dependency && echo compiled > build/output'
+OUT="$( cd "$WORK" && bash bin/verify-green.sh 2>&1 )"; RC=$?
+if [ "$RC" -eq 0 ] && [ -f "$(marker_dir)/$(index_tree)" ]; then
+  ok "ignored dependencies and generated output do not block verification"
+else bad "ignored dependencies and generated output do not block verification" "exit $RC: $OUT"; fi
+
+# Simulate Git operational failures at the command boundary. The normal Git
+# executable handles all fixture operations and every other subcommand.
+REAL_GIT="$(command -v git)"
+must mkdir -p "$TMP/git-failure"
+cat > "$TMP/git-failure/git" <<'SH'
+#!/usr/bin/env bash
+case "$FAIL_GIT_COMMAND:$1:${2:-}" in
+  diff:diff:*|index-flags:ls-files:-v|untracked-inputs:ls-files:--others) exit 2 ;;
+esac
+exec "$REAL_GIT" "$@"
+SH
+must chmod +x "$TMP/git-failure/git"
+fill_green 'true'
+for failed_command in diff index-flags untracked-inputs; do
+  rm -rf "$(marker_dir)"
+  OUT="$( cd "$WORK" && PATH="$TMP/git-failure:$PATH" REAL_GIT="$REAL_GIT" FAIL_GIT_COMMAND="$failed_command" bash bin/verify-green.sh 2>&1 )"; RC=$?
+  if [ "$RC" -ne 0 ] && [ ! -f "$(marker_dir)/$(index_tree)" ]; then
+    ok "git $failed_command operational errors refuse verification"
+  else bad "git $failed_command operational errors refuse verification" "exit $RC: $OUT"; fi
+done
+must git -C "$WORK" commit -qm 'verification fixtures'
 
 # --- the hook: green layer --------------------------------------------------
 

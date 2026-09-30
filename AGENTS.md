@@ -72,6 +72,8 @@ If no, it goes in the issue tracker, not here.
 │   ├── decision-log.md      # what was decided, when, and why
 │   └── methodology/         # TDD, bug protocol, verification gates, adversarial review, sessions
 ├── .claude/                 # Claude Code adapter (hooks, commands, skills, agents)
+├── .agents/                 # Codex skill routers to the canonical procedures
+├── .codex/                  # Codex hooks and payload adapter
 ├── .cursor/                 # Cursor adapter (rules + hooks + skill routers)
 ├── .grok/                   # Grok Build adapter (config + hooks)
 ├── .githooks/               # real git pre-push hook (opt-in push gate)
@@ -91,16 +93,17 @@ The knowledge in this file and `docs/` is harness-agnostic; each tool gets only 
 | Claude Code | `CLAUDE.md` (imports this file) + hooks via `.claude/settings.json` |
 | Cursor | `.cursor/rules/project.mdc` (always-on rule) + `.cursor/hooks.json` (guardrail parity) + `.cursor/skills/*` (routers) |
 | Grok Build | `.grok/config.toml` (reuses `.claude/` skills and commands) + `.grok/hooks/hooks.json` |
-| Codex | reads this file natively - no adapter needed |
+| Codex | reads this file natively + `.agents/skills/*` routers + `.codex/hooks.json` |
 | Gemini CLI | `GEMINI.md` pointer |
 | GitHub Copilot | `.github/copilot-instructions.md` pointer |
 
 **This table lists what is wired, not what runs. For which features are missing per harness, see
-`docs/harness-support.md`.** Three of the six run no hooks at all, and on those every rule here
+`docs/harness-support.md`.** Two of the six run no hooks here, and on those every rule here
 is advisory - the agent honors it because nothing is enforcing it.
 
-Claude, Cursor, and Grok all run the SAME hook scripts (via `bin/run-claude-hook.sh` for the
-latter two) - guardrail logic exists once. Two guardrails survive everywhere regardless of
+Claude, Cursor, Grok, and Codex all run the SAME canonical hook scripts (via
+`bin/run-claude-hook.sh` for Cursor/Grok and `.codex/hooks.py` for Codex) - guardrail logic
+exists once. Two guardrails survive everywhere regardless of
 harness, because they sit at the boundary rather than in the session: the push gate is a git
 hook that runs inside `git push`, and hooks CI runs on GitHub.
 
@@ -341,6 +344,14 @@ Refresh the model names when the model family turns over; the tier structure is 
   follows.
 
 ### Autonomous Housekeeping (do these WITHOUT being asked)
+
+**Template maintainer exception:** When this checkout's `origin` is
+`github.com/craigcossairt/trellis` (the upstream in `.trellis/source`), keep
+`docs/decision-log.md` and `docs/common-gotchas.md` as example-only starter files.
+Record the template's decisions, bug causes, fixes, and verification in commit
+messages and PR descriptions instead. Template CI enforces this. In an adopter's
+repository, append to the project logs as described below. Do not infer template
+identity from the folder name or from the copied `.trellis/source` alone.
 
 **After every bug fix:**
 - Append the symptom / root cause / fix to `docs/common-gotchas.md`.

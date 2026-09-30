@@ -54,6 +54,11 @@ jobs:
           # it costs nothing here.
           persist-credentials: false
 
+      - uses: actions/setup-python@v7
+        if: hashFiles('.agents/**', '.codex/**') != ''
+        with:
+          python-version: '3.13'
+
       - name: No CRLF line endings (breaks bash at the first line)
         run: |
           # grep exits 0 on match, 1 on no-match, and 2 on ERROR. Both the old
@@ -257,13 +262,40 @@ jobs:
           echo "checked ${#routers[@]} Cursor router(s)"
           exit $fail
 
+      - name: Codex routers and static hook wiring
+        if: hashFiles('.agents/**', '.codex/**') != ''
+        run: python bin/validate-codex.py
+
+      - name: Suite - Codex wiring validator
+        if: hashFiles('.agents/**', '.codex/**') != ''
+        run: |
+          # Mutation ledger, measured 2026-09-30 over 19 test methods. Named
+          # sets matched predictions; failing subcases are counted separately:
+          #   drop canonical coverage -> skill, command and receipt, 3 -> 3
+          #   skip frontmatter -> keys, fences, LF, scalar grammar, 20 -> 20
+          #   skip operation check -> each event on each platform, 8 -> 8
+          #   skip literal script existence -> custom script, 1 -> 1
+          #   glob swallows scan error -> failed inspection, 1 -> 1
+          #   ignore matcher -> Pre/PostToolUse + startup coverage, 3 -> 3
+          python -m unittest discover -s bin/tests -p test_codex_validation.py -v
+
+      - name: Suite - Codex hook adapter
+        if: hashFiles('.codex/**') != ''
+        run: |
+          # Mutation ledger, measured 2026-09-30; 13 methods now pass. Named sets matched:
+          #   inspect only first patch target -> mixed-patch case, 1 -> 1 red
+          #   drop named symlink spelling -> symlink case, 1 -> 1 red
+          #   swallow canonical nonzero -> policy-failure case, 1 -> 1 red
+          # Configured-command cases exercise cmd and PowerShell. Structured
+          # deny output preserves blocking through either outer shell, including
+          # policy denial, missing hooks.py and a missing Git root.
+          python -m unittest discover -s bin/tests -p test_codex_hooks.py -v
+
       # ---- behavioral suites ----------------------------------------------
-      # Everything above is a LINTER: it proves the scripts parse, not that they
-      # do what they claim. bin/tests/ holds suites that run the guardrails
-      # against real fixtures, and until this round NOTHING RAN THEM. The suite
-      # shipped, the docs said it covered the script, and CI never invoked it -
-      # the exact failure this workflow's own header is about, sitting inside
-      # the workflow.
+      # Static checks prove the definitions load, not that the guardrails do
+      # what they claim. The Python suites above and Bash suites below exercise
+      # real fixtures. Earlier versions shipped behavioral suites without
+      # invoking them in CI, so keep each suite visible as its own named step.
       #
       # One NAMED step per suite, deliberately. A single "run the tests" step
       # reports one conclusion for everything, so a reader has to open the log
@@ -435,6 +467,18 @@ jobs:
           #   claim check exit 2 treated as free               2 -> 2 red
           #   drop verify-green's mid-run index comparison     3 -> 3 red
           #   claim layer skips deletions                      1 -> 1 red
+          #
+          # Additional ledger, measured 2026-09-30 over 36 cases. The original
+          # script fails exactly 8 new cases: passing repair, untracked input,
+          # mkdir, write-file, tracked/untracked mid-check edits, diff and
+          # ls-files errors. A passing repair must not leave proof for a
+          # different indexed tree.
+          #   remove pre-check tree guard -> passing-repair case, 1 -> 1 red
+          #   remove post-check tree guard -> both mid-check edits, 2 -> 2 red
+          # The final suite has 43 passing cases. Removing the index-flag
+          # guard fails the predicted 5: assume-unchanged and skip-worktree
+          # before checks, either flag introduced during checks, and a failed
+          # index-flag scan. Verification leaves the user's flags unchanged.
           bash bin/tests/test-push-gate.sh
 
       - name: Suite - sensitive-file block hook
@@ -505,7 +549,7 @@ jobs:
           # error the harness reports - it declines to load the file and the
           # guardrails silently cease to exist.
           fail=0
-          for f in .claude/settings.json .cursor/hooks.json .grok/hooks/hooks.json .mcp.json.example; do
+          for f in .claude/settings.json .cursor/hooks.json .grok/hooks/hooks.json .codex/hooks.json .mcp.json.example; do
             [ -f "$f" ] || continue
             if node -e "JSON.parse(require('fs').readFileSync('$f','utf8'))" 2>/dev/null; then
               echo "ok $f"
@@ -693,6 +737,12 @@ jobs:
           # runs. The probe tests BOTH directions on purpose: checking only that
           # chmod +x sticks let the case run on a filesystem where it could
           # never go red.
+          #
+          # Additional ledger, measured 2026-09-30 on Git for Windows:
+          #   restore Cursor prune bug -> both optional-adapter cases, 2 -> 2
+          #   bypass Codex receipt refusal -> empty, unknown, truncated and
+          #     inconsistent-status receipts, 4 -> 4
+          # 46 assertions pass on NTFS; the exec-bit case announces its skip.
           bash bin/tests/test-trellis-survey.sh
 
       - name: Manifest is well formed
@@ -714,7 +764,7 @@ jobs:
           # docs/decision-log.md and docs/common-gotchas.md ship to every copy
           # (they are in the manifest), so a real entry here becomes part of an
           # adopter's own project history. The template's own maintenance
-          # history is kept by its maintainer, outside this repo. The entries
+          # history is kept in commits and pull requests. The entries
           # got here because appending to the decision log is exactly what every
           # agent working in this template is told to do, which is why this is a
           # check rather than a sentence.
@@ -744,9 +794,48 @@ jobs:
           ' docs/decision-log.md docs/common-gotchas.md) || { echo "::error::awk failed - the check did not run"; exit 2; }
           if [ -n "$out" ]; then
             while IFS=: read -r file line; do
-              echo "::error file=$file,line=$line::a real entry in a template log. Keep the template's own history outside the template; these files ship to every copy."
+              echo "::error file=$file,line=$line::a real entry in a template log. Keep template maintenance history in commits and pull requests; these files ship to every copy."
             done <<< "$out"
             fail=1
           fi
           echo "template logs checked"
           exit $fail
+
+  windows:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        if: hashFiles('.agents/**', '.codex/**') != ''
+        with:
+          python-version: '3.13'
+
+      - name: Codex routers and static hook wiring
+        if: hashFiles('.agents/**', '.codex/**') != ''
+        run: python bin/validate-codex.py
+
+      - name: Suite - Codex wiring validator
+        if: hashFiles('.agents/**', '.codex/**') != ''
+        run: python -m unittest discover -s bin/tests -p test_codex_validation.py -v
+
+      - name: Suite - Codex hook adapter and Windows launcher
+        if: hashFiles('.codex/**') != ''
+        run: python -m unittest discover -s bin/tests -p test_codex_hooks.py -v
+
+      # GitHub's bash shell on Windows is Git for Windows. The same hermetic
+      # suites run here without installing Linux packages or using WSL.
+      - name: Suite - push gate on Git for Windows
+        run: bash bin/tests/test-push-gate.sh
+      - name: Suite - sensitive-file block on Git for Windows
+        run: bash bin/tests/test-block-sensitive-files.sh
+      - name: Suite - session-start on Git for Windows
+        run: bash bin/tests/test-session-start.sh
+      - name: Suite - trellis-survey on Git for Windows
+        run: bash bin/tests/test-trellis-survey.sh

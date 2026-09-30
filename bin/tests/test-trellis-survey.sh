@@ -88,6 +88,14 @@ c_kind "a skill with no router is reported"        skill-no-router  'noroute'
 c_kind "a router with no skill is reported"        router-dangling  'ghost'
 c_not  "and a matched pair is not reported"        'haslr'
 
+echo "== B2. an intentionally absent Cursor adapter is allowed =="
+D="$(new_copy cursor-pruned)"
+add_skill "$D" alpha
+mv "$D/.cursor" "$D/pruned-cursor"
+runp "$D"
+c_rc "removing the optional Cursor adapter is clean" 0
+c_not "no missing Cursor routers when Cursor was removed" 'skill-no-router|command-no-router'
+
 echo "== C. hooks: on disk vs wired =="
 # The two directions are different failures. An unwired script is inert and
 # harmless; a wired script that is absent means the harness calls something on
@@ -242,6 +250,59 @@ c_not "a ./ prefixed path is the same directory, not a finding" 'githooks-elsewh
 must git -C "$D" config core.hooksPath "$D/.githooks"
 runp "$D"
 c_not "an absolute path to the same directory is not a finding" 'githooks-elsewhere'
+
+# Adopters may remove both Codex adapters and their checker. Keep the remaining
+# Bash suite usable without Python; the pruning case below still runs.
+if [ -e "$ROOT/.agents" ] || [ -e "$ROOT/.codex" ] || [ -L "$ROOT/.agents" ] || [ -L "$ROOT/.codex" ]; then
+echo "== I. Codex wiring uses the shared checker =="
+D="$(new_copy codex-routers)"
+add_skill "$D" alpha; add_router "$D" alpha
+mkdir -p "$D/.agents" "$D/bin"
+must cp "$ROOT/bin/validate-codex.py" "$D/bin/validate-codex.py"
+runp "$D"
+c_rc "Codex findings are survey findings" 1
+c_kind "missing Codex coverage reaches porcelain" codex-router-missing '.claude/skills/alpha/SKILL.md'
+run "$D"
+c_says "Codex findings have a visible report section" 'CODEX STATIC WIRING'
+c_says "survey states activation and trust are not verified" 'runtime activation and trust'
+c_not "survey never claims all present tools are running" 'Everything present is wired'
+
+echo "== J. a Codex check that did not run is never clean =="
+D="$(new_copy codex-checker)"
+mkdir -p "$D/.agents" "$D/bin"
+runp "$D"
+c_rc "a missing Codex checker exits 2" 2
+c_says "missing checker explains the incomplete inspection" 'cannot read Codex checker'
+: > "$D/bin/validate-codex.py"
+runp "$D"
+c_rc "an empty checker cannot return a clean survey" 2
+printf 'print("unknown-checker-output")\n' > "$D/bin/validate-codex.py"
+runp "$D"
+c_rc "an unknown checker receipt exits 2" 2
+printf 'print("codex-check-v1\\tcomplete\\t1")\n' > "$D/bin/validate-codex.py"
+runp "$D"
+c_rc "a truncated checker receipt exits 2" 2
+printf 'print("codex-check-v1\\tcomplete\\t0")\nraise SystemExit(1)\n' > "$D/bin/validate-codex.py"
+runp "$D"
+c_rc "checker status must agree with its count" 2
+printf 'raise SystemExit(7)\n' > "$D/bin/validate-codex.py"
+runp "$D"
+c_rc "an unknown checker exit becomes could-not-run" 2
+else
+  echo "  SKIP Codex fixtures: both adapters were deliberately removed"
+fi
+
+echo "== K. removing Codex adds no Python dependency =="
+D="$(new_copy codex-pruned)"
+mkdir -p "$TMP/no-python"
+for command in python python3; do
+  printf '#!/usr/bin/env bash\nprintf called >> "%s"\nexit 99\n' "$TMP/python-called" > "$TMP/no-python/$command"
+  chmod +x "$TMP/no-python/$command"
+done
+PATH="$TMP/no-python:$PATH" runp "$D"
+c_rc "no Codex adapter needs no checker or Python" 0
+if [ ! -e "$TMP/python-called" ]; then ok "Python was never invoked for a pruned adapter"
+else bad "Python was never invoked for a pruned adapter" "a Python probe ran"; fi
 
 # =============================================================================
 echo

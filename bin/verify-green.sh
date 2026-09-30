@@ -47,9 +47,8 @@ fi
 #
 # That is not theoretical. A real suite takes minutes and an agent session
 # stages work continuously, so it is hit by ordinary use rather than by
-# contrivance. The unstaged-edits NOTE further down does not cover it either:
-# staging is exactly what makes the working tree clean again, so that NOTE goes
-# quiet in the one case that matters here.
+# contrivance. The working-tree comparison alone does not cover it either:
+# staging is exactly what makes the working tree clean again.
 #
 # Failing NOW rather than after the checks is deliberate. A write-tree that
 # cannot run means no marker can be recorded whatever the checks say, so
@@ -62,6 +61,47 @@ if [ -z "$KEY_BEFORE" ]; then
   echo "verify-green: resolve the index problem and re-run - refusing to spend the run." >&2
   exit 1
 fi
+
+# Checks read the working tree, but the receipt names the index. Refuse any
+# tracked difference, including a failed comparison, before running checks.
+working_tree_matches_index() {
+  local rc=0 untracked index_entries entry
+  # Git diff trusts these index flags rather than inspecting every tracked file.
+  # Lowercase ls-files -v tags mean assume-unchanged; S means skip-worktree.
+  # Refuse them without changing the user's index or sparse-checkout settings.
+  if ! index_entries=$(git ls-files -v); then
+    echo "verify-green: cannot inspect index flags - no marker recorded." >&2
+    return 1
+  fi
+  while IFS= read -r entry; do
+    case "$entry" in
+      [abcdefghijklmnopqrstuvwxyzS]' '*)
+        echo "verify-green: assume-unchanged or skip-worktree prevents verification: ${entry#??}" >&2
+        echo "verify-green: use a full checkout with these flags cleared; sparse checkouts are unsupported." >&2
+        return 1
+        ;;
+    esac
+  done <<< "$index_entries"
+  git diff --no-ext-diff --quiet --ignore-submodules=none -- || rc=$?
+  case "$rc" in
+    0) ;;
+    1) echo "verify-green: unstaged tracked changes - stage or restore them and re-run." >&2 ;;
+    *) echo "verify-green: cannot compare working tree with index (git exit $rc)." >&2 ;;
+  esac
+  [ "$rc" -eq 0 ] || return 1
+  # Ignored dependencies/build outputs are allowed; ordinary untracked inputs
+  # could make checks pass while being absent from the certified commit.
+  if ! untracked=$(git ls-files --others --exclude-standard); then
+    echo "verify-green: cannot enumerate untracked inputs - no marker recorded." >&2
+    return 1
+  fi
+  if [ -n "$untracked" ]; then
+    echo "verify-green: untracked inputs - stage, remove, or intentionally ignore them:" >&2
+    printf '%s\n' "$untracked" >&2
+    return 1
+  fi
+}
+working_tree_matches_index || exit 1
 
 i=0
 total=${#GREEN_COMMANDS[@]}
@@ -108,21 +148,15 @@ if [ "$KEY" != "$KEY_BEFORE" ]; then
   exit 1
 fi
 
-# The checks ran against the WORKING tree; the marker attests the INDEX tree.
-# Those differ when tracked files have unstaged edits - name them rather than
-# silently vouching for content the checks never saw.
-UNSTAGED=$(git diff --name-only 2>/dev/null)
-if [ -n "$UNSTAGED" ]; then
-  echo "verify-green: NOTE - these tracked files have unstaged edits NOT covered by the marker:" >&2
-  while IFS= read -r f; do
-    [ -n "$f" ] && printf '  %s\n' "$f" >&2
-  done <<EOF
-$UNSTAGED
-EOF
-  echo "verify-green: stage them and re-run if they belong in the verified commit." >&2
-fi
+working_tree_matches_index || exit 1
 
-MARKER_DIR="$(git rev-parse --git-dir)/green"
-mkdir -p "$MARKER_DIR"
-: > "$MARKER_DIR/$KEY"
+if ! GIT_DIR_PATH=$(git rev-parse --git-dir) || [ -z "$GIT_DIR_PATH" ]; then
+  echo "verify-green: cannot resolve marker location - no marker recorded." >&2
+  exit 1
+fi
+MARKER_DIR="$GIT_DIR_PATH/green"
+if ! mkdir -p "$MARKER_DIR" || ! { : > "$MARKER_DIR/$KEY"; } || [ ! -f "$MARKER_DIR/$KEY" ]; then
+  echo "verify-green: cannot record marker - verification receipt failed." >&2
+  exit 1
+fi
 echo "verify-green: GREEN - marker recorded for tree ${KEY:0:12}"

@@ -1,0 +1,55 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "repo_root=$(git rev-parse --show-toplevel) || exit 2; python3 \"$repo_root/.codex/hooks.py\" session-start || exit 2",
+            "commandWindows": "python -c \"exec('import json, pathlib, subprocess, sys\\noperation = sys.argv[1]\\ntry:\\n    root = subprocess.check_output([\\'git\\', \\'rev-parse\\', \\'--show-toplevel\\'], text=True, stderr=subprocess.PIPE, timeout=3).strip()\\n    result = subprocess.run([sys.executable, str(pathlib.Path(root) / \\'.codex/hooks.py\\'), operation], input=sys.stdin.read(), text=True, capture_output=True, timeout=20)\\nexcept Exception as error:\\n    result = subprocess.CompletedProcess([], 2, \\'\\', \\'Trellis Codex launcher: \\' + str(error))\\nif result.returncode and operation.startswith(\\'block-\\'):\\n    print(json.dumps({\\'hookSpecificOutput\\': {\\'hookEventName\\': \\'PreToolUse\\', \\'permissionDecision\\': \\'deny\\', \\'permissionDecisionReason\\': result.stderr.strip() or \\'Trellis file check failed\\'}}))\\nelse:\\n    sys.stdout.write(result.stdout)\\n    sys.stderr.write(result.stderr)\\n    sys.exit(2 if result.returncode else 0)\\n')\" session-start",
+            "timeout": 30
+          }
+        ],
+        "matcher": "startup|resume|clear|compact"
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "repo_root=$(git rev-parse --show-toplevel) || exit 2; python3 \"$repo_root/.codex/hooks.py\" block-sensitive-files || exit 2",
+            "commandWindows": "python -c \"exec('import json, pathlib, subprocess, sys\\noperation = sys.argv[1]\\ntry:\\n    root = subprocess.check_output([\\'git\\', \\'rev-parse\\', \\'--show-toplevel\\'], text=True, stderr=subprocess.PIPE, timeout=3).strip()\\n    result = subprocess.run([sys.executable, str(pathlib.Path(root) / \\'.codex/hooks.py\\'), operation], input=sys.stdin.read(), text=True, capture_output=True, timeout=45)\\nexcept Exception as error:\\n    result = subprocess.CompletedProcess([], 2, \\'\\', \\'Trellis Codex launcher: \\' + str(error))\\nif result.returncode and operation.startswith(\\'block-\\'):\\n    print(json.dumps({\\'hookSpecificOutput\\': {\\'hookEventName\\': \\'PreToolUse\\', \\'permissionDecision\\': \\'deny\\', \\'permissionDecisionReason\\': result.stderr.strip() or \\'Trellis file check failed\\'}}))\\nelse:\\n    sys.stdout.write(result.stdout)\\n    sys.stderr.write(result.stderr)\\n    sys.exit(2 if result.returncode else 0)\\n')\" block-sensitive-files",
+            "timeout": 60
+          }
+        ],
+        "matcher": "^apply_patch$"
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "repo_root=$(git rev-parse --show-toplevel) || exit 2; python3 \"$repo_root/.codex/hooks.py\" format-on-edit || exit 2",
+            "commandWindows": "python -c \"exec('import json, pathlib, subprocess, sys\\noperation = sys.argv[1]\\ntry:\\n    root = subprocess.check_output([\\'git\\', \\'rev-parse\\', \\'--show-toplevel\\'], text=True, stderr=subprocess.PIPE, timeout=3).strip()\\n    result = subprocess.run([sys.executable, str(pathlib.Path(root) / \\'.codex/hooks.py\\'), operation], input=sys.stdin.read(), text=True, capture_output=True, timeout=150)\\nexcept Exception as error:\\n    result = subprocess.CompletedProcess([], 2, \\'\\', \\'Trellis Codex launcher: \\' + str(error))\\nif result.returncode and operation.startswith(\\'block-\\'):\\n    print(json.dumps({\\'hookSpecificOutput\\': {\\'hookEventName\\': \\'PreToolUse\\', \\'permissionDecision\\': \\'deny\\', \\'permissionDecisionReason\\': result.stderr.strip() or \\'Trellis file check failed\\'}}))\\nelse:\\n    sys.stdout.write(result.stdout)\\n    sys.stderr.write(result.stderr)\\n    sys.exit(2 if result.returncode else 0)\\n')\" format-on-edit",
+            "timeout": 180
+          }
+        ],
+        "matcher": "^apply_patch$"
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "repo_root=$(git rev-parse --show-toplevel) || exit 2; python3 \"$repo_root/.codex/hooks.py\" brain-enrich || exit 2",
+            "commandWindows": "python -c \"exec('import json, pathlib, subprocess, sys\\noperation = sys.argv[1]\\ntry:\\n    root = subprocess.check_output([\\'git\\', \\'rev-parse\\', \\'--show-toplevel\\'], text=True, stderr=subprocess.PIPE, timeout=3).strip()\\n    result = subprocess.run([sys.executable, str(pathlib.Path(root) / \\'.codex/hooks.py\\'), operation], input=sys.stdin.read(), text=True, capture_output=True, timeout=5)\\nexcept Exception as error:\\n    result = subprocess.CompletedProcess([], 2, \\'\\', \\'Trellis Codex launcher: \\' + str(error))\\nif result.returncode and operation.startswith(\\'block-\\'):\\n    print(json.dumps({\\'hookSpecificOutput\\': {\\'hookEventName\\': \\'PreToolUse\\', \\'permissionDecision\\': \\'deny\\', \\'permissionDecisionReason\\': result.stderr.strip() or \\'Trellis file check failed\\'}}))\\nelse:\\n    sys.stdout.write(result.stdout)\\n    sys.stderr.write(result.stderr)\\n    sys.exit(2 if result.returncode else 0)\\n')\" brain-enrich",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
