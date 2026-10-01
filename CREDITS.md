@@ -22,6 +22,8 @@ renamed loses its parent silently.
 | Coding standards read by a separate reviewer, not the implementer; navigation-miss, tool-economy and bloat captures; merge danger as a one-way or two-way door plus blast radius | Matt Pocock, "fixing the PR bottleneck" (AI Engineer Paris, 2026) and his [skills](https://github.com/mattpocock/skills) `code-review`, `retro` and `pr` | `AGENTS.md` § Working Methodology, `docs/coding-standards.md`, `.claude/skills/learn/SKILL.md`, `.github/pull_request_template.md` |
 | Session-management habits - rewind over correction, new task new session, compact with direction | [Thariq Shihipar](https://x.com/trq212/status/2044548257058328723) | `docs/methodology/session-management.md` |
 | The "second brain" pattern - a `raw/` corpus indexed for retrieval | Ryan Wiggins' Second Brain pattern, with index/log/lint bookkeeping after Andrej Karpathy's LLM-wiki notes | `brain/` |
+| Codex skill discovery, hook events, patch payloads, and trust setup | OpenAI [skills](https://learn.chatgpt.com/docs/build-skills) and [hooks](https://learn.chatgpt.com/docs/hooks) documentation | `.agents/skills/`, `.codex/`, `SETUP.md` |
+| Python setup for Linux and Windows CI | GitHub's [setup-python action](https://github.com/actions/setup-python) | `.github/workflows/hooks-ci.yml` |
 
 The rest - the push gate, branch claiming and leases, the verification gates,
 the mutate-the-suite discipline, the hook adapters - came out of the production

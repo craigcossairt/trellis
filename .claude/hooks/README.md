@@ -65,4 +65,7 @@ Lessons already baked into these scripts - keep them in mind when adding hooks:
   a PR can touch, or add a companion workflow that publishes the same check name for the paths
   the first one ignores.
 - **Other harnesses reuse these scripts.** Cursor and Grok Build run them through
-  `bin/run-claude-hook.sh` - edit the canonical script here, never a per-harness copy.
+  `bin/run-claude-hook.sh`; Codex uses `.codex/hooks.py` to adapt multi-file patches
+  and context output. Edit policy here, never a per-harness copy. Test each adapter's
+  verdict too: a Windows launcher that turns exit 2 into exit 1 can turn a block
+  into a non-blocking hook error.

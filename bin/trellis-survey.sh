@@ -59,7 +59,7 @@ examined=0
 # --- 1. skills and their Cursor routers -------------------------------------
 # A skill with no router is invisible to Cursor; a router pointing at a skill
 # that was deleted is a dangling pointer that fails only when someone uses it.
-if [ -d "$ROOT/.claude/skills" ] || [ -d "$ROOT/.cursor/skills" ]; then
+if [ -d "$ROOT/.cursor" ]; then
   examined=$((examined + 1))
   for canon in "$ROOT"/.claude/skills/*/SKILL.md; do
     [ -e "$canon" ] || continue
@@ -79,6 +79,54 @@ if [ -d "$ROOT/.claude/skills" ] || [ -d "$ROOT/.cursor/skills" ]; then
     [ -e "$ROOT/.claude/skills/$name/SKILL.md" ] || [ -e "$ROOT/.claude/commands/$name.md" ] \
       || finding "router-dangling" "$name" "router points at a skill that is not here"
   done
+fi
+
+# --- Codex routers and static hook wiring -----------------------------------
+# Python is required only while a Codex adapter is retained. The same checker
+# runs in CI; a missing checker, failed scan or unknown output is exit 2, never
+# an empty finding list. This verifies wiring, not project trust or activation.
+if [ -e "$ROOT/.agents" ] || [ -L "$ROOT/.agents" ] || [ -e "$ROOT/.codex" ] || [ -L "$ROOT/.codex" ]; then
+  examined=$((examined + 1))
+  checker="$ROOT/bin/validate-codex.py"
+  if [ ! -f "$checker" ] || [ ! -r "$checker" ]; then
+    echo "trellis-survey: cannot read Codex checker: $checker; could not run" >&2
+    exit 2
+  fi
+  python_cmd=""
+  for candidate in python3 python; do
+    if command -v "$candidate" >/dev/null 2>&1 \
+        && "$candidate" -c 'import sys; raise SystemExit(sys.version_info < (3, 10))' >/dev/null 2>&1; then
+      python_cmd="$candidate"
+      break
+    fi
+  done
+  if [ -z "$python_cmd" ]; then
+    echo "trellis-survey: retained Codex adapter needs Python 3.10+; could not run" >&2
+    exit 2
+  fi
+  "$python_cmd" "$checker" --root "$ROOT" --porcelain > "$work/codex-raw" 2> "$work/codex-errors"
+  codex_rc=$?
+  case "$codex_rc" in
+    0|1) ;;
+    *) cat "$work/codex-errors" >&2
+       echo "trellis-survey: Codex checker failed (exit $codex_rc); could not run" >&2
+       exit 2 ;;
+  esac
+  tr -d "$CR" < "$work/codex-raw" > "$work/codex" || exit 2
+  # The receipt proves the checker reached its end. Reconcile its row count
+  # and exit status too: an empty/truncated/unknown checker cannot report clean.
+  if ! awk -F '\t' -v status="$codex_rc" '
+    NR == 1 {
+      if (NF != 3 || $1 != "codex-check-v1" || $2 != "complete" || $3 !~ /^[0-9]+$/) exit 1
+      expected = $3; next
+    }
+    NF != 3 || $1 !~ /^codex-(router-(invalid|missing|dangling)|config-(missing|invalid)|hook-(missing|unwired))$/ || $2 == "" || $3 == "" { exit 1 }
+    END { if (NR == 0 || expected != NR - 1 || status != (expected > 0)) exit 1 }
+  ' "$work/codex"; then
+    echo "trellis-survey: Codex checker returned an invalid receipt; could not run" >&2
+    exit 2
+  fi
+  sed '1d' "$work/codex" >> "$work/findings" || exit 2
 fi
 
 # --- 2. hook scripts: present vs wired --------------------------------------
@@ -236,9 +284,10 @@ fi
 
 echo "trellis-survey"
 echo "  examined: $ROOT"
+echo "  Static checks only; runtime activation and trust are not verified."
 echo
 if [ "$total" -eq 0 ]; then
-  echo "Nothing to report. Everything present is wired, and setup has no markers left."
+  echo "Nothing to report in the static checks performed."
   exit 0
 fi
 
@@ -267,6 +316,7 @@ section 'hook-missing'                  "NOT RUNNING - the harness calls these a
 section 'githook-not-executable|githooks-not-installed|githooks-elsewhere' "NOT RUNNING - git will skip these without a word:"
 section 'hook-unwired'                  "PRESENT BUT INERT - nothing invokes these:"
 section 'skill-no-router|command-no-router|router-dangling' "HARNESS COVERAGE - reachable from one tool but not another:"
+section 'codex-router-invalid|codex-router-missing|codex-router-dangling|codex-config-missing|codex-config-invalid|codex-hook-missing|codex-hook-unwired' "CODEX STATIC WIRING - definitions or referenced files need attention:"
 section 'setup-incomplete'              "SETUP UNFINISHED - the agent will guess at these every session:"
 section 'no-manifest|template-version-unknown|template-files-removed' "TEMPLATE STATE:"
 

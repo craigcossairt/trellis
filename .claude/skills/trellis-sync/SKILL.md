@@ -76,7 +76,7 @@ Rules that still need you:
   "Safe to take" means nobody edited it here, not that they wanted the change.
 - **Never apply a `conflict` file without the user having seen both versions.**
   Taking an update is a whole-file write. There is no merge.
-- If a file needs a matching change elsewhere - a skill and its Cursor router,
+- If a file needs a matching change elsewhere - a skill and its retained adapter routers,
   a hook and its `settings.json` entry - take both or neither.
 - `removed` is not applied by this tool. Upstream deleting a file is not the
   same as you wanting it gone; delete it yourself if you agree.

@@ -25,8 +25,9 @@ the whole conversation for a reader you have not met yet.
 
 ## 1. Before anything: two questions, then calibrate
 
-Ask both of these in a single `AskUserQuestion` call, before reading `SETUP.md`
-or touching any file.
+Ask both of these together using the available question tool (or in conversation
+if the tool has none), before reading `SETUP.md` or touching any file. Do not
+depend on a tool name specific to one coding agent.
 
 1. **How much have you built before?** Offer: *first real project* / *I code,
    new to working with an agent* / *I do this for a living*.
@@ -48,7 +49,7 @@ read it; put the choice to them in their own terms.
 
 - **Ask, then write.** Never leave a `<!-- FILL IN -->` for them to find later.
   The whole point is that they finish this conversation with the files filled.
-- **Batch related questions into one `AskUserQuestion` call.** A separate round
+- **Batch related questions into one question-tool call or message.** A separate round
   trip per field is how a five-minute step becomes twenty.
 - **Recommend, do not present a menu.** Lead with the option you would pick and
   say why in a clause. "Menu with no recommendation" is the failure mode that
@@ -117,10 +118,12 @@ for anything.
 `SETUP.md` ends with checks. Run them rather than describing them, and report
 what actually happened.
 
-The load-bearing one is asking the agent to edit `.env` and confirming it
-refuses. A hook that silently is not wired looks exactly like a hook that is
-working, right up until it matters. If it does not refuse, that is the finding -
-say so plainly and fix it before calling setup done.
+For a tool with edit hooks, use a disposable `.env` containing only dummy values
+and exercise the guarded edit tool. Check the hook's actual blocking verdict;
+an agent refusing in prose does not prove that a hook ran. Never use real
+credentials for this check. Report missing activation or a failed block and fix
+it before claiming that protection works. For an adapter without edit hooks,
+report that limitation and verify the Git gate separately.
 
 `SETUP.md` step 2 already had them write the first `docs/decision-log.md` entry.
 Do not write a second one here - check that it exists, and if it got skipped,
