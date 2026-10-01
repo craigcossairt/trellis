@@ -88,10 +88,30 @@ session B mid-edit. The pattern that survives this:
   <branch>` - one worktree per task, one session per worktree, removed when the branch merges.
 - `git pull` on the main checkout is fine. `git switch`, `git checkout <branch>`, and
   `git reset --hard` there are not - each moves HEAD or rewrites the shared tree.
-- **Enforce it, don't just document it.** A PreToolUse hook that blocks branch-switching
-  commands in the main checkout turns the rule from etiquette into a guardrail - the same
-  fail-closed philosophy as the push gate, whose relative `core.hooksPath` already covers
-  every linked worktree.
+- **Enforce it, don't just document it** - and know what each enforcement point can see.
+  A PreToolUse hook that blocks branch-switching commands in the main checkout turns the rule
+  from etiquette into a guardrail, but it reads only the tool-call command line. **A guard that
+  reads the command line misses git run from a script file.** An agent that writes its git
+  steps into `fix.sh` and runs `bash fix.sh` shows the guard nothing but `bash fix.sh`, and can
+  leave the shared checkout on its own branch, full of dirty files, with a repo-local identity
+  it set on the way. Widening the pattern list does not close that.
+- **So check the end state.** `bin/check-main-checkouts.sh <dir>...` reports a main checkout
+  that is off its default branch, dirty, or carries a repo-local git identity, however it got
+  that way. `session-start.sh` runs it at every session start once the checkout is marked, in
+  its own local config: `git config --local project.sharedCheckout true` (plus
+  `project.defaultBranch <name>` if the default is not `main`). Unmarked, it does nothing.
+  Details: `.claude/hooks/README.md` § Optional hooks.
+- **Why not enforce inside git instead?** A `reference-transaction` hook sees every caller,
+  script files included, and was built and tested for this. It was not shipped, for three
+  reasons:
+  1. Git runs it for every ref transaction - several per commit - in every copy whose
+     `core.hooksPath` points at it, marked or not. With an empty hook that measured about 0.4s
+     per commit on Windows; a 40-commit rebase went from about 1s to over a minute.
+  2. Git updates the working tree and index before HEAD. Refusing the HEAD update leaves the
+     target branch's files sitting in the checkout under the old branch name - a worse state
+     than the move it blocked.
+  3. A rebase detaches HEAD as one of its own steps and has to be let through, and that
+     exemption is a hole: `git rebase main feature` moves the checkout anyway.
 
 ## Migration steps (about an hour)
 
