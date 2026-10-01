@@ -54,6 +54,39 @@ jobs:
           # it costs nothing here.
           persist-credentials: false
 
+      - name: Every suite is wired
+        run: |
+          # A suite that exists but that nothing runs reads as coverage: its docs
+          # say what it proves and nobody notices CI never calls it. Named steps
+          # below carry the mutation ledgers, so this compares the suite files on
+          # disk with the INVOCATIONS in this workflow and fails on one nothing
+          # runs. Only executable lines count: comment lines are dropped first,
+          # so a commented-out step or a suite named only in a mutation ledger
+          # is not "wired". An invocation is `bin/tests/<name>` (shell suites)
+          # or `-p <name>` (unittest discovery). A skip must be argued: add
+          # `name: reason` to SKIP. A glob that matches nothing is
+          # could-not-run, never "all wired".
+          SKIP=""
+          runs=$(grep -vE '^[[:space:]]*#' .github/workflows/hooks-ci.yml) || {
+            echo "::error::could not read the workflow - this check could not run"; exit 1; }
+          found=0; missing=0
+          for f in bin/tests/test-*.sh bin/tests/test_*.py; do
+            [ -e "$f" ] || continue
+            found=$((found + 1))
+            name=$(basename "$f")
+            case "$SKIP" in *"$name:"*) continue ;; esac
+            if ! printf '%s\n' "$runs" | grep -qF -e "bin/tests/$name" -e "-p $name"; then
+              echo "::error file=$f::$name is not run by hooks CI and not on the SKIP list with a reason"
+              missing=$((missing + 1))
+            fi
+          done
+          if [ "$found" -eq 0 ]; then
+            echo "::error::no suite files matched bin/tests/test-* - this check could not run"
+            exit 1
+          fi
+          [ "$missing" -eq 0 ] || exit 1
+          echo "every suite is wired: $found suite file(s)"
+
       - uses: actions/setup-python@v7
         if: hashFiles('.agents/**', '.codex/**') != ''
         with:
@@ -672,6 +705,35 @@ jobs:
           done
           exit $fail
 
+      - name: Claude hook timeouts are in seconds
+        run: |
+          # Claude Code reads a hook's `timeout` in SECONDS. This template once
+          # shipped 10000 / 30000 / 5000 - millisecond values - so a hung hook
+          # could hold a session for hours instead of seconds, and nothing
+          # complained because a too-large timeout never fires. Claude Code's
+          # own default ceiling is 600s, so anything above it is a unit error.
+          [ -f .claude/settings.json ] || { echo "no .claude/settings.json - nothing to check"; exit 0; }
+          node -e '
+            const s = JSON.parse(require("fs").readFileSync(".claude/settings.json", "utf8"));
+            let seen = 0, bad = 0;
+            const walk = (o, p) => {
+              if (Array.isArray(o)) return o.forEach((v, i) => walk(v, p + "[" + i + "]"));
+              if (o && typeof o === "object") for (const [k, v] of Object.entries(o)) {
+                if (k === "timeout") {
+                  seen++;
+                  if (typeof v !== "number" || v > 600) {
+                    bad++;
+                    console.log("::error file=.claude/settings.json::" + p + " timeout " + v + " - Claude Code reads seconds; above 600 is almost certainly milliseconds");
+                  }
+                }
+                walk(v, p + "/" + k);
+              }
+            };
+            walk(s, "");
+            console.log("checked " + seen + " timeout(s), " + bad + " out of range");
+            process.exit(bad ? 1 : 0);
+          '
+
       - name: Suite - trellis-sync (classification + manifest)
         run: |
           # The whole value of sync is one distinction: "I changed this" vs
@@ -950,6 +1012,15 @@ jobs:
         run: bash bin/tests/test-session-start.sh
       - name: Suite - trellis-survey on Git for Windows
         run: bash bin/tests/test-trellis-survey.sh
+      # These three were missing here with no reason recorded. All three pass
+      # on Git for Windows (measured 2026-09-30: 18, 80 and 87 cases), so the
+      # gap was an unargued skip, not a platform limit.
+      - name: Suite - claim-branch on Git for Windows
+        run: bash bin/tests/test-claim-branch.sh
+      - name: Suite - claim-branch lease on Git for Windows
+        run: bash bin/tests/test-claim-branch-lease.sh
+      - name: Suite - trellis-sync on Git for Windows
+        run: bash bin/tests/test-trellis-sync.sh
       # The shared-checkout pieces lean on path spellings (git's C:/ form
       # beside Git Bash's /c/ form), which differ on Windows. Same suites,
       # ledgers on the Linux steps above.
