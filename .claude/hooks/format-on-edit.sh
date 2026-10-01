@@ -8,7 +8,7 @@
 # (tail) so hook noise stays out of the conversation.
 set -uo pipefail
 
-HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+HOOK_DIR="$(CDPATH='' cd -- "$(dirname "${BASH_SOURCE[0]}")" >/dev/null && pwd)"
 
 file_path=$(bash "$HOOK_DIR/hook-file-path.sh")
 [ -z "$file_path" ] && exit 0

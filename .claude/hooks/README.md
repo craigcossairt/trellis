@@ -14,6 +14,15 @@ Lessons already baked into these scripts - keep them in mind when adding hooks:
 - **Windows:** a bare `bash` can resolve to WSL, where HOME and every path are wrong - harness
   configs should name Git Bash's full path (see `.grok/hooks/hooks.json`). Shell scripts must
   check out with LF (`.gitattributes` forces it).
+- **A `cd` into a script's own directory must clear `CDPATH`.** Write
+  `HERE="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null && pwd)"`, never a
+  bare `cd "$(dirname ...)"`. With `CDPATH` exported and the script run by a RELATIVE path (the
+  Cursor and Grok wiring runs `bash bin/run-claude-hook.sh`), bash resolves the directory through
+  `CDPATH` and echoes it, so the capture holds two lines and every sibling path breaks. Here that
+  made the sensitive-file hook refuse every edit and the adapter, which fails open on a missing
+  target, allow every edit. Behavioral suites ran their scripts by absolute path and could not
+  see it. `bin/check-cdpath-cd.sh` enforces the rule in hooks CI; opt out of one line with
+  `# cdpath-ok: <reason>`.
 - **A session hook that overruns its time budget is killed and its output is DISCARDED.** Not
   truncated - discarded, with no error. Every warning the hook meant to surface vanishes, and
   the session looks clean precisely when it is not. Keep session hooks fast, measure them

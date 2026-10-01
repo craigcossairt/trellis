@@ -14,7 +14,7 @@
 # =============================================================================
 set -uo pipefail
 
-SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/claim-branch.sh"
+SCRIPT="$(CDPATH='' cd -- "$(dirname "${BASH_SOURCE[0]}")/.." >/dev/null && pwd)/claim-branch.sh"
 [ -f "$SCRIPT" ] || { echo "cannot find claim-branch.sh next to this test" >&2; exit 1; }
 
 # The fixture must not inherit the host's git configuration. A global

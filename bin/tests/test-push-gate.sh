@@ -19,7 +19,7 @@
 # =============================================================================
 set -uo pipefail
 
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+HERE="$(CDPATH='' cd -- "$(dirname "${BASH_SOURCE[0]}")" >/dev/null && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
 HOOK_SRC="$ROOT/.githooks/pre-push"
 VERIFY_SRC="$ROOT/bin/verify-green.sh"

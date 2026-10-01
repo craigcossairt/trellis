@@ -32,7 +32,7 @@
 # =============================================================================
 set -uo pipefail
 
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+HERE="$(CDPATH='' cd -- "$(dirname "${BASH_SOURCE[0]}")" >/dev/null && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
 HOOK="$ROOT/.claude/hooks/session-start.sh"
 INSTALLER="$ROOT/bin/install-git-hooks.sh"
@@ -182,6 +182,20 @@ must cp "$INSTALLER" "$SH_REPO/bin/install-git-hooks.sh"
   || { echo "FIXTURE FAILED: core.hooksPath was already set" >&2; exit 1; }
 run "$SH_REPO"
 c_eq "wires core.hooksPath when unset" "$(git -C "$SH_REPO" config --get core.hooksPath || true)" ".githooks"
+
+# With no argument the installer finds its repo from its OWN location. Run by a
+# RELATIVE path with CDPATH exported, `cd bin` resolves through CDPATH and
+# echoes the directory, so an unguarded `$(cd "$(dirname ...)" && pwd)` capture
+# held two lines, the repo root could not be resolved, and nothing was wired -
+# silently, since the installer exits 0 on a repo it cannot find. The case above
+# goes through session-start, which passes the repo explicitly.
+REL_REPO="$TMP/relative-installer"; new_repo "$REL_REPO"
+must mkdir -p "$REL_REPO/bin" "$REL_REPO/.githooks"
+must cp "$INSTALLER" "$REL_REPO/bin/install-git-hooks.sh"
+: > "$REL_REPO/.githooks/pre-push"
+( cd "$REL_REPO" && CDPATH=. bash bin/install-git-hooks.sh >/dev/null 2>&1 )
+c_eq "relative + CDPATH=. with no argument still wires its own repo" \
+  "$(git -C "$REL_REPO" config --get core.hooksPath || true)" ".githooks"
 
 # An installer someone deleted during the prune step must not break the session.
 NOINST="$TMP/noinstaller"; new_repo "$NOINST"

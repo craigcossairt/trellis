@@ -32,7 +32,7 @@
 # =============================================================================
 set -uo pipefail
 
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+HERE="$(CDPATH='' cd -- "$(dirname "${BASH_SOURCE[0]}")" >/dev/null && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
 HOOK="$ROOT/.claude/hooks/block-sensitive-files.sh"
 HELPER="$ROOT/.claude/hooks/hook-file-path.sh"
@@ -90,7 +90,7 @@ if command -v jq >/dev/null 2>&1; then
   cand="$PATH"
   for _ in 1 2 3 4 5; do
     PATH="$cand" command -v jq >/dev/null 2>&1 || break
-    d="$(cd "$(dirname "$(PATH="$cand" command -v jq)")" && pwd)"
+    d="$(CDPATH='' cd -- "$(dirname "$(PATH="$cand" command -v jq)")" >/dev/null && pwd)"
     cand="$(printf '%s' "$cand" | tr ':' '\n' | grep -vxF "$d" | paste -sd: -)"
   done
   usable "$cand" && NOJQ_PATH="$cand"
@@ -255,6 +255,60 @@ printf '#!/bin/sh\nexit 1\n' > "$BROKEN/jq"; chmod +x "$BROKEN/jq"
 # jq resolves but fails: the helper takes the jq branch, gets nothing back, and
 # the hook must refuse rather than allow.
 check "jq present but failing fails CLOSED" 2 "$(claude 'src/index.ts')" "$BROKEN:$NOJQ_PATH"
+
+echo "== K. run by a RELATIVE path with CDPATH exported =="
+# Every case above runs the hook by ABSOLUTE path, where `dirname` never
+# consults CDPATH. Run relatively with CDPATH exported, an unguarded
+# `$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)` resolves the relative
+# directory THROUGH CDPATH, and a cd that resolved through CDPATH ECHOES the
+# directory. The capture then holds two lines, hook-file-path.sh is looked up at
+# a path that does not exist, and the hook fails closed on EVERY edit, ordinary
+# ones included. Relative invocation is not hypothetical: the Cursor and Grok
+# wiring runs `bash bin/run-claude-hook.sh ...` from the project root.
+HOOK_PARENT="$(dirname "$(dirname "$HOOK")")"
+HOOK_REL="$(basename "$(dirname "$HOOK")")/$(basename "$HOOK")"
+run_rel() { # $1 payload, $2 CDPATH value -> sets RC and ERR
+  ERR="$( cd "$HOOK_PARENT" && printf '%s' "$1" | CDPATH="$2" bash "$HOOK_REL" 2>&1 >/dev/null )"
+  RC=$?
+}
+run_rel "$(claude 'src/index.ts')" .
+if [ "$RC" -eq 0 ]; then ok "relative + CDPATH=. allows an ordinary file"
+else bad "relative + CDPATH=. allows an ordinary file" "expected exit 0, got $RC (stderr: ${ERR:-none})"; fi
+# Asserted on the MESSAGE, not exit 2 alone: a hook that lost its helper also
+# exits 2, with the parse-failure text, so exit 2 would pass with the bug in.
+run_rel "$(claude '.env')" .
+if [ "$RC" -eq 2 ] && printf '%s' "$ERR" | grep -qi 'sensitive, lock, or generated'; then
+  ok "relative + CDPATH=. blocks a secret on the RULE, not a parse failure"
+else
+  bad "relative + CDPATH=. blocks a secret on the RULE, not a parse failure" "exit $RC (stderr: ${ERR:-none})"
+fi
+
+# The guard has two layers (an empty CDPATH= prefix, and >/dev/null), and the
+# cases above cannot tell them apart: either one alone stops the echo. This
+# pins the CDPATH='' half. CDPATH does not only echo - it can resolve `cd hooks`
+# to a DIFFERENT directory of the same name, silently once stdout is discarded.
+# A decoy directory holding a hooks/hook-file-path.sh that names a secret makes
+# every edit read as a secret write if the hook loads the decoy's helper.
+DECOY="$TMPBIN/decoy"
+mkdir -p "$DECOY/$(basename "$(dirname "$HOOK")")"
+printf '#!/usr/bin/env bash\ncat >/dev/null\necho /decoy/.env\n' \
+  > "$DECOY/$(basename "$(dirname "$HOOK")")/hook-file-path.sh"
+run_rel "$(claude 'src/index.ts')" "$DECOY"
+if [ "$RC" -eq 0 ]; then ok "relative + CDPATH at a decoy dir loads its OWN helper"
+else bad "relative + CDPATH at a decoy dir loads its OWN helper" "expected exit 0, got $RC (stderr: ${ERR:-none})"; fi
+
+# The adapter in front of this hook for Cursor and Grok. It finds the hook from
+# its OWN location, and a target it cannot find fails OPEN by design (a moved
+# path must not brick a session). So the same CDPATH bug there does not refuse
+# everything, it ALLOWS everything: a .env write came back {"permission":"allow"}.
+ADAPTER="$ROOT/bin/run-claude-hook.sh"
+[ -f "$ADAPTER" ] || { echo "missing $ADAPTER" >&2; exit 1; }
+ADAPTER_OUT="$( cd "$ROOT" && printf '%s' "$(cursor '.env')" \
+  | CDPATH=. bash bin/run-claude-hook.sh cursor block-sensitive-files 2>/dev/null )"
+case "$ADAPTER_OUT" in
+  *'"permission":"deny"'*) ok "adapter run relatively with CDPATH=. still DENIES a .env write" ;;
+  *) bad "adapter run relatively with CDPATH=. still DENIES a .env write" "stdout: ${ADAPTER_OUT:-none}" ;;
+esac
 
 echo
 echo "passed: $PASS   failed: $FAIL"

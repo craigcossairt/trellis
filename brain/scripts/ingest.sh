@@ -5,7 +5,7 @@
 
 set -euo pipefail
 
-BRAIN="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+BRAIN="$(CDPATH='' cd -- "$(dirname "${BASH_SOURCE[0]}")/.." >/dev/null && pwd)"
 ROOT="$(cd "$BRAIN/.." && pwd)"
 RAW="$BRAIN/raw"
 

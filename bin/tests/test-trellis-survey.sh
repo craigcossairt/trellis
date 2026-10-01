@@ -23,7 +23,7 @@
 # =============================================================================
 set -uo pipefail
 
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+HERE="$(CDPATH='' cd -- "$(dirname "${BASH_SOURCE[0]}")" >/dev/null && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
 SURVEY="$ROOT/bin/trellis-survey.sh"
 [ -f "$SURVEY" ] || { echo "missing $SURVEY" >&2; exit 1; }
