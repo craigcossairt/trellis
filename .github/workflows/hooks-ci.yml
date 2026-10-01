@@ -282,10 +282,11 @@ jobs:
       - name: Suite - Codex hook adapter
         if: hashFiles('.codex/**') != ''
         run: |
-          # Mutation ledger, measured 2026-09-30; 13 methods now pass. Named sets matched:
+          # Mutation ledger, measured 2026-09-30; 14 methods now pass. Named sets matched:
           #   inspect only first patch target -> mixed-patch case, 1 -> 1 red
           #   drop named symlink spelling -> symlink case, 1 -> 1 red
           #   swallow canonical nonzero -> policy-failure case, 1 -> 1 red
+          #   exact envelope marker comparison -> whitespace subcases, 6 -> 6 red
           # Configured-command cases exercise cmd and PowerShell. Structured
           # deny output preserves blocking through either outer shell, including
           # policy denial, missing hooks.py and a missing Git root.

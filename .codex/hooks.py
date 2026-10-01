@@ -39,7 +39,7 @@ def patch_paths(command, cwd):
     if not isinstance(command, str):
         raise ValueError("apply_patch requires tool_input.command")
     lines = command.strip().splitlines()
-    if len(lines) < 3 or lines[0] != "*** Begin Patch" or lines[-1] != "*** End Patch":
+    if len(lines) < 3 or lines[0].strip() != "*** Begin Patch" or lines[-1].strip() != "*** End Patch":
         raise ValueError("invalid patch envelope")
     paths = []
     operation = None

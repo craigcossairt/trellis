@@ -111,7 +111,8 @@ fit your project. `docs/harness-support.md` lists the coverage and limits.
       Verification also refuses Git's `assume-unchanged` and `skip-worktree`
       flags because they hide edits; use a full checkout rather than a sparse
       checkout for this gate. It never clears those flags for you.
-      To push without it once, put `PROJECT_SKIP_VERIFY=1` in front of your push command.
+      To bypass test verification once, put `PROJECT_SKIP_VERIFY=1` in front
+      of your push command. The branch-claim check still runs.
 
 ## 5. Delete what you will not use (2 min)
 

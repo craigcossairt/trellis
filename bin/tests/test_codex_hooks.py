@@ -54,6 +54,18 @@ class CodexHooksTest(unittest.TestCase):
                 self.assertEqual(result.returncode, 2, result.stderr)
                 self.assertIn("sensitive", result.stderr)
 
+    def test_patch_envelope_whitespace_matches_apply_patch_semantics(self):
+        for opening, closing in (("*** Begin Patch  ", "*** End Patch"),
+                                 ("*** Begin Patch\t", "*** End Patch"),
+                                 ("*** Begin Patch", "  *** End Patch  ")):
+            for filename, expected in (("safe.txt", 0), (".env", 2)):
+                with self.subTest(opening=opening, closing=closing, filename=filename):
+                    result = self.invoke("block-sensitive-files",
+                        opening + "\n*** Add File: " + filename + "\n+hello  \n" + closing)
+                    self.assertEqual(result.returncode, expected, result.stderr)
+                    if expected == 2:
+                        self.assertIn("sensitive", result.stderr)
+
     @unittest.skipUnless(os.name == "nt", "Windows filename normalization")
     def test_windows_alias_paths_are_rejected(self):
         for filename in ("package-lock.json.", ".env::$DATA"):
