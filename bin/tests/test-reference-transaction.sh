@@ -81,6 +81,14 @@ make_repo() {
   [ "$branch" = main ] || must git -C "$REPO" config --local project.defaultBranch "$branch"
 }
 
+# hookless <git args...> - a fixture step that has to move HEAD in a marked
+# checkout. It runs git with hooks pointed at an empty directory, rather than
+# using the bypass or lifting the marker, so no fixture depends on any behavior
+# a case is there to test: a mutation that breaks the bypass or the marker read
+# should turn those cases red, not abort the suite at an unrelated fixture.
+mkdir -p "$TMP/nohooks"
+hookless() { must git -c core.hooksPath="$TMP/nohooks" "$@"; }
+
 head_of() { git -C "$1" symbolic-ref -q --short HEAD || echo DETACHED; }
 
 OUT=""; RC=0
@@ -181,7 +189,7 @@ allowed "worktree add --detach"
 # The local config is shared with every linked worktree, so the marker is
 # visible there too. Only the git-dir == common-dir check keeps it out.
 make_repo inworktree
-must git -C "$REPO" worktree add -q ../app-wt-w -b feat
+hookless -C "$REPO" worktree add -q ../app-wt-w -b feat
 run git -C "$REPO/../app-wt-w" switch -c feat2
 allowed "switch inside a linked worktree of a shared checkout"
 
@@ -212,7 +220,7 @@ allowed "pull --rebase on a diverged main (the rebase detaches HEAD)"
 if [ ! -d "$REPO/.git/rebase-merge" ] && [ "$(head_of "$REPO")" = main ]; then ok "pull --rebase finished on main"; else bad "pull --rebase left the checkout mid-rebase"; fi
 
 make_repo backtomain
-must env PROJECT_ALLOW_CHECKOUT=1 git -C "$REPO" switch -q -c stray
+hookless -C "$REPO" switch -q -c stray
 run git -C "$REPO" switch main
 allowed "returning to main from another branch"
 if [ "$(head_of "$REPO")" = main ]; then ok "switch main landed on main"; else bad "switch main did not land on main"; fi
@@ -227,7 +235,7 @@ refused "project.defaultBranch=trunk: switch off trunk refused" "$REPO" trunk "s
 must git -C "$REPO" branch main
 run git -C "$REPO" switch main
 refused "project.defaultBranch=trunk: 'main' is not special" "$REPO" trunk "switch to 'main'"
-must env PROJECT_ALLOW_CHECKOUT=1 git -C "$REPO" switch -q main
+hookless -C "$REPO" switch -q main
 run git -C "$REPO" switch trunk
 allowed "project.defaultBranch=trunk: returning to trunk"
 
@@ -293,7 +301,11 @@ direct "own HEAD.lock free (worktree add): allow" 0 prepared "$SWITCH"
 
 mkdir -p "$TMP/notarepo"
 got=$( cd "$TMP/notarepo" && printf '%s\n' "$SWITCH" | GIT_CEILING_DIRECTORIES="$TMP" sh "$HOOK" prepared 2>/dev/null; echo $? )
-if [ "$got" = 0 ]; then ok "git rev-parse fails: allow (fail open)"; else bad "git rev-parse fails: allow (fail open), got exit $got"; fi
+# Outside a repository the marker read is the first git call to fail, so this
+# pins THAT read failing open. The later rev-parse reads cannot be made to fail
+# while the marker read succeeds in the same directory, so their fail-open arms
+# have no isolating case.
+if [ "$got" = 0 ]; then ok "not a repository: allow (fail open)"; else bad "not a repository: allow (fail open), got exit $got"; fi
 
 echo
 echo "reference-transaction hook: $PASS passed, $FAIL failed"
