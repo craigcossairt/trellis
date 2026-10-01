@@ -34,6 +34,10 @@ done
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
+# Drop the repo-local git variables before any fixture is built: an inherited
+# GIT_DIR or GIT_INDEX_FILE would aim fixture commits at the caller's repo.
+# The inherited-GIT_DIR case below sets them again for its one hook run.
+for v in $(git rev-parse --local-env-vars 2>/dev/null); do unset "$v"; done
 : > "$TMP/gitconfig-global"
 export GIT_CONFIG_GLOBAL="$TMP/gitconfig-global"
 export GIT_CONFIG_NOSYSTEM=1
@@ -128,6 +132,24 @@ check "marked, checker exits 2: FAILED, not parked" 1 "## Main checkout check FA
 make_fixture badvalue stub; mark notabool
 run "$REPO"
 check "marker that is not a boolean: FAILED, naming the key" 1 "## Main checkout check FAILED" "project.sharedCheckout"
+
+# A config git cannot parse makes the marker read fail with exit 128, not
+# the exit 1 of "not set". Whether the project opted in is then unknown, and
+# silence would read as "not opted in".
+make_fixture badconfig stub; mark
+printf '[user\n  email = broken\n' >> "$REPO/.git/config"
+run "$REPO"
+check "unreadable local config: FAILED, nothing checked" 1 "## Main checkout check FAILED" "Nothing was checked"
+
+# `git -C` does not override an inherited GIT_DIR: run from a git hook, the
+# marker read would describe the repo GIT_DIR names. Here that repo is
+# unmarked, so an unisolated read stays silent over an off-main checkout.
+make_fixture envother none; OTHER="$REPO"
+make_fixture envmarked; mark
+must git -C "$REPO" switch -q -c agent/task-77
+OUT="$(GIT_DIR="$OTHER/.git" GIT_WORK_TREE="$OTHER" GIT_INDEX_FILE="$OTHER/.git/index" \
+  CLAUDE_PROJECT_DIR="$REPO" bash "$HOOK" </dev/null 2>&1)"; RC=$?
+check "inherited GIT_DIR naming another repo: still judges this one" 1 "## Main checkout not parked" "agent/task-77"
 
 # A session started from a linked worktree: ROOT is the worktree, and the
 # hook must still judge the MAIN checkout. The marker lives in the shared

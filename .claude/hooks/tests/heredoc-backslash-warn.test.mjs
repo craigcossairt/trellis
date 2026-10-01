@@ -25,8 +25,12 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const HOOK = join(HERE, '..', 'heredoc-backslash-warn.mjs');
 const BS = String.fromCharCode(92);
 
+// A hook that hangs on stdin or loops in its parser fails this case after 10s
+// instead of hanging the job, and a spawn failure names itself rather than
+// surfacing as an empty stderr and a null exit code.
 function run(stdin) {
-  const r = spawnSync(process.execPath, [HOOK], { input: stdin, encoding: 'utf8' });
+  const r = spawnSync(process.execPath, [HOOK], { input: stdin, encoding: 'utf8', timeout: 10000 });
+  assert.equal(r.error, undefined, `the hook did not run to completion: ${r.error}`);
   return { code: r.status, stdout: r.stdout, stderr: r.stderr };
 }
 
@@ -163,7 +167,40 @@ test('warns: two-stage pipeline into python', () => {
   expectWarn(`cat <<'EOF' | cat | python -\nprint('${BS}n')\nEOF`, 'python');
 });
 
+// The shell removes quotes before it runs a word, so a quoted interpreter,
+// a quoted `-` and a quoted path with a space are the same command.
+test('warns: quoted interpreter word', () => {
+  expectWarn(`"python3" - <<'EOF'\nprint('${BS}n')\nEOF`, 'python3');
+});
+
+test('warns: quoted - argument', () => {
+  expectWarn(`python3 "-" <<'EOF'\nprint('${BS}n')\nEOF`, 'python3');
+});
+
+test('warns: quoted interpreter path holding a space', () => {
+  expectWarn(`"/c/Program Files/Python312/python.exe" - <<'EOF'\nprint('${BS}n')\nEOF`, 'python');
+});
+
+// A runner's own option values and operands are not the wrapped command.
+test('warns: sudo -u user before the interpreter', () => {
+  expectWarn(`sudo -u bob python3 - <<'PY'\nprint('${BS}n')\nPY`, 'python3');
+});
+
 // --- silent --------------------------------------------------------------
+
+// A runner runs the command it wraps, and nothing after it: here env runs
+// echo, and python3 is only echo's argument.
+test('silent: interpreter name as an argument to a command a runner wraps', () => {
+  expectSilent(`env echo python3 - <<'EOF'\nprint('${BS}n')\nEOF`);
+});
+
+test('silent: timeout wrapping echo, with the interpreter as an argument', () => {
+  expectSilent(`timeout 5 echo python3 - <<'EOF'\nprint('${BS}n')\nEOF`);
+});
+
+test('silent: uv with a subcommand other than run', () => {
+  expectSilent(`uv pip python - <<'EOF'\nprint('${BS}n')\nEOF`);
+});
 
 // echo runs, not python; the interpreter's name is only an argument.
 test('silent: interpreter name as an argument to another command', () => {

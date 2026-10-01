@@ -30,6 +30,12 @@ SCRIPT="$HERE/../check-main-checkouts.sh"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
+# Drop the repo-local git variables first. Run from a git hook, an inherited
+# GIT_DIR or GIT_INDEX_FILE would aim every fixture `git add` at the caller's
+# repo, since `git -C` does not override them. The inherited-git-env case
+# below sets them again, on purpose, for the one checker run it pins.
+for v in $(git rev-parse --local-env-vars 2>/dev/null); do unset "$v"; done
+
 # No machine config: an empty global file, no system file.
 : > "$TMP/gitconfig-global"
 export GIT_CONFIG_GLOBAL="$TMP/gitconfig-global"
@@ -125,6 +131,11 @@ expect "off-main: names the branch it is on" 1 "agent/task-42" "not main"
 
 fresh; git -C "$R" switch -q -c main-backup; run "$R"
 expect "near-miss name: main-backup is not main" 1 "main-backup"
+
+# A tag named like the branch makes `symbolic-ref --short` answer
+# `heads/main`, an ambiguity-avoiding short name. Parked is parked.
+fresh; git -C "$R" tag main; run "$R"
+expect_silent "tag-named-main: a tag called main does not unpark main"
 
 fresh; git -C "$R" checkout -q --detach; run "$R"
 expect "detached: says detached" 1 "detached"

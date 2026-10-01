@@ -34,7 +34,8 @@ fi
 # Only for a project whose main checkout is marked shared:
 #   git config --local project.sharedCheckout true
 # Unmarked (every fresh copy), this section runs one config read and prints
-# nothing. Marked, it runs bin/check-main-checkouts.sh on the MAIN checkout -
+# nothing; a local config git cannot read prints FAILED, since the opt-in is
+# then unknown. Marked, it runs bin/check-main-checkouts.sh on the MAIN checkout -
 # the first entry of `git worktree list`, so a session started in a linked worktree
 # still judges the checkout every session shares, not its own worktree. A guard
 # on the tool-call command line never sees git run from a script file; this
@@ -42,10 +43,21 @@ fi
 # opted in, nothing else: a checker that is missing or cannot run says so.
 # Runs synchronously and costs one `git status` of the main checkout, which
 # counts against this hook's timeout on a very large tree.
-if [ -d "$ROOT/.git" ] || [ -f "$ROOT/.git" ]; then
+if [ -d "$ROOT/.git" ] || [ -f "$ROOT/.git" ]; then (
+  # A subshell, so this can drop the repo-local git variables (GIT_DIR,
+  # GIT_WORK_TREE, GIT_INDEX_FILE, ...) without changing the rest of the hook.
+  # `git -C` does not override them: inherited from a git hook, every read
+  # below would describe the repo they name, opted in or not.
+  for v in $(git rev-parse --local-env-vars 2>/dev/null); do unset "$v"; done
   mc_rc=0
   mc_raw=$(git -C "$ROOT" config --local --get project.sharedCheckout 2>/dev/null) || mc_rc=$?
-  if [ "$mc_rc" -eq 0 ]; then
+  # Exit 1 is "not set": not opted in, silent. Anything else (128 for a
+  # config git cannot parse) means the opt-in itself is unknown.
+  if [ "$mc_rc" -gt 1 ]; then
+    echo "## Main checkout check FAILED"
+    echo "Could not read project.sharedCheckout (git config exit $mc_rc), so whether this project opted in is unknown. Nothing was checked."
+    echo ""
+  elif [ "$mc_rc" -eq 0 ]; then
     mc_shared=""
     mc_shared=$(git -C "$ROOT" config --local --type=bool --get project.sharedCheckout 2>/dev/null) || mc_shared=invalid
     if [ "$mc_shared" = invalid ]; then
@@ -97,7 +109,7 @@ if [ -d "$ROOT/.git" ] || [ -f "$ROOT/.git" ]; then
       fi
     fi
   fi
-fi
+) fi
 
 # 2. Self-heal the git pre-push hook wiring (silent no-op when already set)
 if [ -f "$ROOT/bin/install-git-hooks.sh" ]; then

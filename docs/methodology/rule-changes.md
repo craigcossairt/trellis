@@ -14,8 +14,9 @@ provenance sentence out of the two root rule files saved **5.3%** of their bytes
 earlier pass had already taken most of it and what remained was live rule text. The same session
 cut **18.6%** by a different move.
 
-- **Count bytes first.** `wc -c AGENTS.md CLAUDE.md` before and after, in the commit message.
-  A trim with no number cannot be compared with the next one.
+- **Count bytes first.** `wc -c` on every file the trim touches (for the two root files,
+  `wc -c AGENTS.md CLAUDE.md`), before and after, in the commit message. A trim with no number
+  cannot be compared with the next one.
 - **Dedupe a pointer row against the file it points to.** A table row or bullet that says
   "use skill X when Y" and then restates X's procedure is paying twice: the harness often loads
   the skill's own description every turn anyway. Cut the row to its trigger and the rules a
@@ -45,7 +46,8 @@ protocol or a rule file:
    `adversarial-review.md`) sees outputs and the rubric, never which version produced what.
 5. **Read the outputs, not only the scores.** Check that the task could have shown a difference
    at all: if every run on both arms passes, a tie says the task was too easy, not that the
-   rule is inert.
+   rule is inert. That blocks claiming an addition works; it does not block a removal (see
+   below).
 
 **The promote condition depends on the direction of the edit:**
 

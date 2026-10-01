@@ -117,10 +117,12 @@ check_one() {
   local_identity "$dir" user.email
   local_identity "$dir" user.name
 
-  rc=0; branch=$(git -C "$dir" symbolic-ref -q --short HEAD 2>&1) || rc=$?
+  # The full ref, not --short: with a tag of the same name, --short answers
+  # `heads/main` to avoid ambiguity, and a parked checkout would read as off.
+  rc=0; branch=$(git -C "$dir" symbolic-ref -q HEAD 2>&1) || rc=$?
   case "$rc" in
-    0) [ "$branch" = "$expected" ] ||
-         problem "$dir" "on branch '$branch', not $expected (check nobody is mid-work there, then: git -C \"$dir\" switch $expected)" ;;
+    0) [ "$branch" = "refs/heads/$expected" ] ||
+         problem "$dir" "on branch '${branch#refs/heads/}', not $expected (check nobody is mid-work there, then: git -C \"$dir\" switch $expected)" ;;
     1) problem "$dir" "HEAD is detached at $(git -C "$dir" rev-parse --short HEAD 2>/dev/null || echo '?'), not on $expected" ;;
     *) cannot "$dir" "git symbolic-ref HEAD failed (exit $rc): $branch" ;;
   esac

@@ -22,9 +22,10 @@
 //
 // Fires when a heredoc body holding a backslash is fed as SOURCE to python,
 // python3, python3.x, py, node, bun or perl: the interpreter is the command
-// word, or follows a known runner (so `timeout 60 python3 -` and
-// `nice -n 10 node -` count, and `echo python -` does not), with no script
-// path (or `-`) and no -c/-e/-p/-m program. That includes
+// word, or is the command a known runner wraps (so `timeout 60 python3 -`,
+// `nice -n 10 node -` and `"python3" -` count, and `echo python -` and
+// `env echo python3 -` do not), with no script path (or `-`) and no
+// -c/-e/-p/-m program. That includes
 // `cat <<EOF | cat | python -`, where the body still reaches the interpreter
 // as source through each pipe stage. Stays silent for:
 //   - heredocs that are stdin DATA: `python3 x.py <<EOF`, `perl -pe ... <<EOF`,
@@ -40,8 +41,10 @@
 // heredoc and swallows the lines after it; a line continuation between the
 // interpreter and its `<<` hides the interpreter; an option that takes a
 // separate value and is not listed in OPTIONS below reads the value as a
-// script path; and a project-specific wrapper script in front of the
-// interpreter is not a known runner - add its basename to RUNNERS below.
+// script path, and a runner option likewise missing from RUNNERS reads its
+// value as the wrapped command; and a project-specific wrapper script in
+// front of the interpreter is not a known runner - add its basename to
+// RUNNERS below.
 //
 // A payload it cannot parse is reported, never silent and never blocking:
 // exit 0 with a systemMessage saying the check could not run. "Could not read
@@ -60,8 +63,28 @@ import { readFileSync } from 'node:fs';
 const BACKSLASH = String.fromCharCode(92);
 const INTERPRETER = /^(python(\d+(\.\d+)*)?|py|node|bun|perl)$/;
 // Commands that run a later word as the program. Any other command word means
-// an interpreter name after it is only an argument.
-const RUNNERS = new Set(['env', 'exec', 'command', 'time', 'sudo', 'nice', 'nohup', 'timeout', 'uv']);
+// an interpreter name after it is only an argument. Each runner's options are
+// skipped (with the next word, for the ones listed in `valued`), then its
+// `operands` (timeout's duration), then the wrapped command must be an
+// interpreter or another runner: `env echo python3 -` runs echo, not python.
+// uv only runs a program through its `run` subcommand.
+const RUNNERS = {
+  env: { valued: ['-u', '--unset', '-C', '--chdir', '-S', '--split-string'] },
+  exec: { valued: ['-a'] },
+  command: { valued: [] },
+  time: { valued: ['-o', '--output', '-f', '--format'] },
+  sudo: {
+    valued: ['-u', '--user', '-g', '--group', '-h', '--host', '-p', '--prompt', '-C', '--close-from',
+      '-D', '--chdir', '-r', '--role', '-t', '--type', '-U', '--other-user', '-T', '--command-timeout'],
+  },
+  nice: { valued: ['-n', '--adjustment'] },
+  nohup: { valued: [] },
+  timeout: { valued: ['-s', '--signal', '-k', '--kill-after'], operands: 1 },
+  uv: {
+    subcommand: 'run',
+    valued: ['--with', '-p', '--python', '--project', '--directory', '--package', '--env-file', '--group', '--extra'],
+  },
+};
 // A heredoc operator, `<<` or `<<-`, never part of a `<<<` here-string. The
 // delimiter is single-quoted, double-quoted, or a bare word (optionally
 // backslash-quoted).
@@ -123,42 +146,98 @@ function optionKind(family, a) {
   return 'flag';
 }
 
+// Split a simple command into words the way the shell would before running
+// it: quotes removed, a space inside quotes kept. `"python3" -` and
+// `python3 "-"` are `python3 -`. An unterminated quote runs to the end.
+// Backslashes are left as they are (a Windows path keeps its separators).
+function shellWords(segment) {
+  const words = [];
+  let cur = '';
+  let inWord = false;
+  let quote = '';
+  for (const ch of segment) {
+    if (quote) {
+      if (ch === quote) quote = '';
+      else cur += ch;
+    } else if (ch === "'" || ch === '"') {
+      quote = ch;
+      inWord = true;
+    } else if (ch === ' ' || ch === '\t') {
+      if (inWord) words.push(cur);
+      cur = '';
+      inWord = false;
+    } else {
+      cur += ch;
+      inWord = true;
+    }
+  }
+  if (inWord) words.push(cur);
+  return words;
+}
+
+// Skip a redirect word at words[k] (and its target, when separate); returns
+// the next index, or k when words[k] is not a redirect.
+function skipRedirect(words, k) {
+  if (!/^\d*[<>]/.test(words[k])) return k;
+  return /^\d*(>>?|<)$/.test(words[k]) ? k + 2 : k + 1;
+}
+
 // The interpreter in `segment` that would read stdin as SOURCE, or null.
 // The command word is the first word that is not an assignment; only a known
-// runner may put the interpreter later. Stdin is source only when the first
-// non-option argument is `-` or absent: `python3 x.py <<EOF` hands the body
-// to x.py as data, backslashes intact. An option that supplies the program
-// (-c, -m, -e, --eval=..., a perl cluster such as -lne) makes the body data.
+// runner may put the interpreter later, as the command it wraps. Stdin is
+// source only when the first non-option argument is `-` or absent:
+// `python3 x.py <<EOF` hands the body to x.py as data, backslashes intact. An
+// option that supplies the program (-c, -m, -e, --eval=..., a perl cluster
+// such as -lne) makes the body data.
 function stdinInterpreter(segment) {
-  const words = segment.trim().split(/[ \t]+/).filter(Boolean);
+  const words = shellWords(segment);
   const baseOf = (w) => w.split(/[/\\]/).pop().toLowerCase().replace(/\.exe$/, '');
-  const first = words.findIndex((w) => !/^[A-Za-z_]\w*=/.test(w));
-  if (first === -1) return null;
-  const limit = RUNNERS.has(baseOf(words[first])) ? words.length : first + 1;
-  for (let k = first; k < limit; k += 1) {
+  let k = words.findIndex((w) => !/^[A-Za-z_]\w*=/.test(w));
+  if (k === -1) return null;
+  // Walk runner -> wrapped command until an interpreter, or anything else.
+  for (;;) {
+    if (k >= words.length) return null;
     const base = baseOf(words[k]);
-    if (!INTERPRETER.test(base)) continue;
-    let args = words.slice(k + 1);
-    if (base === 'bun' && args[0] === 'run') args = args.slice(1);
-    for (let j = 0; j < args.length; j += 1) {
-      const a = args[j];
-      if (/^\d*[<>]/.test(a)) {
-        if (/^\d*(>>?|<)$/.test(a)) j += 1; // `> file`: skip the target too
-        continue;
-      }
-      if (a === '-') return base;
-      if (a === '--') return args[j + 1] === undefined || args[j + 1] === '-' ? base : null;
-      if (a.startsWith('-')) {
-        const kind = optionKind(base.startsWith('py') ? 'python' : base, a);
-        if (kind === 'program') return null;
-        if (kind === 'value') j += 1;
-        continue;
-      }
-      return null; // a script path
+    if (INTERPRETER.test(base)) break;
+    const runner = RUNNERS[base];
+    if (!runner) return null;
+    k += 1;
+    if (runner.subcommand) {
+      if (words[k] !== runner.subcommand) return null;
+      k += 1;
     }
-    return base;
+    let operands = runner.operands ?? 0;
+    while (k < words.length) {
+      const w = words[k];
+      const next = skipRedirect(words, k);
+      if (next !== k) { k = next; continue; }
+      if (w === '--') { k += 1 + operands; break; }
+      if (w.length > 1 && w.startsWith('-')) { k += runner.valued.includes(w) ? 2 : 1; continue; }
+      if (/^[A-Za-z_]\w*=/.test(w)) { k += 1; continue; } // env NAME=value
+      if (operands > 0) { operands -= 1; k += 1; continue; }
+      break;
+    }
   }
-  return null;
+  const base = baseOf(words[k]);
+  let args = words.slice(k + 1);
+  if (base === 'bun' && args[0] === 'run') args = args.slice(1);
+  for (let j = 0; j < args.length; j += 1) {
+    const a = args[j];
+    if (/^\d*[<>]/.test(a)) {
+      if (/^\d*(>>?|<)$/.test(a)) j += 1; // `> file`: skip the target too
+      continue;
+    }
+    if (a === '-') return base;
+    if (a === '--') return args[j + 1] === undefined || args[j + 1] === '-' ? base : null;
+    if (a.startsWith('-')) {
+      const kind = optionKind(base.startsWith('py') ? 'python' : base, a);
+      if (kind === 'program') return null;
+      if (kind === 'value') j += 1;
+      continue;
+    }
+    return null; // a script path
+  }
+  return base;
 }
 
 // Which interpreter, if any, reads the body of the heredoc at `line[index]`.
