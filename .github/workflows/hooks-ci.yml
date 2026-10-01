@@ -562,9 +562,11 @@ jobs:
           # Reports the END state a command-line guard cannot see: a main
           # checkout off its default branch, dirty, or carrying a repo-local
           # git identity. Three exit states: 0 parked, 1 problem, 2 could not
-          # check (outranks 1, and every finding still prints). 27 cases.
+          # check (outranks 1, and every finding still prints). Linked worktree
+          # vs main checkout is git dir vs common dir, never the shape of .git:
+          # a --separate-git-dir main checkout has a .git FILE. 29 cases.
           #
-          # Mutation ledger, measured 2026-09-30, predicted -> observed red:
+          # Mutation ledger, measured 2026-10-01, predicted -> observed red:
           #
           #   untracked files not listed                      3 -> 3
           #   --no-optional-locks dropped (index write)       1 -> 1
@@ -573,6 +575,7 @@ jobs:
           #   found (1) outranks could-not-check (2)          1 -> 1
           #   a failed git status read as clean               1 -> 1
           #   linked-worktree refusal removed                 1 -> 1
+          #   linked-vs-main decided by .git being a file     2 -> 2
           #   user.name not checked                           1 -> 1
           #   repo-local identity read as clean               3 -> 3
           #   cannot() stops setting could-not-check          6 -> 6
@@ -589,19 +592,24 @@ jobs:
           # goes quietly dead or leaks into projects that never asked: unmarked,
           # the checker never runs and nothing prints; marked, a session in a
           # linked worktree still judges the MAIN checkout; a checker that is
-          # missing or fails says MISSING or FAILED, never nothing. 12 cases.
+          # missing or fails says MISSING or FAILED, never nothing; a
+          # --separate-git-dir main checkout is still found. 14 cases.
           # (The unmarked output is also byte-identical to the hook before this
           # section existed; that was checked once by hand, not here.)
           #
-          # Mutation ledger, measured 2026-09-30, predicted -> observed red:
+          # Mutation ledger, measured 2026-10-01, predicted -> observed red:
           #
           #   opt-in gate removed                             3 -> 3
           #   MISSING branch silenced                         1 -> 1
           #   FAILED (exit 2) branch silenced                 1 -> 1
-          #   exit 1 not reported as "not parked"             2 -> 2
+          #   exit 1 not reported as "not parked"             2 -> 3
+          #     The extra red is the separate-git-dir off-main case, added after
+          #     this prediction was written; it reports through exit 1 too.
           #   session root passed instead of main checkout    2 -> 2
           #   non-boolean marker silenced                     1 -> 1
-          #   git-dir used instead of the common dir          2 -> 2
+          #   main checkout always from `git worktree list`   2 -> 2
+          #     (git names the separate git dir there, not the checkout)
+          #   session top level used even from a worktree     2 -> 2
           bash bin/tests/test-session-start-main-checkout.sh
 
       # node is preinstalled on ubuntu-latest, but its version is the image's
