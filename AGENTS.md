@@ -150,10 +150,8 @@ format; delete the adapter and the rule goes with it.
   **A run with nobody to confirm with** (a scheduled job, a headless run such as `claude -p` or
   `codex exec`, CI, a subagent) writes the plan into its output and carries it out, stopping
   only where its own prompt or one of the named stops below says to. Waiting for an approval
-  that cannot arrive delivers nothing: in a downstream project's blinded rule evaluations
-  (headless runs, versions assigned at random, graded against a rubric fixed in advance), every
-  run of a mid-tier model stopped at this line and delivered no work, while every run of a
-  stronger model finished. **Stops (2) and (3) always bind such a run, and a
+  that cannot arrive delivers nothing, and a run that stops here does no work at all. **Stops
+  (2) and (3) always bind such a run, and a
   plan it wrote itself is never the approval that lifts stop (3).** At such a stop it writes up
   what it would do and ends, rather than doing it. A subagent returns at any stop (see
   Delegation).
@@ -295,11 +293,7 @@ Context quality degrades in long sessions. Defaults for every session:
 ### Delegation & Model Routing
 
 For most tasks the right team size is 1 (yourself); add a reviewer agent only where a protocol
-names one. (In a downstream project's blinded comparison - 16 headless runs, versions assigned
-at random, graded against a rubric fixed in advance - removing "you plus one reviewer" as the
-default and "the higher your tier, the more you should delegate" moved the score inside the
-margin set beforehand, and only 1 of the 16 runs spawned a subagent at all, so the lines were
-not shaping delegation; they only cost context.) When you do delegate:
+names one. When you do delegate:
 
 - **Push work down, keep judgment up.** Spend the parent context on decisions, synthesis, and
   review; let subagents burn their own context on searches, file dumps, and mechanical edits.
