@@ -559,19 +559,95 @@ jobs:
       - name: Suite - reference-transaction hook (opt-in shared checkout)
         if: hashFiles('.githooks/reference-transaction') != ''
         run: |
-          # LEDGER_REFTX
+          # Refuses a HEAD move off the default branch in a main checkout
+          # marked project.sharedCheckout=true, from inside git, so it stops
+          # git run from a script file - which a guard reading the tool-call
+          # command line never sees. What it must NOT refuse is pinned as hard:
+          # every unmarked checkout (every fresh copy, including one wired by
+          # bin/install-git-hooks.sh), `git worktree add` (told apart by which
+          # HEAD.lock git holds), commits, fetches, fast-forwards, reset --soft
+          # and a diverged pull --rebase. A shim git pins the 2.48 version gate.
+          # The suite exits 2 (did not run) on a git older than 2.48. 47 cases.
+          #
+          # Mutation ledger, measured 2026-09-30, predicted -> observed red:
+          #
+          #   state check removed (refuses when committed)    2 -> 2
+          #   PROJECT_ALLOW_CHECKOUT bypass removed           1 -> 1
+          #   suffix match on HEAD (ORIG_HEAD, FETCH_HEAD)    2 -> 2
+          #   return-to-default exception removed             4 -> 4
+          #   git-dir == common-dir check removed             1 -> 2
+          #     The extra red is `worktree add --detach`: git runs a child
+          #     `git reset --hard` with the NEW worktree's GIT_DIR, which writes
+          #     a detached HEAD line with that worktree's HEAD.lock held (seen
+          #     with GIT_TRACE). The same check covers both cases.
+          #   marker read removed (always shared)             7 -> 7
+          #   marker read from global config too              1 -> 1
+          #   own-HEAD.lock check removed                     5 -> 5
+          #   reftable stand-aside removed                    1 -> 1
+          #   rebase-in-progress guard removed                3 -> 3
+          #   git version threshold removed                   2 -> 2
+          #   version threshold lowered to 2.46               1 -> 1
+          #   stop at the first non-HEAD stdin line           1 -> 1
+          #   marker read fails closed                        7 -> 8
+          #     The extra red is "switch back goes through": `git switch main`
+          #     while already on main still writes a HEAD transaction (checked
+          #     with a logging hook), so a marker read that fails closed
+          #     refuses even that.
+          #   worktree-add advice dropped from the message    1 -> 1
+          #   project.defaultBranch ignored (always main)     3 -> 3
+          #
+          #   rev-parse failures after the marker read         NO TEST
+          #     Unreachable by construction: in any directory where the marker
+          #     read succeeds, the rev-parse reads succeed too. Recorded rather
+          #     than left implied.
           bash bin/tests/test-reference-transaction.sh
 
       - name: Suite - check-main-checkouts (opt-in shared checkout)
         if: hashFiles('bin/check-main-checkouts.sh') != ''
         run: |
-          # LEDGER_CMC
+          # Reports the END state a command-line guard cannot see: a main
+          # checkout off its default branch, dirty, or carrying a repo-local
+          # git identity. Three exit states: 0 parked, 1 problem, 2 could not
+          # check (outranks 1, and every finding still prints). 27 cases.
+          #
+          # Mutation ledger, measured 2026-09-30, predicted -> observed red:
+          #
+          #   untracked files not listed                      3 -> 3
+          #   --no-optional-locks dropped (index write)       1 -> 1
+          #   prefix match on the branch name                 1 -> 1
+          #   detached HEAD read as clean                     1 -> 1
+          #   found (1) outranks could-not-check (2)          1 -> 1
+          #   a failed git status read as clean               1 -> 1
+          #   linked-worktree refusal removed                 1 -> 1
+          #   user.name not checked                           1 -> 1
+          #   repo-local identity read as clean               3 -> 3
+          #   cannot() stops setting could-not-check          6 -> 6
+          #   "and N more" suffix dropped                     1 -> 1
+          #   inherited GIT_DIR not cleared                   1 -> 1
+          #   project.defaultBranch ignored (always main)     2 -> 2
+          #   includeIf remedy dropped from the message       1 -> 1
           bash bin/tests/test-check-main-checkouts.sh
 
       - name: Suite - session-start main-checkout section (opt-in)
         if: hashFiles('bin/check-main-checkouts.sh') != ''
         run: |
-          # LEDGER_SSMC
+          # Pins the opt-in wiring in session-start.sh, where a working check
+          # goes quietly dead or leaks into projects that never asked: unmarked,
+          # the checker never runs and nothing prints; marked, a session in a
+          # linked worktree still judges the MAIN checkout; a checker that is
+          # missing or fails says MISSING or FAILED, never nothing. 12 cases.
+          # (The unmarked output is also byte-identical to the hook before this
+          # section existed; that was checked once by hand, not here.)
+          #
+          # Mutation ledger, measured 2026-09-30, predicted -> observed red:
+          #
+          #   opt-in gate removed                             3 -> 3
+          #   MISSING branch silenced                         1 -> 1
+          #   FAILED (exit 2) branch silenced                 1 -> 1
+          #   exit 1 not reported as "not parked"             2 -> 2
+          #   session root passed instead of main checkout    2 -> 2
+          #   non-boolean marker silenced                     1 -> 1
+          #   git-dir used instead of the common dir          2 -> 2
           bash bin/tests/test-session-start-main-checkout.sh
 
       # node is preinstalled on ubuntu-latest, but its version is the image's
@@ -585,7 +661,34 @@ jobs:
       - name: Suite - heredoc backslash warning (optional hook)
         if: hashFiles('.claude/hooks/heredoc-backslash-warn.mjs') != ''
         run: |
-          # LEDGER_HEREDOC
+          # Optional, not wired by default (.claude/hooks/README.md). Warns,
+          # never blocks, when a Bash command feeds a heredoc body holding a
+          # backslash to python/node/bun/perl as SOURCE: the interpreter turns
+          # escapes meant for the output into real CR/NUL/backspace bytes. Data
+          # for a script (`python3 x.py <<EOF`) stays silent; an unparseable
+          # payload is reported, not silent. Every case runs the real hook with
+          # a PreToolUse payload on stdin. 46 cases.
+          #
+          # Mutation ledger, measured 2026-09-30, predicted -> observed red:
+          #
+          #   backslash test dropped (warn on any body)       4 -> 4
+          #   runner gating removed (`echo python -`)         1 -> 1
+          #   runners cut to env/exec/command/time/sudo       4 -> 4
+          #   `<<<` here-string guard removed                 1 -> 1
+          #   `<<-` tab strip dropped                         1 -> 1
+          #   unparseable payload read as silence             3 -> 3
+          #   JSON array accepted as a payload                1 -> 1
+          #   `&` of `2>&1` read as a separator               1 -> 1
+          #   `(` not a separator (heredoc inside `$( )`)     1 -> 1
+          #   no separator cut at all                         3 -> 3
+          #   interpreter path/.exe not normalised            1 -> 1
+          #   tool_name check removed                         1 -> 1
+          #   script path read as source                      5 -> 5
+          #   `||` read as a pipe                             1 -> 1
+          #   `> file` target read as a script path           1 -> 1
+          #   `bun run` not skipped                           1 -> 1
+          #   could-not-run made blocking (exit 2)            3 -> 3
+          #   chr(92) remedy dropped from the message        22 -> 22
           node --test .claude/hooks/tests/heredoc-backslash-warn.test.mjs
 
       - name: JSON config is parseable
