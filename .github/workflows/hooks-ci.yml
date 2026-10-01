@@ -597,7 +597,7 @@ jobs:
           # git identity. Three exit states: 0 parked, 1 problem, 2 could not
           # check (outranks 1, and every finding still prints). Linked worktree
           # vs main checkout is git dir vs common dir, never the shape of .git:
-          # a --separate-git-dir main checkout has a .git FILE. 29 cases.
+          # a --separate-git-dir main checkout has a .git FILE. 30 cases.
           #
           # Mutation ledger, measured 2026-10-01, predicted -> observed red:
           #
@@ -616,6 +616,11 @@ jobs:
           #   inherited GIT_DIR not cleared                   1 -> 1
           #   project.defaultBranch ignored (always main)     2 -> 2
           #   includeIf remedy dropped from the message       1 -> 1
+          #
+          # Added 2026-10-01 (CodeRabbit on #31), predicted -> observed red:
+          #
+          #   symbolic-ref --short compared (tag named main)  1 -> 1
+          #   refs/heads/ prefix left in the report           1 -> 1
           bash bin/tests/test-check-main-checkouts.sh
 
       - name: Suite - session-start main-checkout section (opt-in)
@@ -626,7 +631,9 @@ jobs:
           # the checker never runs and nothing prints; marked, a session in a
           # linked worktree still judges the MAIN checkout; a checker that is
           # missing or fails says MISSING or FAILED, never nothing; a
-          # --separate-git-dir main checkout is still found. 14 cases.
+          # --separate-git-dir main checkout is still found; a marker read that
+          # fails (not "not set") says FAILED; an inherited GIT_DIR cannot answer
+          # for another repo. 16 cases.
           # (The unmarked output is also byte-identical to the hook before this
           # section existed; that was checked once by hand, not here.)
           #
@@ -643,6 +650,12 @@ jobs:
           #   main checkout always from `git worktree list`   2 -> 2
           #     (git names the separate git dir there, not the checkout)
           #   session top level used even from a worktree     2 -> 2
+          #
+          # Added 2026-10-01 (CodeRabbit on #31), predicted -> observed red:
+          #
+          #   repo-local git variables not dropped            1 -> 1
+          #   failed marker read treated as not set           1 -> 1
+          #   "not set" (exit 1) also reported as FAILED      1 -> 1
           bash bin/tests/test-session-start-main-checkout.sh
 
       # node is preinstalled on ubuntu-latest, but its version is the image's
@@ -662,7 +675,7 @@ jobs:
           # escapes meant for the output into real CR/NUL/backspace bytes. Data
           # for a script (`python3 x.py <<EOF`) stays silent; an unparseable
           # payload is reported, not silent. Every case runs the real hook with
-          # a PreToolUse payload on stdin. 57 cases.
+          # a PreToolUse payload on stdin. 64 cases.
           #
           # Mutation ledger, measured 2026-09-30, predicted -> observed red:
           #
@@ -691,6 +704,15 @@ jobs:
           #   words after the heredoc operator ignored        2 -> 2
           #   separate option value read as a script path     1 -> 1
           #   node -C dropped from the valued letters         1 -> 1
+          #
+          # Added 2026-10-01 (CodeRabbit on #31, second round), over 64 cases;
+          # the rows above were measured before these seven cases existed:
+          #
+          #   whitespace split kept the quotes                3 -> 3
+          #   runner scans past a non-runner wrapped word     2 -> 2
+          #   runner option values not skipped (-n, -u)       2 -> 2
+          #   timeout duration read as the wrapped command    1 -> 1
+          #   uv subcommand not checked for `run`             1 -> 1
           #
           # A perl -0/-l digit-skip branch was predicted 1 red and gave 0: the
           # x of -0x1e already takes the rest of the cluster, so the branch was
