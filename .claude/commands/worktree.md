@@ -86,6 +86,20 @@ git branch -d feature/<task-name>
 git pull origin main
 ```
 
+Leases live on the remote as `refs/heads/claims/<branch>`, so they show up as
+`claims/...` branches. That namespace is the only one hosted agent sessions can
+push to, and those sessions cannot delete refs, so `--release` replaces the
+lease with a RELEASED marker rather than deleting it. Every check reads a marker
+as free. To clear released and expired leases out of the branch list, run
+`bin/claim-branch.sh --sweep` from a session that can delete refs; it never
+touches a live lease. Never name a work branch `claims/...` - the script refuses
+it.
+
+A lease left at the old `refs/claims/<branch>` by an earlier version of the
+script makes every check on that branch exit 2 and print the command that
+removes it (`git push origin :refs/claims/<branch>`). Run it once the lease is
+yours or its TTL has passed.
+
 ## Rules
 
 1. **Claim before you branch, and release when you finish** - check, `--acquire`,

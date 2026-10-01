@@ -115,8 +115,11 @@ while read -r local_ref local_sha remote_ref remote_sha; do
   # sends no tree to vouch for, but deleting a branch another session is working
   # on is the same collision as pushing over it.
   #
-  # Only refs/heads/*. A tag has no branch to judge, and a lease ref
-  # (refs/claims/*) is pushed by claim-branch.sh itself.
+  # Only refs/heads/*. A tag has no branch to judge. A lease ref
+  # (refs/heads/claims/*) IS judged here, as "claims/<branch>": claim-branch.sh
+  # refuses that name unless the push came from its own --acquire, --release or
+  # --sweep, which name the inert lease object in PROJECT_CLAIM_LEASE_PUSH. So
+  # this hook needs no special case, and a code branch cannot hide in there.
   case "$remote_ref" in
     refs/heads/*)
       if [ "$CLAIM_ON" -eq 1 ]; then

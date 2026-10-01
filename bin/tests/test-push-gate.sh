@@ -324,6 +324,59 @@ OUT="$( PROJECT_ALLOW_SHARED_BRANCH=1 git -C "$WORK" push -q origin feat/claimby
 if [ "$RC" -ne 0 ]; then ok "PROJECT_ALLOW_SHARED_BRANCH does NOT lift the green layer"
 else bad "PROJECT_ALLOW_SHARED_BRANCH does NOT lift the green layer" "it went through: $OUT"; fi
 
+# --- lease pushes to refs/heads/claims pass the real hook -------------------
+# Leases live at refs/heads/claims/<branch>, because a hosted agent session's
+# git proxy refuses every push outside refs/heads/*. That puts the lease push
+# inside this hook's branch-claim layer, which calls claim-branch.sh in check
+# mode on "claims/<branch>", and inside the green layer, which has no marker for
+# a lease's empty tree. claim-branch.sh sets PROJECT_SKIP_VERIFY and
+# PROJECT_CLAIM_LEASE_PUSH (naming the inert object) for its one push; the hook
+# itself has no special case. Run with every bypass unset, as a user would.
+must git -C "$WORK" checkout -q main
+lease_cmd() { # <want> <description> <claim-branch.sh args...>
+  local want=$1 desc=$2; shift 2
+  OUT="$( cd "$WORK" && env -u PROJECT_SKIP_VERIFY -u PROJECT_ALLOW_SHARED_BRANCH \
+      -u PROJECT_CLAIM_LEASE_PUSH bash bin/claim-branch.sh "$@" 2>&1 )"; RC=$?
+  if [ "$RC" -eq "$want" ]; then ok "$desc"; else bad "$desc" "exit $RC: $OUT"; fi
+}
+lease_cmd 0 '--acquire pushes a lease to refs/heads/claims through the real hook' \
+  --acquire lease-me --me hook-session-1 --harness test
+if git -C "$WORK" ls-remote origin refs/heads/claims/lease-me | grep -q 'refs/heads/claims/lease-me'; then
+  ok 'the lease really reached refs/heads/claims/lease-me'
+else bad 'the lease really reached refs/heads/claims/lease-me' "ls-remote found nothing"; fi
+# The remote refuses ref deletion, as a hosted proxy does, so the release has to
+# land by marking the lease - and the marker is what must be left behind. The
+# exit status alone would also pass a release that quietly did nothing.
+must git -C "$ORIGIN" config receive.denyDeletes true
+lease_cmd 0 '--release pushes a RELEASED marker through the real hook' \
+  --release lease-me --me hook-session-1
+rel_body="$(git -C "$ORIGIN" log -1 --format=%B refs/heads/claims/lease-me 2>/dev/null)"
+if printf '%s' "$rel_body" | grep -q 'RELEASE harness=[^ ]* session=hook-session-1 at='; then
+  ok 'with deletion refused, the lease ref holds our RELEASE marker'
+else bad 'with deletion refused, the lease ref holds our RELEASE marker' "body: ${rel_body:-<none>}"; fi
+must git -C "$ORIGIN" config --unset receive.denyDeletes
+# --sweep DELETES, and a deletion is claim-checked by the hook too.
+lease_cmd 0 '--sweep deletes a released lease through the real hook' --sweep
+if [ -z "$(git -C "$WORK" ls-remote origin refs/heads/claims/lease-me)" ]; then
+  ok 'the swept lease is really gone'
+else bad 'the swept lease is really gone' "still on origin"; fi
+
+# A CODE commit pushed to a claims/ name is refused even with a green marker:
+# the namespace holds leases, and an unverified code branch must not hide there.
+new_branch not-a-lease
+OUT="$( cd "$WORK" && bash bin/verify-green.sh 2>&1 )"; RC=$?
+[ "$RC" -eq 0 ] || { echo "FIXTURE FAILED: verify-green did not pass on not-a-lease" >&2; exit 1; }
+OUT="$( git -C "$WORK" push -q origin HEAD:refs/heads/claims/sneaky 2>&1 )"; RC=$?
+if [ "$RC" -ne 0 ]; then ok 'a code push to refs/heads/claims/<x> is BLOCKED'
+else bad 'a code push to refs/heads/claims/<x> is BLOCKED' "it went through: $OUT"; fi
+# Each case gets its own ref name: git never runs the hook for a ref that is
+# already up to date, so reusing claims/sneaky after a mutation let the first
+# case through would make this one pass or fail for an unrelated reason.
+OUT="$( PROJECT_CLAIM_LEASE_PUSH=1 git -C "$WORK" push -q origin HEAD:refs/heads/claims/sneaky2 2>&1 )"; RC=$?
+if [ "$RC" -ne 0 ]; then ok 'a bare PROJECT_CLAIM_LEASE_PUSH=1 does not open it'
+else bad 'a bare PROJECT_CLAIM_LEASE_PUSH=1 does not open it' "it went through: $OUT"; fi
+must git -C "$WORK" checkout -q main
+
 # --- could-not-tell must block ----------------------------------------------
 # The hook's three branches on the claim check's exit code, driven by a STUB
 # rather than by a broken remote.
