@@ -14,8 +14,8 @@
 #
 # This checks the END STATE instead of the command, so it catches the result
 # however it happened: a script, a terminal, another harness. It prevents
-# nothing (.githooks/reference-transaction is the preventive half). It
-# reports, per checkout:
+# nothing; docs/growing-into-a-workspace.md says why there is no git hook
+# that blocks the move instead. It reports, per checkout:
 #   - HEAD not on the default branch (another branch, or detached)
 #   - any uncommitted or untracked path (ignored files are fine)
 #   - a repo-local user.email or user.name. Agents run as the owner and pick up
@@ -24,8 +24,7 @@
 #     GLOBAL config with an includeIf block, which this does not flag.
 #
 # The default branch is read per checkout from `project.defaultBranch` in its
-# local config, and is `main` when unset - the same key the
-# reference-transaction hook reads, so the two never disagree.
+# local config, and is `main` when unset.
 #
 # Usage: check-main-checkouts.sh <main-checkout-dir>...
 #

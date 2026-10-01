@@ -145,10 +145,9 @@ what protects you; the check only catches the common case.
 - [ ] **The push gate** (`.githooks/`, `bin/verify-green.sh`, `bin/install-git-hooks.sh`) if you
       never want push-time checks. It does nothing until you configure it, so keeping it costs
       you nothing.
-- [ ] **Shared-checkout tooling** (`.githooks/reference-transaction`,
-      `bin/check-main-checkouts.sh`) and the optional heredoc warning
-      (`.claude/hooks/heredoc-backslash-warn.mjs`) if you will never run parallel sessions on one
-      machine or wire the warning. All three do nothing until you opt in
+- [ ] **The shared-checkout check** (`bin/check-main-checkouts.sh`) and the optional heredoc
+      warning (`.claude/hooks/heredoc-backslash-warn.mjs`) if you will never run parallel
+      sessions on one machine or wire the warning. Both do nothing until you opt in
       (`.claude/hooks/README.md` § Optional hooks). Delete each with its suite in `bin/tests/`
       or `.claude/hooks/tests/`; hooks CI skips a suite whose subject file is gone.
 - [ ] **`brain/`** if your project is too small to need a searchable memory. You can add it back
