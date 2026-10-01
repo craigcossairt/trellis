@@ -55,7 +55,11 @@ make_fixture() {
   local kind="${2:-checker}"
   REPO="$TMP/$1/mainco-$1"
   mkdir -p "$REPO/bin"
-  must git init -q -b "${3:-main}" "$REPO"
+  if [ "${4:-}" = sep ]; then
+    must git init -q -b "${3:-main}" --separate-git-dir "$TMP/$1/gitdir" "$REPO"
+  else
+    must git init -q -b "${3:-main}" "$REPO"
+  fi
   must git -C "$REPO" config core.autocrlf false
   case "$kind" in
     checker) cp "$CHECKER" "$REPO/bin/check-main-checkouts.sh" ;;
@@ -138,6 +142,17 @@ make_fixture linkedparked; mark
 must git -C "$REPO" worktree add -q "$TMP/linkedparked/wt" -b side
 run "$TMP/linkedparked/wt"
 check "from a linked worktree, main parked: no heading" 0 "Main checkout"
+
+# `git init --separate-git-dir` keeps the git dir elsewhere, so the common dir
+# is not <checkout>/.git. The main checkout must still be found and judged.
+make_fixture sepdir checker main sep; mark
+must git -C "$REPO" switch -q -c agent/task-9
+run "$REPO"
+check "separate git dir: judges the main checkout" 1 "## Main checkout not parked" "agent/task-9" "mainco-sepdir"
+
+make_fixture sepparked checker main sep; mark
+run "$REPO"
+check "separate git dir, parked: no heading" 0 "Main checkout"
 
 echo
 echo "session-start main-checkout: $PASS passed, $FAIL failed"

@@ -75,25 +75,36 @@ local_identity() {
 }
 
 check_one() {
-  local dir="$1" branch rc status count listed expected
+  local dir="$1" branch rc status count listed expected gd common
 
   if [ ! -d "$dir" ]; then
     cannot "$dir" "no such directory"; return
   fi
-  # A linked worktree has a .git FILE, the main checkout a .git DIRECTORY.
-  # Branch work in a linked worktree is the point of the rule, so judging one
-  # here would be a false alarm.
-  if [ -f "$dir/.git" ]; then
-    cannot "$dir" "not a main checkout (it is a linked worktree)"; return
-  fi
-  if [ ! -d "$dir/.git" ]; then
-    cannot "$dir" "not a git checkout (no .git directory)"; return
+  # No .git of either shape means this is not the top of a checkout. Checked
+  # first so a plain directory inside some other repo is not judged as that
+  # repo under this name.
+  if [ ! -e "$dir/.git" ]; then
+    cannot "$dir" "not a git checkout (no .git)"; return
   fi
 
   # An unparseable config breaks every later git call; name it here, once.
   rc=0; git -C "$dir" config --local --list >/dev/null 2>&1 || rc=$?
   if [ "$rc" -ne 0 ]; then
     cannot "$dir" "its git config cannot be read (exit $rc)"; return
+  fi
+
+  # Linked worktree or main checkout? Not by the shape of .git: a linked
+  # worktree has a .git FILE, but so does a main checkout made with
+  # `git init --separate-git-dir`. A linked worktree is the one whose git dir
+  # differs from the common dir. Branch work in a linked worktree is the point
+  # of the rule, so judging one here would be a false alarm.
+  rc=0; gd=$(git -C "$dir" rev-parse --path-format=absolute --git-dir 2>&1) || rc=$?
+  [ "$rc" -eq 0 ] && { common=$(git -C "$dir" rev-parse --path-format=absolute --git-common-dir 2>&1) || rc=$?; }
+  if [ "$rc" -ne 0 ]; then
+    cannot "$dir" "git rev-parse failed (exit $rc)"; return
+  fi
+  if [ "$gd" != "$common" ]; then
+    cannot "$dir" "not a main checkout (it is a linked worktree)"; return
   fi
 
   rc=0; expected=$(git -C "$dir" config --local --get project.defaultBranch 2>&1) || rc=$?

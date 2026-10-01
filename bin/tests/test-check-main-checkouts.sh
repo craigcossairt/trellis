@@ -39,10 +39,16 @@ GIT_ID=(-c user.name=fixture -c user.email=fixture@example.invalid -c commit.gpg
 pass=0; fail=0
 
 # make_repo <dir> [branch] - a main checkout on <branch> (default main) with one
-# tracked file, one ignored pattern, and a clean tree.
+# tracked file, one ignored pattern, and a clean tree. A third argument "sep"
+# keeps the git dir outside the checkout (`git init --separate-git-dir`), which
+# leaves `.git` a FILE in a checkout that is still the main one.
 make_repo() {
   local d="$1"
-  git init -q -b "${2:-main}" "$d"
+  if [ "${3:-}" = sep ]; then
+    git init -q -b "${2:-main}" --separate-git-dir "$d.gitdir" "$d"
+  else
+    git init -q -b "${2:-main}" "$d"
+  fi
   git -C "$d" config core.autocrlf false
   printf 'a\nb\n' > "$d/tracked.txt"
   printf 'build/\n' > "$d/.gitignore"
@@ -88,7 +94,7 @@ expect_silent() {
 # $(...) subshell: the counter has to survive, or every case would reuse one
 # path.
 n=0; R=""
-fresh() { n=$((n+1)); R="$TMP/r$n"; make_repo "$R" "${1:-main}"; }
+fresh() { n=$((n+1)); R="$TMP/r$n"; make_repo "$R" "${1:-main}" "${2:-}"; }
 
 # ------------------------------------------------------------------ parked ---
 fresh; run "$R"
@@ -161,6 +167,14 @@ expect "not-a-repo: a plain directory is could-not-check" 2 "cannot check" "plai
 
 fresh; git -C "$R" worktree add -q "$TMP/linked" -b side; run "$TMP/linked"
 expect "linked-worktree: refuses to judge a linked worktree" 2 "not a main checkout"
+
+# A `.git` FILE does not make a linked worktree: `git init --separate-git-dir`
+# leaves one in a main checkout. Linked-vs-main is git-dir vs common-dir.
+fresh main sep; run "$R"
+expect_silent "separate-git-dir: a parked main checkout whose .git is a file"
+
+fresh main sep; git -C "$R" switch -q -c agent/task-9; run "$R"
+expect "separate-git-dir: off main is reported, not refused" 1 "agent/task-9"
 
 fresh; printf 'garbage' > "$R/.git/index"; run "$R"
 expect "corrupt-index: a status that fails is could-not-check, not clean" 2 "cannot check"

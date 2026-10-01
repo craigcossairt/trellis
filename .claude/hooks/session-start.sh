@@ -35,7 +35,7 @@ fi
 #   git config --local project.sharedCheckout true
 # Unmarked (every fresh copy), this section runs one config read and prints
 # nothing. Marked, it runs bin/check-main-checkouts.sh on the MAIN checkout -
-# found through the common git dir, so a session started in a linked worktree
+# the first entry of `git worktree list`, so a session started in a linked worktree
 # still judges the checkout every session shares, not its own worktree. A guard
 # on the tool-call command line never sees git run from a script file; this
 # checks the end state instead, whoever caused it. Silence means parked or not
@@ -53,11 +53,21 @@ if [ -d "$ROOT/.git" ] || [ -f "$ROOT/.git" ]; then
       echo "project.sharedCheckout is set to '$mc_raw', which is not a boolean. Nothing was checked."
       echo ""
     elif [ "$mc_shared" = true ]; then
+      # Where is the main checkout? Not "the common dir minus /.git": with
+      # `git init --separate-git-dir` the git dir lives elsewhere. If this
+      # session's git dir IS the common dir, this session is in the main
+      # checkout and its top level is the answer. Otherwise it is a linked
+      # worktree, and the first `git worktree list` entry names the main one.
+      # (Known limit: for a linked worktree of a separate-git-dir repo, git
+      # itself names the git dir there; the checker then says it cannot
+      # check, which prints FAILED rather than a false "parked".)
+      mc_gd=$(git -C "$ROOT" rev-parse --path-format=absolute --git-dir 2>/dev/null) || mc_gd=""
       mc_common=$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || mc_common=""
-      case "$mc_common" in
-        */.git) mc_main=${mc_common%/.git} ;;
-        *) mc_main="" ;;
-      esac
+      if [ -n "$mc_gd" ] && [ "$mc_gd" = "$mc_common" ]; then
+        mc_main=$(git -C "$ROOT" rev-parse --show-toplevel 2>/dev/null) || mc_main=""
+      else
+        mc_main=$(git -C "$ROOT" worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p') || mc_main=""
+      fi
       if [ ! -f "$ROOT/bin/check-main-checkouts.sh" ]; then
         echo "## Main checkout check MISSING"
         echo "project.sharedCheckout is on, but bin/check-main-checkouts.sh was not found."
@@ -65,7 +75,7 @@ if [ -d "$ROOT/.git" ] || [ -f "$ROOT/.git" ]; then
         echo ""
       elif [ -z "$mc_main" ]; then
         echo "## Main checkout check FAILED"
-        echo "Could not locate the main checkout (git common dir: '${mc_common:-unreadable}')."
+        echo "Could not locate the main checkout ('git worktree list' named none)."
         echo "This is a broken check, NOT a parked result."
         echo ""
       else
