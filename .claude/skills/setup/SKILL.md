@@ -94,9 +94,9 @@ that has already bitten you, or that you would have to explain to a new person
 on day one?" Whatever comes back goes in. If nothing comes back, that is a fine
 answer on day one - leave it and say `/learn` will fill it as they go.
 
-For the model-tier table, ask which models they actually have access to rather
-than filling in the current frontier names. A table naming a model they cannot
-call is worse than an empty one.
+For the model-tier table, ask which model families they actually have access to
+and fill in the family or alias their tool takes (e.g. `haiku`, `sonnet`, `opus`),
+never a version. A table naming a model they cannot call is worse than an empty one.
 
 ## Tooling and services
 

@@ -25,3 +25,8 @@ carries the summary version.
 - **"Summarize from here" before ending.** When ending a session mid-stream, ask the agent to
   summarize learnings as a handoff message to the next session. Better than writing the brief
   from scratch.
+
+- **Keep a long run's task list in a file.** For work that spans many steps or may outlive a
+  compaction, keep the checklist in a scratch file and tick each item as it lands. A compaction
+  summarizes the plan away and the file keeps it, so the file is where the owner looks to see
+  what is done and what is left. Commit it only if it is itself a deliverable.

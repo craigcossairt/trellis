@@ -12,6 +12,18 @@
 3 walked the failure path, 4 ran a test that fails loud, 5 reproduced in the running app.
 Anything short of 4 is stated as unproven. -->
 
+## Evidence
+
+<!--
+Before/after for any visible change: a UI, a page, or output a person sees (an email,
+a notification, an alert). Capture before from the untouched tree and after from the branch,
+same screen, state and viewport; a short video for motion or a flow. Keep the media out of git:
+attach it where the project tracks work and link it here. Missing a half? Say which and why.
+Nothing visible? Write "No visible change."
+-->
+
+**Before/after:** <link> | No visible change.
+
 ## Merge danger
 
 <!--

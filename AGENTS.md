@@ -147,8 +147,29 @@ format; delete the adapter and the rule goes with it.
   See `.claude/commands/worktree.md`.
 - **Plan first for non-trivial tasks** (3+ steps or architectural decisions) - write the plan,
   confirm before implementing. If something goes wrong mid-implementation, STOP and re-plan.
+  **A run with nobody to confirm with** (a scheduled job, a headless run such as `claude -p` or
+  `codex exec`, CI, a subagent) writes the plan into its output and carries it out, stopping
+  only where its own prompt or one of the named stops below says to. Waiting for an approval
+  that cannot arrive delivers nothing, and a run that stops here does no work at all. **Stops
+  (2) and (3) always bind such a run, and a
+  plan it wrote itself is never the approval that lifts stop (3).** At such a stop it writes up
+  what it would do and ends, rather than doing it. A subagent returns at any stop (see
+  Delegation).
+- **Once the plan is approved, keep going until a named stop.** A step that does not need the
+  owner's input is not a reason to end the turn: put the status note in the same message as the
+  next action. Do not end on a summary that names the next step without taking it, an offer to
+  continue, or a list of options that blocks nothing. The named stops are: (1) plan approval on
+  non-trivial work; (2) a production go-signal - an explicit instruction from the owner naming
+  the target, before anything that deploys to production or matches a one-way trigger in
+  `.github/pull_request_template.md`; (3) a destructive or outward-facing action that neither
+  the owner-approved plan nor a documented protocol calls for (deleting data, force-pushing,
+  sending a message on someone's behalf); (4) a claim check that returns CLAIMED or
+  could-not-tell; (5) a product or judgment fork only the owner can settle; (6) the plan stops
+  being true - a failure you cannot explain, or a result that changes the approach. Steps a
+  protocol already requires (the claim and lease, commits, push, opening a draft PR) are not
+  stops.
 - **Verify before marking done** - never claim a task is complete without proving it works. Run
-  tests, check logs, demonstrate correctness. Ask: "Would a staff engineer approve this?"
+  tests, check logs, demonstrate correctness.
   If the push gate is configured (`bin/verify-green.sh`), record the proof with
   `bash bin/verify-green.sh` before pushing - unverified pushes are blocked.
 - **Grade every claim on the certainty ladder, and say where it stopped.** Five levels:
@@ -170,7 +191,8 @@ format; delete the adapter and the rule goes with it.
     things run (microtasks, teardown, unmount), and follow what a symbol search cannot see:
     the JSON an endpoint returns, a database column, a wire format another language reads, a
     feature flag, code three hops downstream.
-  - **Report what you cleared, not only what you found.** End with a `Cleared` line naming what
+  - **Report what you cleared, not only what you found.** Include a `Cleared` line (at the end
+    of the *Found* section, see Formatting Preferences) naming what
     you checked and why it was fine. A findings-only writeup is indistinguishable from a shallow
     one, and gives a reviewer nothing to re-check.
 
@@ -198,6 +220,22 @@ format; delete the adapter and the rule goes with it.
   per `.github/pull_request_template.md`, which lists the one-way triggers. A command-line
   `--body` bypasses the template, so write the lines yourself. A reviewer treats a door that
   understates the diff as blocking: two-way doors get skimmed.
+- **Open PRs as drafts, and review in a fresh context before marking ready.** When the diff is
+  final, hand it to a subagent (or a new session) given only the PR and its acceptance criteria,
+  and have it read `docs/coding-standards.md` in full. The context that wrote the code shares its
+  blind spots and is the most expensive one to spend on reviewing. Verify each finding, then
+  gather every review finding and every CI failure and fix them in ONE push: each push reruns
+  the whole CI matrix and, where reviews are budgeted, may spend a review on a diff you are
+  about to change again. This fresh-context pass is the floor for every PR; it does not
+  replace the different-model review above for the work that bullet names, and a diff that
+  touches auth, permissions or secrets also gets `.claude/agents/security-reviewer.md`.
+- **Show the change: before and after on every PR with a visible change.** Visible means a UI,
+  a page, or output a person sees (an email, a notification, an alert). Capture *before* from
+  the untouched tree before the first edit and *after* from the branch, on the same screen,
+  state and viewport; use a short video for motion, a flow or timing. Keep the media out of git
+  (attach it where the project tracks work) and link it from the PR's Evidence section. When a
+  half cannot be captured, say which and why; a PR with nothing visible says
+  `No visible change.`
 - **A user-facing change is verified by driving the running app, not by reading the code.** Once
   per project, build the lever and the feature map with `/build-verification-skill`; after that,
   reproduce bugs and prove fixes through it. Expect the first real run to find defects no stubbed
@@ -247,11 +285,15 @@ Context quality degrades in long sessions. Defaults for every session:
   "Do I need the tool output or just the conclusion?"
 - **Summarize before ending.** When closing a session mid-stream, write a handoff summary for the
   next session.
+- **Keep a long run's task list in a file.** For work that spans many steps or may outlive a
+  compaction, keep the checklist in a scratch file and tick each item as it lands. A compaction
+  summarizes the plan away; the file keeps it, and it is where the owner looks to see what is
+  done and what is left. Commit it only if it is itself a deliverable.
 
 ### Delegation & Model Routing
 
-For most tasks the right team size is 1 (yourself) or 2 (you + one reviewer agent). When you do
-delegate:
+For most tasks the right team size is 1 (yourself); add a reviewer agent only where a protocol
+names one. When you do delegate:
 
 - **Push work down, keep judgment up.** Spend the parent context on decisions, synthesis, and
   review; let subagents burn their own context on searches, file dumps, and mechanical edits.
@@ -264,14 +306,17 @@ delegate:
 - **Don't delegate the trivial.** Single-fact lookups, one-file edits, anything faster to do than
   to brief - do it yourself.
 
-| Tier | Best for | Delegate to it when |
+| Tier (family) | Best for | Delegate to it when |
 |---|---|---|
-| Fast <!-- FILL IN: current model --> | Bulk mechanical work: exhaustive greps, file inventories, formatting | Output is large, judgment is minimal, correctness is cheap to verify |
-| Mid <!-- FILL IN --> | Routine implementation following an established pattern | The pattern exists in the repo and a review pass will catch mistakes |
-| Strong <!-- FILL IN --> | Complex implementation, debugging, refactors, code review | The task needs real reasoning within known constraints |
-| Frontier <!-- FILL IN --> | Architecture decisions, auth/security design, ambiguous tradeoffs | One-shot hard calls; the escalation target |
+| Fast <!-- FILL IN: family alias, e.g. haiku in Claude Code --> | Bulk mechanical work: exhaustive greps, file inventories, formatting | Output is large, judgment is minimal, correctness is cheap to verify |
+| Mid <!-- FILL IN: e.g. sonnet --> | Routine implementation following an established pattern | The pattern exists in the repo and a review pass will catch mistakes |
+| Strong <!-- FILL IN: e.g. opus --> | Complex implementation, debugging, refactors, code review | The task needs real reasoning within known constraints |
+| Frontier <!-- FILL IN: the top family, or a second model family --> | Architecture decisions, auth/security design, ambiguous tradeoffs | One-shot hard calls; the escalation target |
 
-Refresh the model names when the model family turns over; the tier structure is the stable part.
+**Name model families or the aliases your harness's subagent dispatch takes, never exact
+versions,** so a model release does not make this table stale. An exact version belongs only
+where something can check it: a pinned constant in code, a CI job's configuration, a scheduled
+job's settings. Moving one of those is a real change with its own review, not a doc refresh.
 
 ### External Tools and MCP Servers
 
@@ -359,7 +404,8 @@ identity from the folder name or from the copied `.trellis/source` alone.
 **After every completed task (feature, bug fix, refactor):**
 - Commit the changes with a descriptive message. Stage only the relevant files (never .env,
   secrets, or lock files unless intentional).
-- Push to the remote branch. If on a feature branch, offer to create a PR.
+- Push to the remote branch. If on a feature branch, open the PR as a draft (see Working
+  Methodology) - a step, not a question to end the turn on.
 
 **After making or discovering a project decision:**
 - Append an entry to `docs/decision-log.md`
@@ -397,6 +443,13 @@ identity from the folder name or from the copied `.trellis/source` alone.
 
 - Use bullet points for action items
 - Use Markdown: sections, tables, numbered lists where appropriate
+- **End a substantive run with four headings, in this order: Needs from you, Found, Changed,
+  Next.** *Needs from you* is the decisions, approvals or actions only the owner can take, each
+  saying where to take it; write "Nothing" rather than dropping the heading, because an absent
+  section and an empty one read the same. *Found* is what was learned, each claim at its
+  certainty level, ending with the `Cleared` line. *Changed* is what was edited, written, pushed
+  or deployed. *Next* is what happens next and who does it. A skill with its own report format
+  puts that report in the *Found* slot. A short answer to a short question skips the headings.
 - When writing externally-facing content, align with the brand voice
   (<!-- FILL IN: link brand/voice doc when one exists -->)
 - When writing internal/working docs, prioritize clarity and speed
