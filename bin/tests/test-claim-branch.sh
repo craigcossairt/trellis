@@ -14,7 +14,7 @@
 # =============================================================================
 set -uo pipefail
 
-SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/claim-branch.sh"
+SCRIPT="$(CDPATH='' cd -- "$(dirname "${BASH_SOURCE[0]}")/.." >/dev/null && pwd)/claim-branch.sh"
 [ -f "$SCRIPT" ] || { echo "cannot find claim-branch.sh next to this test" >&2; exit 1; }
 
 # The fixture must not inherit the host's git configuration. A global
@@ -152,42 +152,50 @@ else bad "unreachable origin under --quiet is 2, not 0" "got $rc: $out"; fi
 # against a predicted 2. The cases still assert the right verdict; they stopped
 # asserting it about the code they were written for.
 #
-# So drive the second reader directly: a `git` shim that passes the FIRST
-# ls-remote through (the lease read, which must answer "no such ref") and fails
-# the SECOND (the branch read). That is the only way into the guard now, and it
-# is also a real state - a remote can go away between two calls.
+# So drive the branch reader directly: a `git` shim that passes the LEASE reads
+# through (they answer "no such ref") and fails the ls-remote that names the
+# branch itself. That is the only way into the guard now, and it is also a real
+# state - a remote can go away between two calls.
+#
+# Matched by REF NAME, not by call count. This shim used to fail "the second
+# ls-remote", which stopped being the branch read the day the lease read grew a
+# second ls-remote (the probe of the old refs/claims/ namespace). A count is a
+# fact about the implementation; the ref name is the thing under test.
 REAL_GIT="$(command -v git)"
 SHIM="$SANDBOX/shim"
 must mkdir -p "$SHIM"
 cat > "$SHIM/git" <<EOS
 #!/usr/bin/env bash
-for a in "\$@"; do
-  if [ "\$a" = "ls-remote" ]; then
-    n=0
-    [ -f "$SANDBOX/.lsr-count" ] && n="\$(cat "$SANDBOX/.lsr-count")"
-    n=\$((n + 1))
-    printf '%s' "\$n" > "$SANDBOX/.lsr-count"
+is_lsr=0
+for a in "\$@"; do [ "\$a" = "ls-remote" ] && is_lsr=1; done
+if [ "\$is_lsr" = 1 ]; then
+  n=0
+  [ -f "$SANDBOX/.lsr-count" ] && n="\$(cat "$SANDBOX/.lsr-count")"
+  printf '%s' "\$((n + 1))" > "$SANDBOX/.lsr-count"
+  for a in "\$@"; do
     # 128 is git's transport failure, and it is neither 0 (found) nor 2
     # (--exit-code, no match) - so it must land in the error branch.
-    [ "\$n" -ge 2 ] && exit 128
-    break
-  fi
-done
+    case "\$a" in
+      feature/mine|refs/heads/feature/mine) : > "$SANDBOX/.lsr-branch-fired"; exit 128 ;;
+    esac
+  done
+fi
 exec "$REAL_GIT" "\$@"
 EOS
 must chmod +x "$SHIM/git"
-rm -f "$SANDBOX/.lsr-count"
+rm -f "$SANDBOX/.lsr-count" "$SANDBOX/.lsr-branch-fired"
 rc=0; out="$(PATH="$SHIM:$PATH" bash "$SCRIPT" feature/mine 2>&1)" || rc=$?
 if [ "$rc" -eq 2 ]; then ok "an origin that fails on the BRANCH read (not the lease read) is 2, not 0"
 else bad "an origin that fails on the BRANCH read (not the lease read) is 2, not 0" "got $rc: $out"; fi
-# Fixture sanity: if the shim never fired twice, the case above proved nothing.
-if [ "$(cat "$SANDBOX/.lsr-count" 2>/dev/null)" = "2" ]; then
-  ok "fixture sanity: the shim failed the second ls-remote, not the first"
+# Fixture sanity: the shim must have failed the branch read, and only after the
+# lease read passed through, or the case above proved nothing at all.
+if [ -e "$SANDBOX/.lsr-branch-fired" ] && [ "$(cat "$SANDBOX/.lsr-count" 2>/dev/null)" -ge 2 ]; then
+  ok "fixture sanity: the shim failed the BRANCH ls-remote, after the lease read"
 else
-  bad "fixture sanity: the shim failed the second ls-remote, not the first" \
-      "ls-remote was called $(cat "$SANDBOX/.lsr-count" 2>/dev/null || echo 0) time(s)"
+  bad "fixture sanity: the shim failed the BRANCH ls-remote, after the lease read" \
+      "fired: $([ -e "$SANDBOX/.lsr-branch-fired" ] && echo yes || echo no), calls: $(cat "$SANDBOX/.lsr-count" 2>/dev/null || echo 0)"
 fi
-rm -f "$SANDBOX/.lsr-count"
+rm -f "$SANDBOX/.lsr-count" "$SANDBOX/.lsr-branch-fired"
 
 # --- reporting ------------------------------------------------------------
 out="$(bash "$SCRIPT" feature/theirs 2>&1)" || true

@@ -418,6 +418,12 @@ jobs:
           # author path. They still assert the right verdict; they stopped
           # asserting it about the code they were written for. The shim case
           # that fails only the SECOND ls-remote is what covers it now.
+          #
+          # Re-measured 2026-09-30 after leases moved to refs/heads/claims/:
+          # the same mutation, 1 -> 1 red. The shim now fails the branch read by
+          # REF NAME. It used to count calls, and the lease read grew a second
+          # ls-remote (the probe of the old refs/claims/ namespace), so "the
+          # second call" stopped being the branch read.
           bash bin/tests/test-claim-branch.sh
 
       - name: Suite - claim-branch (lease)
@@ -491,6 +497,88 @@ jobs:
           #     contains - "actions[bot]@users.noreply.github.com" sits inside
           #     "41898282+github-actions[bot]@users.noreply.github.com" - which
           #     a substring match waves through.
+          #
+          # Additional ledger, measured 2026-09-30 over 95 cases: the warning
+          # when --acquire runs from a checkout not on that branch (the id lands
+          # where nothing pushes it). Predicted = actual for every row:
+          #   never warn                                     4 -> 4 red
+          #   inverted branch compare                        5 -> 5 red
+          #   no warning on a fresh acquire                  3 -> 3 red
+          #   no warning on the re-acquire path              1 -> 1 red
+          #   drop the PROJECT_SESSION_ID fix from the text  1 -> 1 red
+          #   drop the line naming the stray id file         1 -> 1 red
+          #   no warning after a refused push that reads MINE  NO TEST
+          #     Reachable only through a push that fails while the lease
+          #     already names this session; the same race shims would drive it.
+          #
+          # Leases moved to refs/heads/claims/<b> with RELEASED markers, a
+          # claims/ name guard, --sweep and a could-not-tell probe of the old
+          # refs/claims/<b>. Ledger measured 2026-09-30 over 152 cases, with
+          # the push-gate suite (51 cases) run too where the real hook matters.
+          # predicted -> actual:
+          #   release deletes first, marker as fallback      1 -> 1 red
+          #   no deletion fallback                           2 -> 2 red
+          #   RELEASED read as HELD                          7 -> 10 red
+          #     The three extra are the awk cases: they run on a branch that
+          #     was released earlier, so a RELEASED-as-HELD lease stops them
+          #     before the counting path they test. Push gate: 1 -> 1.
+          #   no shape check on the object read              1 -> 1 red
+          #     0 red until the fixture changed: a code commit whose message is
+          #     "base" fails the marker parser on its own. The fixture's code
+          #     commit now carries a well-formed RELEASE message.
+          #   RELEASE+CLAIM ambiguity check removed          1 -> 1 red
+          #   claims/ flag not checked for inertness         2 -> 2 red (gate 1 -> 1)
+          #   claims/ guard removed                          6 -> 6 red (gate 5 -> 5)
+          #     The gate's set differed from the one predicted: --acquire still
+          #     passes (its ref does not exist yet when the hook runs), and the
+          #     RELEASE push is the one refused, as a branch with a foreign
+          #     author. Same count, different cases - the set is what counts.
+          #   lease push without PROJECT_CLAIM_LEASE_PUSH    0 -> 0 red (gate 3 -> 3)
+          #   lease push without PROJECT_SKIP_VERIFY         3 -> 2 red (gate 3 -> 3)
+          #     --release survives here: its marker push is refused by the
+          #     modelled gate, and the deletion fallback (no tree) goes through.
+          #   deletion vouches with an empty sha             0 -> 0 red (gate 2 -> 2)
+          #   old-namespace verdict removed                  7 -> 5 red
+          #     Two predicted cases stay green because the probe still RUNS;
+          #     only its verdict was removed, and the unreadable case fails in
+          #     the probe itself. That is the next row.
+          #   old-namespace probe failure read as absent     1 -> 1 red
+          #   author check: exact-match loop only removed    0 -> 0 red
+          #   author check: --heads pattern query only       0 -> 0 red
+          #     Each half of the exact-ref fix covers the other.
+          #   author check: both halves reverted             9 red (predicted >= 4)
+          #   RELEASED not CASed on acquire                  4 -> 4 red
+          #   sweep deletes live leases                      2 -> 2 red
+          #   sweep skip not counted as a failure            1 -> 1 red
+          #
+          # Review fixes on PR #32, measured 2026-10-01 over 184 cases (push
+          # gate 58 run against every mutation too; 0 red there unless noted).
+          # Each mutation ran in a scratch copy; diffs read before running.
+          #   id file honoured off-branch (finding 2)        1 -> 1 red
+          #   id file never honoured                         4 -> 4 red
+          #   refs/ prefix not refused (finding 3)           3 -> 3 red
+          #   <remote>/ prefix not refused                   3 -> 3 red
+          #   check-ref-format skipped                       1 -> 1 red
+          #   D/F clash not diagnosed (finding 5)            3 -> 3 red
+          #   branch 'claims' not refused                    3 -> 3 red
+          #   --me/--harness charset not checked (finding 7) 7 -> 7 red
+          #   RELEASE/CLAIM token not checked                4 -> 4 red
+          #     Two token cases (sess-CLAIM, harness RELEASE.1) stay green under
+          #     it, as predicted, for the wrong reason: the RELEASE lease the
+          #     first case wrote is unreadable, so they exit 2 from the reader.
+          #     The 'none wrote a lease' and follow-on cases carry the red.
+          #   hook: lease-push binding removed (finding 4)   lease 0, gate 4 -> 4 red
+          #   hook: deletion bound to local_sha              lease 0, gate 3 -> 3 red
+          #
+          # Grok review of those fixes, measured 2026-10-01 over 188 cases
+          # (push gate 59):
+          #   heads/ remotes/ tags/ shorthand not refused    4 -> 4 red
+          #   check mode skips the inert test on the vouch   lease 0, gate 1 -> 1 red
+          #     (a code commit vouched by its own exact sha satisfies the
+          #     hook's string binding; only this check refuses it)
+          #
+          # CodeRabbit on PR #32, measured 2026-10-01 over 191 cases:
+          #   symbolic-ref --short compared (same-named tag) 2 -> 2 red
           bash bin/tests/test-claim-branch-lease.sh
 
       - name: Suite - push gate (pre-push hook + verify-green)
@@ -520,6 +608,15 @@ jobs:
           # guard fails the predicted 5: assume-unchanged and skip-worktree
           # before checks, either flag introduced during checks, and a failed
           # index-flag scan. Verification leaves the user's flags unchanged.
+          #
+          # 51 cases since leases moved to refs/heads/claims/: the real hook
+          # passes --acquire, a RELEASED-marker --release (deletion refused)
+          # and a --sweep deletion, and refuses a code commit pushed to a
+          # claims/ name, with or without a bare PROJECT_CLAIM_LEASE_PUSH=1.
+          # 58 since PR #32's review: PROJECT_CLAIM_LEASE_PUSH must equal the
+          # sha pushed (remote sha for a deletion); 4 of the 7 new cases were
+          # red before the fix (the =1 and exact-sha cases already held).
+          # Its mutation rows are in the lease step's ledger above.
           bash bin/tests/test-push-gate.sh
 
       - name: Suite - sensitive-file block hook
@@ -557,6 +654,10 @@ jobs:
           # broken parser left them green. The fix for the second pair is to
           # assert the refusal MESSAGE, which is the only place those two
           # outcomes differ.
+          #
+          # Section K (2026-09-30, now 61 cases) runs the hook and its
+          # Cursor/Grok adapter by a RELATIVE path with CDPATH exported; its
+          # ledger is with the CDPATH checker step below.
           bash bin/tests/test-block-sensitive-files.sh
 
       - name: Suite - session-start hook
@@ -581,7 +682,62 @@ jobs:
           #   list cap tightened to 5                       2 -> 2 red
           #   installer self-heal removed                   1 -> 1 red
           #   closing marker removed                        3 -> 3 red
+          #
+          # Additional ledger, measured 2026-09-30 over 29 cases:
+          #   installer's self-dir cd loses its CDPATH guard 1 -> 1 red
+          #     Run relatively with CDPATH=. and no argument, the installer
+          #     could not resolve its own repo and wired nothing, exit 0.
           bash bin/tests/test-session-start.sh
+
+      - name: CDPATH-guarded self-location
+        run: |
+          # Hard gate, no budget: every cd into a script's own directory
+          # (`$(dirname ...)`, `${BASH_SOURCE[0]%/*}`, `${0%/*}`) carries an
+          # EMPTY CDPATH= prefix. Unguarded, a script run by a relative path
+          # with CDPATH exported captures its directory twice and loses every
+          # sibling. The Cursor/Grok adapter is invoked exactly that way and
+          # fails open on a missing target, so this let a .env write through.
+          # `bash bin/check-cdpath-cd.sh --list` prints every site.
+          bash bin/check-cdpath-cd.sh
+
+      - name: Suite - CDPATH checker
+        run: |
+          # Every case runs against a throwaway repo; scanning this tree only
+          # proves the tree is clean today. 37 cases.
+          #
+          # Mutation ledger, measured 2026-09-30 over 37 cases. Predicted case
+          # sets were named before each run:
+          #
+          #   a non-empty CDPATH prefix counts as a guard   1 -> 1 red
+          #   comment-line skip removed                     9 -> 9 red
+          #     Every fixture carries the checker, whose header quotes the
+          #     bad form, so all nine expected-clean cases go red.
+          #   per-line guard (any guard clears the line)    1 -> 1 red
+          #   cd options (-P) not recognized                2 -> 2 red
+          #   empty surface reads as clean                  1 -> 1 red
+          #   unreadable file ignored                       1 -> 1 red
+          #   marker inside quotes honoured (no stripping)  2 -> 2 red
+          #     This was 0 red at first, and the reason is worth keeping: the
+          #     fixture put the marker right after the opening quote, where the
+          #     "# must start a word" rule rejects it on its own. The marker now
+          #     follows a space inside the quotes.
+          #   # glued to a word honoured                    1 -> 1 red
+          #   opt-out reason not required                   1 -> 1 red
+          #   .githooks/* dropped from the surface          1 -> 1 red
+          #   ls-files failure not checked                  0 -> 0 red
+          #     Predicted 0: a failed listing is also an empty one, and the
+          #     empty-surface check refuses it. Recorded so the redundancy is
+          #     a known fact rather than a coverage gap found later.
+          #
+          # Hook ledger for the relative-invocation cases (sensitive-file and
+          # session-start suites), all predicted = actual:
+          #   block hook: drop the CDPATH='' prefix only     1 -> 1 red (decoy)
+          #   block hook: drop >/dev/null only               0 -> 0 red
+          #     Belt and braces: an empty CDPATH alone already stops the echo.
+          #   block hook: unguarded cd                       3 -> 3 red
+          #   adapter (run-claude-hook.sh): unguarded cd     1 -> 1 red
+          #   installer: unguarded cd                        1 -> 1 red
+          bash bin/tests/test-check-cdpath-cd.sh
 
       # ---- optional, opt-in tooling --------------------------------------
       # Each suite below guards something a fresh copy never enables. They
@@ -1043,6 +1199,8 @@ jobs:
         run: bash bin/tests/test-block-sensitive-files.sh
       - name: Suite - session-start on Git for Windows
         run: bash bin/tests/test-session-start.sh
+      - name: Suite - CDPATH checker on Git for Windows
+        run: bash bin/tests/test-check-cdpath-cd.sh
       - name: Suite - trellis-survey on Git for Windows
         run: bash bin/tests/test-trellis-survey.sh
       # These three were missing here with no reason recorded. All three pass

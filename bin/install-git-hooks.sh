@@ -15,7 +15,7 @@
 # Usage: bash bin/install-git-hooks.sh [repo-path]
 set -uo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname "${BASH_SOURCE[0]}")" >/dev/null && pwd)"
 REPO="${1:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 
 git -C "$REPO" rev-parse --git-dir >/dev/null 2>&1 || exit 0

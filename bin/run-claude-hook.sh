@@ -30,7 +30,7 @@ if [ -z "$HARNESS" ] || [ -z "$HOOK_ID" ]; then
   exit 0
 fi
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname "${BASH_SOURCE[0]}")" >/dev/null && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 export CLAUDE_PROJECT_DIR="$ROOT"
 

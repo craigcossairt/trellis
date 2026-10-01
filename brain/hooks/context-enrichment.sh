@@ -16,7 +16,7 @@
 
 set -u
 
-BRAIN="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+BRAIN="$(CDPATH='' cd -- "$(dirname "${BASH_SOURCE[0]}")/.." >/dev/null && pwd)"
 
 # --- Kill switch ---
 if [ "${PROJECT_BRAIN_DISABLE:-0}" = "1" ]; then

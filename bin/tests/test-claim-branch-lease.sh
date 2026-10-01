@@ -6,9 +6,9 @@
 # cannot see: two sessions under the SAME git identity, which is what every
 # concurrent agent session on one machine looks like.
 #
-# The lease is a remote ref refs/claims/<branch> pointing at a commit whose
-# message carries the marker. Acquiring is
-#   git push --force-with-lease=refs/claims/<b>: origin <sha>:refs/claims/<b>
+# The lease is a remote ref refs/heads/claims/<branch> pointing at a commit
+# whose message carries the marker. Acquiring is
+#   git push --force-with-lease=<ref>: origin <sha>:<ref>
 # where the EMPTY expected value means "must not exist" - an atomic
 # create-or-fail.
 #
@@ -24,7 +24,7 @@
 # =============================================================================
 set -uo pipefail
 
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+HERE="$(CDPATH='' cd -- "$(dirname "${BASH_SOURCE[0]}")" >/dev/null && pwd)"
 SCRIPT="$HERE/../claim-branch.sh"
 [ -f "$SCRIPT" ] || { echo "missing $SCRIPT" >&2; exit 1; }
 
@@ -247,7 +247,7 @@ HOOK="$TMP/racer/.git/hooks/pre-push"
 cat > "$HOOK" <<EOH
 #!/usr/bin/env bash
 # Fires inside the racer's push: plant a rival lease before this push lands.
-git -C "$TMP/a" push -q --force origin "$RIVAL:refs/claims/feat/race" || true
+git -C "$TMP/a" push -q --force origin "$RIVAL:refs/heads/claims/feat/race" || true
 EOH
 must chmod +x "$HOOK"
 
@@ -255,7 +255,7 @@ OUT="$( ( cd "$TMP/racer" && bash "$SCRIPT" --acquire feat/race --me "$ME" --har
 want 1 "a lease that appears mid-push is REFUSED (git create semantics, not the pre-check)"
 
 # And the loser must not have overwritten the winner.
-HOLDER="$(git -C "$TMP/a" ls-remote origin refs/claims/feat/race | cut -f1)"
+HOLDER="$(git -C "$TMP/a" ls-remote origin refs/heads/claims/feat/race | cut -f1)"
 if [ "$HOLDER" = "$RIVAL" ]; then ok "the rival still holds the lease after the refused push"
 else bad "the rival still holds the lease after the refused push" "ref is $HOLDER, wanted $RIVAL"; fi
 
@@ -277,7 +277,7 @@ must rm -f "$HOOK"
 # flag is the next one - "moved before the push" - which moves the ref BEFORE
 # the push connects, where --force finds the advertised old value matching and
 # clobbers. Keep both: this one pins the behaviour, that one pins the flag.
-must git -C "$TMP/a" push -q --force origin "$(rival_lease "$OTHER" "$NOW" 4):refs/claims/feat/renew"
+must git -C "$TMP/a" push -q --force origin "$(rival_lease "$OTHER" "$NOW" 4):refs/heads/claims/feat/renew"
 
 RENEWED="$(rival_lease "$OTHER" "$EXPIRED" 4)"
 [ -n "$RENEWED" ] || { echo "FIXTURE FAILED: could not build the renewed lease" >&2; exit 1; }
@@ -285,7 +285,7 @@ RENEWED="$(rival_lease "$OTHER" "$EXPIRED" 4)"
 cat > "$HOOK" <<EOH
 #!/usr/bin/env bash
 # The holder renews mid-push: the ref moves off the sha the takeover read.
-git -C "$TMP/a" push -q --force origin "$RENEWED:refs/claims/feat/renew" || true
+git -C "$TMP/a" push -q --force origin "$RENEWED:refs/heads/claims/feat/renew" || true
 EOH
 must chmod +x "$HOOK"
 
@@ -294,7 +294,7 @@ OUT="$( ( cd "$TMP/racer" && bash "$SCRIPT" --acquire feat/renew --me "$ME" --ha
 if [ "$ACTUAL" != 0 ]; then ok "a takeover is refused when the lease is renewed mid-push (compare-and-swap)"
 else bad "a takeover is refused when the lease is renewed mid-push (compare-and-swap)" "acquired anyway: $OUT"; fi
 
-HOLDER="$(git -C "$TMP/a" ls-remote origin refs/claims/feat/renew | cut -f1)"
+HOLDER="$(git -C "$TMP/a" ls-remote origin refs/heads/claims/feat/renew | cut -f1)"
 if [ "$HOLDER" = "$RENEWED" ]; then ok "the renewed lease survives the refused takeover"
 else bad "the renewed lease survives the refused takeover" "ref is $HOLDER, wanted $RENEWED"; fi
 
@@ -310,7 +310,7 @@ must rm -f "$HOOK"
 # Seam: a `git` shim ahead of the real one on PATH which performs the rival's
 # renew the first time it sees a push, then execs through. The interleaving
 # comes from the shim; no seam is added to claim-branch.sh for it.
-must git -C "$TMP/a" push -q --force origin "$(rival_lease "$OTHER" "$NOW" 4):refs/claims/feat/window"
+must git -C "$TMP/a" push -q --force origin "$(rival_lease "$OTHER" "$NOW" 4):refs/heads/claims/feat/window"
 
 RENEWED2="$(rival_lease "$OTHER" "$EXPIRED" 4)"
 [ -n "$RENEWED2" ] || { echo "FIXTURE FAILED: could not build the second renewed lease" >&2; exit 1; }
@@ -324,7 +324,7 @@ cat > "$SHIM/git" <<EOS
 for a in "\$@"; do
   if [ "\$a" = "push" ] && [ ! -e "$TMP/.shim-fired" ]; then
     : > "$TMP/.shim-fired"
-    "$REAL_GIT" -C "$TMP/a" push -q --force origin "$RENEWED2:refs/claims/feat/window" || true
+    "$REAL_GIT" -C "$TMP/a" push -q --force origin "$RENEWED2:refs/heads/claims/feat/window" || true
     break
   fi
 done
@@ -337,7 +337,7 @@ OUT="$( ( cd "$TMP/racer" && PATH="$SHIM:$PATH" bash "$SCRIPT" --acquire feat/wi
 if [ "$ACTUAL" != 0 ]; then ok "a takeover is refused when the lease moved before the push (the CAS earns its keep)"
 else bad "a takeover is refused when the lease moved before the push (the CAS earns its keep)" "acquired anyway: $OUT"; fi
 
-HOLDER2="$(git -C "$TMP/a" ls-remote origin refs/claims/feat/window | cut -f1)"
+HOLDER2="$(git -C "$TMP/a" ls-remote origin refs/heads/claims/feat/window | cut -f1)"
 if [ "$HOLDER2" = "$RENEWED2" ]; then ok "the pre-push renewal survives (a plain --force would have clobbered it)"
 else bad "the pre-push renewal survives (a plain --force would have clobbered it)" "ref is $HOLDER2, wanted $RENEWED2"; fi
 
@@ -364,7 +364,7 @@ must rm -f "$TMP/.shim-fired"
 # review; the mutation battery could not see it, because a mutation only
 # perturbs code you already wrote and this was a gap between the fixture and
 # reality.
-must git -C "$TMP/a" push -q --force origin "$(rival_lease "$OTHER" "$NOW" 4):refs/claims/feat/collide"
+must git -C "$TMP/a" push -q --force origin "$(rival_lease "$OTHER" "$NOW" 4):refs/heads/claims/feat/collide"
 
 POISON="$(git -C "$TMP/a" commit-tree "$(git -C "$TMP/a" hash-object -t tree /dev/null)" \
   -m "CLAIM harness=claude-code session=$ME at=$NOW ttl=4h")"
@@ -444,7 +444,7 @@ cat > "$SHIM3/git" <<EOS3
 for a in "\$@"; do
   if [ "\$a" = "fetch" ] && [ ! -e "$TMP/.moved-fired" ]; then
     : > "$TMP/.moved-fired"
-    "$REAL_GIT" -C "$TMP/a" push -q --force origin "$STOLEN:refs/claims/feat/moved" || true
+    "$REAL_GIT" -C "$TMP/a" push -q --force origin "$STOLEN:refs/heads/claims/feat/moved" || true
     break
   fi
 done
@@ -465,7 +465,7 @@ must rm -f "$TMP/.moved-fired"
 # WRAPS. A large ttl yields a negative deadline, so every lease compares as past
 # it and a LIVE lease reads EXPIRED and then free. That is the answer this
 # script must never give, so an implausible ttl has to land as 2.
-must git -C "$TMP/a" push -q --force origin "$(rival_lease "$OTHER" "$NOW" 9999999999999999):refs/claims/feat/hugettl"
+must git -C "$TMP/a" push -q --force origin "$(rival_lease "$OTHER" "$NOW" 9999999999999999):refs/heads/claims/feat/hugettl"
 
 run A feat/hugettl --me "$ME" --now "$NOW"
 want 2 "a wrapping ttl is 2, not 0 (a live lease must not read as expired)"
@@ -513,9 +513,13 @@ want 1 "PROJECT_SESSION_ID of another session: still CLAIMED"
 # to suppress the per-worktree file. Here the file says this worktree is the
 # holder and the environment lies that it is someone else; the file has to win,
 # or one global export would hand every session one identity.
+# The checkout is ON the branch: the file is honoured only there (see the
+# stray-file cases further down).
 printf '%s\n' "$ME" > "$SELF_ID"
+must git -C "$TMP/a" checkout -q feat/selfpush
 OUT="$( ( cd "$TMP/a" && PROJECT_SESSION_ID="$OTHER" bash "$SCRIPT" feat/selfpush --quiet-if-free --now "$NOW" ) 2>&1 )"; ACTUAL=$?
 want 0 "the id file outranks a stray machine-wide PROJECT_SESSION_ID"
+must git -C "$TMP/a" checkout -q main
 rm -f "$SELF_ID"
 
 # The fallback is CHECK-ONLY. Acquiring must keep naming itself explicitly, or
@@ -523,7 +527,7 @@ rm -f "$SELF_ID"
 OUT="$( ( cd "$TMP/a" && PROJECT_SESSION_ID="$ME" bash "$SCRIPT" --acquire feat/selfpush --now "$NOW" ) 2>&1 )"; ACTUAL=$?
 want 2 "--acquire still requires an explicit --me; the env var does not satisfy it"
 
-must git -C "$TMP/a" push -q --force origin ":refs/claims/feat/selfpush"
+must git -C "$TMP/a" push -q --force origin ":refs/heads/claims/feat/selfpush"
 
 # --- the per-worktree session-id file ---------------------------------------
 # The env var cannot be per-session: a harness settings file's env block is
@@ -551,9 +555,19 @@ if [ "$(tr -d '[:space:]' < "$ID_FILE")" = "$ME" ]; then ok "the recorded id is 
 else bad "the recorded id is the acquiring session" "got '$(cat "$ID_FILE")'"; fi
 
 # THE case the whole mechanism exists for: the pre-push hook's exact
-# invocation, no --me and no env var, must not be blocked by my own lease.
+# invocation, no --me and no env var, must not be blocked by my own lease. The
+# push happens from the checkout that is ON the branch, so the check runs there.
+must git -C "$TMP/a" checkout -q feat/idfile
 OUT="$( ( cd "$TMP/a" && env -u PROJECT_SESSION_ID bash "$SCRIPT" feat/idfile --quiet-if-free --now "$NOW" ) 2>&1 )"; ACTUAL=$?
 want 0 "the id file alone unblocks the holder's own push (no --me, no env var)"
+
+# CodeRabbit on PR #32: with a TAG of the same name, `symbolic-ref --short`
+# answers heads/feat/idfile, so a short-name comparison ignored the holder's
+# own id file and refused its push. The comparison is on the full ref.
+must git -C "$TMP/a" tag feat/idfile
+OUT="$( ( cd "$TMP/a" && env -u PROJECT_SESSION_ID bash "$SCRIPT" feat/idfile --quiet-if-free --now "$NOW" ) 2>&1 )"; ACTUAL=$?
+want 0 "a tag named like the branch does not hide the holder's id file"
+must git -C "$TMP/a" tag -d feat/idfile
 
 # It must not unblock ANYONE - a different session's worktree has its own file.
 OTHER_WT="$TMP/b"
@@ -571,6 +585,7 @@ rm -f "$OTHER_ID"
 # --me still outranks the file.
 OUT="$( ( cd "$TMP/a" && env -u PROJECT_SESSION_ID bash "$SCRIPT" feat/idfile --me "$OTHER" --quiet-if-free --now "$NOW" ) 2>&1 )"; ACTUAL=$?
 want 1 "--me outranks the id file"
+must git -C "$TMP/a" checkout -q main
 
 # --release clears it, so the file never outlives the lease it vouches for.
 run A --release feat/idfile --me "$ME" --now "$NOW"
@@ -595,7 +610,9 @@ rm -f "$ID_FILE"
 # file would be visible to every worktree and two sessions would answer MINE to
 # each other's leases - the defect the lease exists to prevent, reintroduced by
 # a one-flag mistake.
-must git -C "$TMP/a" worktree add -q -b wt-session-a "$TMP/wt-a"
+# Worktree A is ON the leased branch, as a real session's worktree is: the id
+# file is honoured only by a checkout on the branch it was written for.
+must git -C "$TMP/a" worktree add -q -b feat/wtlease "$TMP/wt-a"
 must git -C "$TMP/a" worktree add -q -b wt-session-b "$TMP/wt-b"
 
 WT_A_ID="$(git -C "$TMP/wt-a" rev-parse --absolute-git-dir)/claim-session-id"
@@ -678,9 +695,9 @@ must chmod +x "$GATEHOOK"
 run A --acquire feat/gated --me "$ME" --harness claude-code --now "$NOW"
 want 0 "--acquire succeeds under a green-gate style pre-push hook"
 
-OUT="$( ( cd "$TMP/a" && git ls-remote origin refs/claims/feat/gated ) 2>&1 )"
+OUT="$( ( cd "$TMP/a" && git ls-remote origin refs/heads/claims/feat/gated ) 2>&1 )"
 case "$OUT" in
-  *refs/claims/feat/gated*) ok "the lease ref actually reached the remote through the hook" ;;
+  *refs/heads/claims/feat/gated*) ok "the lease ref actually reached the remote through the hook" ;;
   *)                        bad "the lease ref actually reached the remote through the hook" "ls-remote: $OUT" ;;
 esac
 
@@ -699,7 +716,7 @@ fi
 must git -C "$TMP/a" checkout -q main
 
 run A --release feat/gated --me "$ME" --now "$NOW"
-want 0 "--release also works through the hook (a deletion sends no tree)"
+want 0 "--release also works through the hook (it pushes a RELEASED marker, which needs the same bypass)"
 
 must rm -f "$GATEHOOK"
 
@@ -778,7 +795,7 @@ want 2 "--me swallowing the next flag as its value is 2, not 0"
 
 # A lease ref whose commit message is not a parseable marker is UNKNOWN. It is
 # emphatically not "no lease": something put it there.
-must git -C "$TMP/a" push -q --force origin HEAD:refs/claims/feat/garbled
+must git -C "$TMP/a" push -q --force origin HEAD:refs/heads/claims/feat/garbled
 run A feat/garbled --me "$ME" --now "$NOW"
 want 2 "an unparseable lease marker is 2, not 0"
 
@@ -799,7 +816,7 @@ want 2 "unreachable origin under --acquire is 2, not 0"
 # session that is not there. The "the network died, so the re-read would have
 # failed too" argument does not hold - the push and the re-read are separate
 # calls and only one has to fail, which is what this shim models.
-must git -C "$TMP/a" push -q --force origin "$(rival_lease "$OTHER" "$NOW" 4):refs/claims/feat/pushfail"
+must git -C "$TMP/a" push -q --force origin "$(rival_lease "$OTHER" "$NOW" 4):refs/heads/claims/feat/pushfail"
 
 SHIM5="$TMP/shim5"
 must mkdir -p "$SHIM5"
@@ -811,7 +828,7 @@ cat > "$SHIM5/git" <<EOS5
 is_push=0; hits_ref=0
 for a in "\$@"; do
   [ "\$a" = "push" ] && is_push=1
-  case "\$a" in *refs/claims/feat/pushfail*) hits_ref=1 ;; esac
+  case "\$a" in *refs/heads/claims/feat/pushfail*) hits_ref=1 ;; esac
 done
 [ "\$is_push" = 1 ] && [ "\$hits_ref" = 1 ] && exit 1
 exec "$REAL_GIT" "\$@"
@@ -829,6 +846,462 @@ case "$OUT" in
   *"leased by another session"*) bad "a failed push is NOT reported as another session's lease" "got: $OUT" ;;
   *)                             ok "a failed push is NOT reported as another session's lease" ;;
 esac
+
+# --- acquiring outside the worktree that will push --------------------------
+# --acquire records the session id in the CURRENT checkout's git dir, and the
+# pre-push hook reads it from the worktree that pushes. Acquired from the main
+# checkout before `git worktree add`, the id lands where nothing ever pushes the
+# branch, and the worktree's own push is later refused as an intruder ("you
+# are: <no --me given>"). Warn, never refuse: reserving the name before the
+# worktree exists is legitimate, and the lease on the remote is real either way.
+WARN_TEXT="session id is recorded in this checkout"
+
+run A --acquire feat/wt-warn --me "$ME" --harness claude-code --now "$NOW"
+want 0 "acquiring from a checkout on another branch still succeeds"
+case "$OUT" in
+  *"$WARN_TEXT"*"'feat/wt-warn'"*) ok "it warns that the id lands in this checkout, naming the branch" ;;
+  *) bad "it warns that the id lands in this checkout, naming the branch" "out: $OUT" ;;
+esac
+case "$OUT" in
+  *"git worktree add"*"PROJECT_SESSION_ID"*) ok "the warning gives both fixes" ;;
+  *) bad "the warning gives both fixes" "out: $OUT" ;;
+esac
+run B feat/wt-warn --me "$OTHER" --now "$LATER"
+want 1 "the lease taken with a warning is really held"
+
+run A --acquire feat/wt-warn --me "$ME" --harness claude-code --now "$LATER"
+want 0 "re-acquiring my own lease from the wrong checkout succeeds"
+case "$OUT" in
+  *"$WARN_TEXT"*) ok "the re-acquire repair path warns too" ;;
+  *) bad "the re-acquire repair path warns too" "out: $OUT" ;;
+esac
+
+must git -C "$TMP/a" worktree add -q -b feat/wt-ok "$TMP/a-wt" main
+AW() { ( cd "$TMP/a-wt" && bash "$SCRIPT" "$@" ); }
+run AW --acquire feat/wt-ok --me "$ME" --harness claude-code --now "$NOW"
+want 0 "acquiring from the worktree on that branch succeeds"
+case "$OUT" in
+  *"$WARN_TEXT"*) bad "no warning from the worktree on that branch" "out: $OUT" ;;
+  *) ok "no warning from the worktree on that branch" ;;
+esac
+run B feat/wt-ok --me "$OTHER" --now "$LATER"
+want 1 "the lease taken from the worktree is held"
+# A tag of the same name makes `symbolic-ref --short` answer heads/feat/wt-ok;
+# the right checkout must still not be warned about (CodeRabbit on PR #32).
+must git -C "$TMP/a-wt" tag feat/wt-ok
+run AW --acquire feat/wt-ok --me "$ME" --harness claude-code --now "$NOW"
+want 0 "re-acquiring with a same-named tag present succeeds"
+case "$OUT" in
+  *"$WARN_TEXT"*) bad "a same-named tag does not trigger the wrong-checkout warning" "out: $OUT" ;;
+  *) ok "a same-named tag does not trigger the wrong-checkout warning" ;;
+esac
+must git -C "$TMP/a-wt" tag -d feat/wt-ok
+
+# The id the wrong-checkout acquire leaves behind must NOT make a no --me check
+# from that checkout read the lease as its own. That checkout is usually the
+# shared main checkout, where ANOTHER session may run the check: adopting the
+# file there answered FREE on a held branch (review finding on PR #32). So check
+# mode honours the file only when the checkout is on the branch being checked.
+A_ID_FILE="$(git -C "$TMP/a" rev-parse --absolute-git-dir)/claim-session-id"
+run A --acquire feat/wt-follow --me "$ME" --harness claude-code --now "$NOW"
+want 0 "follow: acquire from the wrong checkout"
+case "$OUT" in
+  *"remove $A_ID_FILE"*) ok "the warning names the exact id file to remove" ;;
+  *) bad "the warning names the exact id file to remove" "want $A_ID_FILE in: $OUT" ;;
+esac
+OUT="$( ( cd "$TMP/a" && env -u PROJECT_SESSION_ID bash "$SCRIPT" feat/wt-follow --now "$LATER" ) 2>&1 )"; ACTUAL=$?
+want 1 "follow: a no --me check from a checkout NOT on the branch ignores its stray id file"
+must git -C "$TMP/a" worktree add -q -b feat/wt-follow "$TMP/a-wt2" main
+AW2() { ( cd "$TMP/a-wt2" && bash "$SCRIPT" "$@" ); }
+run AW2 --acquire feat/wt-follow --me "$ME" --harness claude-code --now "$LATER"
+want 0 "follow: re-acquire from the worktree"
+must rm -f "$A_ID_FILE"
+OUT="$( ( cd "$TMP/a" && env -u PROJECT_SESSION_ID bash "$SCRIPT" feat/wt-follow --now "$LATER" ) 2>&1 )"; ACTUAL=$?
+want 1 "follow: after the named cleanup, a no --me check there sees CLAIMED"
+OUT="$( ( cd "$TMP/a-wt2" && env -u PROJECT_SESSION_ID bash "$SCRIPT" feat/wt-follow --now "$LATER" ) 2>&1 )"; ACTUAL=$?
+want 0 "follow: the worktree still recognizes its own lease"
+
+# =============================================================================
+# leases live under refs/heads/claims/<branch>
+# =============================================================================
+# A hosted agent session's git proxy (measured on Claude Code cloud sessions)
+# answers 403 to any push outside refs/heads/* and to ANY ref deletion. A lease
+# under refs/claims/* could not be taken from there at all, and a release by
+# deletion could not happen either. So leases live at refs/heads/claims/<b>,
+# --release force-updates the ref to a RELEASED marker (deleting only as a
+# fallback), and --sweep removes released and expired leases where deletion
+# works.
+#
+# Own origin, so nothing above leaks into these cases and the sweep below cannot
+# touch leases the earlier sections depend on.
+echo
+echo "-- refs/heads/claims, RELEASED markers, the old namespace --"
+O2="$TMP/o2.git"
+must git init -q --bare "$O2"
+must git -C "$O2" symbolic-ref HEAD refs/heads/main
+must git init -q "$TMP/p"
+must git -C "$TMP/p" config user.email "$EMAIL"
+must git -C "$TMP/p" config user.name  'Dev'
+must git -C "$TMP/p" config commit.gpgsign false
+must git -C "$TMP/p" config core.autocrlf false
+must git -C "$TMP/p" remote add origin "$O2"
+printf 'base\n' > "$TMP/p/README.md"
+must git -C "$TMP/p" add README.md
+must git -C "$TMP/p" commit -qm base
+must git -C "$TMP/p" branch -M main
+must git -C "$TMP/p" push -q origin main
+must git clone -q "$O2" "$TMP/q"
+must git -C "$TMP/q" config user.email "$EMAIL"
+must git -C "$TMP/q" config user.name  'Dev'
+must git -C "$TMP/q" config commit.gpgsign false
+
+P() { ( cd "$TMP/p" && env -u PROJECT_CLAIM_LEASE_PUSH bash "$SCRIPT" "$@" ); }
+Q() { ( cd "$TMP/q" && env -u PROJECT_CLAIM_LEASE_PUSH bash "$SCRIPT" "$@" ); }
+EMPTY_TREE="$(git -C "$TMP/p" hash-object -t tree /dev/null)"
+plant() { # plant <ref> <message>: an inert lease-shaped commit, force-pushed
+  local sha
+  sha="$(git -C "$TMP/p" commit-tree "$EMPTY_TREE" -m "$2")" || { echo "FIXTURE FAILED: plant $1" >&2; exit 1; }
+  must git -C "$TMP/p" push -q --force origin "$sha:$1"
+}
+remote_sha() { git -C "$TMP/p" ls-remote origin "$1" | awk -v r="$1" '$2 == r {print $1}'; }
+remote_body() { # the commit message at a remote ref, read by sha
+  local sha
+  sha="$(remote_sha "$1")"
+  [ -n "$sha" ] || return 1
+  git -C "$TMP/p" fetch -q origin "$1" 2>/dev/null || return 1
+  git -C "$TMP/p" log -1 --format=%B "$sha"
+}
+
+# --- where acquire writes ---------------------------------------------------
+run P --acquire feat/n --me "$ME" --harness claude-code --now "$NOW"
+want 0 "heads: acquire on a free branch succeeds"
+if [ -n "$(remote_sha refs/heads/claims/feat/n)" ]; then ok "heads: acquire writes refs/heads/claims/<b>"
+else bad "heads: acquire writes refs/heads/claims/<b>" "no such ref on origin"; fi
+if [ -z "$(remote_sha refs/claims/feat/n)" ]; then ok "heads: acquire does not write the old refs/claims/<b>"
+else bad "heads: acquire does not write the old refs/claims/<b>" "old-namespace ref exists"; fi
+
+run Q feat/n --me "$OTHER" --now "$LATER"
+want 1 "heads: a second session's check reads HELD"
+run Q --acquire feat/n --me "$OTHER" --harness cursor --now "$LATER"
+want 1 "heads: a second session cannot acquire it"
+
+# The lease must not make the AUTHOR check trip over it: ls-remote matches a
+# pattern against the TAIL of each ref, so `ls-remote --heads origin feat/n`
+# also returns refs/heads/claims/feat/n. A branch not yet on the remote would
+# then "exist", fail to fetch, and every check would be 2.
+run P feat/n --me "$ME" --now "$LATER"
+want 0 "heads: the holder's check stays free (refs/heads/claims/<b> is not mistaken for <b>)"
+
+# --- release force-updates to RELEASED --------------------------------------
+run P --release feat/n --me "$ME" --now "$LATER"
+want 0 "heads: the holder releases feat/n"
+case "$(remote_body refs/heads/claims/feat/n)" in
+  *"RELEASE harness="*"session=$ME at=$LATER"*) ok "heads: release force-updates the lease ref to a RELEASED marker" ;;
+  *) bad "heads: release force-updates the lease ref to a RELEASED marker" "body: $(remote_body refs/heads/claims/feat/n)" ;;
+esac
+run Q feat/n --me "$OTHER" --now "$LATER"
+want 0 "heads: a RELEASED lease reads FREE to another session"
+run Q --acquire feat/n --me "$OTHER" --harness cursor --now "$LATER"
+want 0 "heads: acquire over a RELEASED lease succeeds"
+run P feat/n --me "$ME" --now "$LATER"
+want 1 "heads: after the re-acquire the first session reads HELD"
+run P --release feat/n --me "$ME" --now "$LATER"
+want 1 "heads: the old holder cannot release a lease somebody else now holds"
+
+# --- the hosted-session proxy, modelled -------------------------------------
+# pre-receive in the bare origin refuses every deletion and, while the flag file
+# exists, every ref outside refs/heads/*.
+cat > "$O2/hooks/pre-receive" <<EOH
+#!/usr/bin/env bash
+while read -r old new ref; do
+  case "\$new" in *[!0]*) ;; *) echo "403: deletion refused" >&2; exit 1 ;; esac
+  if [ -e "$O2/deny-nonheads" ]; then
+    case "\$ref" in refs/heads/*) ;; *) echo "403: \$ref refused" >&2; exit 1 ;; esac
+  fi
+done
+exit 0
+EOH
+must chmod +x "$O2/hooks/pre-receive"
+: > "$O2/deny-nonheads"
+
+if git -C "$TMP/p" push -q origin ":refs/heads/claims/feat/n" 2>/dev/null; then
+  bad "proxy fixture sanity: deletions are refused" "a deletion went through"
+else ok "proxy fixture sanity: deletions are refused"; fi
+if git -C "$TMP/p" push -q origin "HEAD:refs/claims/feat/probe" 2>/dev/null; then
+  bad "proxy fixture sanity: refs/claims/* is refused" "the push went through"
+else ok "proxy fixture sanity: refs/claims/* is refused"; fi
+
+run P --acquire feat/cloud --me "$ME" --harness claude-code --now "$NOW"
+want 0 "proxy: acquire succeeds behind it"
+run Q feat/cloud --me "$OTHER" --now "$NOW"
+want 1 "proxy: another session reads HELD"
+run P --release feat/cloud --me "$ME" --now "$NOW"
+want 0 "proxy: release succeeds although deletion is refused"
+run Q feat/cloud --me "$OTHER" --now "$NOW"
+want 0 "proxy: the released lease reads FREE"
+if [ -n "$(remote_sha refs/heads/claims/feat/cloud)" ]; then ok "proxy: the lease ref still exists (released, not deleted)"
+else bad "proxy: the lease ref still exists (released, not deleted)" "ref is gone"; fi
+run Q --acquire feat/cloud --me "$OTHER" --harness cursor --now "$NOW"
+want 0 "proxy: another session can take the released lease"
+rm -f "$O2/deny-nonheads" "$O2/hooks/pre-receive"
+
+# Deletion is the FALLBACK, for a remote that refuses the marker update but
+# allows deletion (a ruleset that blocks force-pushes to some branches does
+# exactly this). Without it, such a remote leaves the lease live until its TTL.
+run P --acquire feat/delonly --me "$ME" --harness claude-code --now "$NOW"
+want 0 "fallback fixture: acquire feat/delonly"
+cat > "$O2/hooks/pre-receive" <<'EOH'
+#!/usr/bin/env bash
+while read -r old new ref; do
+  if [ "$ref" = refs/heads/claims/feat/delonly ]; then
+    case "$new" in *[!0]*) echo "update refused, deletion allowed" >&2; exit 1 ;; esac
+  fi
+done
+exit 0
+EOH
+must chmod +x "$O2/hooks/pre-receive"
+run P --release feat/delonly --me "$ME" --now "$NOW"
+want 0 "fallback: release deletes the lease when the marker update is refused"
+if [ -z "$(remote_sha refs/heads/claims/feat/delonly)" ]; then ok "fallback: the lease ref is gone"
+else bad "fallback: the lease ref is gone" "still there: $(remote_body refs/heads/claims/feat/delonly)"; fi
+rm -f "$O2/hooks/pre-receive"
+
+# --- the old namespace: refs/claims/<b> -------------------------------------
+# A copy of this template from before the move may still hold leases there,
+# taken by sessions running the old script. This version does not judge them:
+# it reports could-not-tell and says how to remove the old ref. Silently
+# ignoring one would answer FREE on a branch another session may hold.
+plant refs/claims/feat/old "CLAIM harness=cursor session=$OTHER at=$NOW ttl=4h"
+run P feat/old --me "$ME" --now "$LATER"
+want 2 "old: a lease under refs/claims/<b> is could-not-tell, not free"
+case "$OUT" in
+  *"refs/claims/feat/old"*":refs/claims/feat/old"*) ok "old: the message names the old ref and the command that removes it" ;;
+  *) bad "old: the message names the old ref and the command that removes it" "out: $OUT" ;;
+esac
+run P --acquire feat/old --me "$ME" --harness claude-code --now "$LATER"
+want 2 "old: --acquire refuses next to an old-namespace lease"
+if [ -z "$(remote_sha refs/heads/claims/feat/old)" ]; then ok "old: the refused acquire writes no new lease"
+else bad "old: the refused acquire writes no new lease" "refs/heads/claims/feat/old exists"; fi
+# Even one that has expired: this version cannot read the old marker safely,
+# and an expired lease is one command away from gone.
+plant refs/claims/feat/oldexp "CLAIM harness=cursor session=$OTHER at=$NOW ttl=4h"
+run P feat/oldexp --me "$ME" --now "$EXPIRED"
+want 2 "old: an EXPIRED old-namespace lease is still could-not-tell"
+must git -C "$TMP/p" push -q origin ":refs/claims/feat/old"
+run P feat/old --me "$ME" --now "$LATER"
+want 0 "old: once the old ref is removed, the branch is free"
+
+# --- unreadable is could-not-tell, on either ref ---------------------------
+UNR="$TMP/unr-shim"
+must mkdir -p "$UNR"
+cat > "$UNR/git" <<EOS
+#!/usr/bin/env bash
+for a in "\$@"; do
+  if [ "\$a" = "\$UNREADABLE_REF" ]; then : > "$TMP/.unr-fired"; exit 128; fi
+done
+exec "$REAL_GIT" "\$@"
+EOS
+must chmod +x "$UNR/git"
+rm -f "$TMP/.unr-fired"
+OUT="$( ( cd "$TMP/p" && UNREADABLE_REF=refs/heads/claims/feat/unr PATH="$UNR:$PATH" bash "$SCRIPT" feat/unr --me "$ME" --now "$NOW" ) 2>&1 )"; ACTUAL=$?
+want 2 "heads: an unreadable lease ref is 2"
+if [ -e "$TMP/.unr-fired" ]; then ok "fixture sanity: the lease-ref shim fired"
+else bad "fixture sanity: the lease-ref shim fired" "never saw refs/heads/claims/feat/unr"; fi
+rm -f "$TMP/.unr-fired"
+OUT="$( ( cd "$TMP/p" && UNREADABLE_REF=refs/claims/feat/unr PATH="$UNR:$PATH" bash "$SCRIPT" feat/unr --me "$ME" --now "$NOW" ) 2>&1 )"; ACTUAL=$?
+want 2 "old: an unreadable old-namespace probe is 2, not free"
+if [ -e "$TMP/.unr-fired" ]; then ok "fixture sanity: the old-namespace shim fired"
+else bad "fixture sanity: the old-namespace shim fired" "never saw refs/claims/feat/unr"; fi
+rm -f "$TMP/.unr-fired"
+
+# A code commit sitting on the lease ref is not a lease, whatever its message.
+# Its message is a well-formed RELEASE marker on purpose: with a message that
+# does not parse ("base"), the marker parser refuses it on its own and the case
+# passes whether or not the object's SHAPE is checked.
+GARB="$(git -C "$TMP/p" commit-tree "HEAD^{tree}" -p HEAD -m "RELEASE harness=x session=$OTHER at=$NOW")" \
+  || { echo "FIXTURE FAILED: could not build the code commit" >&2; exit 1; }
+must git -C "$TMP/p" push -q --force origin "$GARB:refs/heads/claims/feat/garb"
+run P feat/garb --me "$ME" --now "$NOW"
+want 2 "heads: a non-lease object on refs/heads/claims/<b> is 2, not free"
+must git -C "$TMP/p" push -q origin ":refs/heads/claims/feat/garb"
+
+# A RELEASE marker that also carries a CLAIM is ambiguous: 2, never free.
+plant refs/heads/claims/feat/both "RELEASE harness=x session=$OTHER at=$NOW
+CLAIM harness=cursor session=$OTHER at=$NOW ttl=4h"
+run P feat/both --me "$ME" --now "$NOW"
+want 2 "heads: a marker carrying both RELEASE and CLAIM is 2"
+# And a RELEASE marker that does not parse is not a release.
+plant refs/heads/claims/feat/badrel "RELEASE by somebody, trust me"
+run P feat/badrel --me "$ME" --now "$NOW"
+want 2 "heads: an unreadable RELEASE marker is 2"
+# Removed so the sweep below starts from refs it can all read.
+must git -C "$TMP/p" push -q origin ":refs/heads/claims/feat/both" ":refs/heads/claims/feat/badrel"
+
+# --- the claims/ namespace is not a work branch ----------------------------
+# The pre-push hook calls check mode for every refs/heads/* ref it sends, so
+# the lease push itself arrives here as "claims/<b>". It passes only when the
+# push was started by this script, which names the inert object it writes.
+run P claims/foo --me "$ME" --now "$NOW"
+want 2 "claims/: check mode refuses it without the lease-push flag"
+run P --acquire claims/foo --me "$ME" --now "$NOW"
+want 2 "claims/: --acquire refuses it"
+run P --release claims/foo --me "$ME" --now "$NOW"
+want 2 "claims/: --release refuses it"
+OUT="$( ( cd "$TMP/p" && PROJECT_CLAIM_LEASE_PUSH=1 bash "$SCRIPT" --acquire claims/foo --me "$ME" --now "$NOW" ) 2>&1 )"; ACTUAL=$?
+want 2 "claims/: the lease-push flag does not open --acquire"
+OUT="$( ( cd "$TMP/p" && PROJECT_CLAIM_LEASE_PUSH=1 bash "$SCRIPT" claims/foo --quiet-if-free --now "$NOW" ) 2>&1 )"; ACTUAL=$?
+want 2 "claims/: a bare PROJECT_CLAIM_LEASE_PUSH=1 does not pass check mode"
+INERT_SHA="$(git -C "$TMP/p" commit-tree "$EMPTY_TREE" -m "CLAIM harness=x session=$ME at=$NOW ttl=4h")"
+OUT="$( ( cd "$TMP/p" && PROJECT_CLAIM_LEASE_PUSH="$INERT_SHA" bash "$SCRIPT" claims/foo --quiet-if-free --now "$NOW" ) 2>&1 )"; ACTUAL=$?
+want 0 "claims/: check mode passes when the flag names an inert lease object"
+OUT="$( ( cd "$TMP/p" && PROJECT_CLAIM_LEASE_PUSH="$(git -C "$TMP/p" rev-parse HEAD)" bash "$SCRIPT" claims/foo --quiet-if-free --now "$NOW" ) 2>&1 )"; ACTUAL=$?
+want 2 "claims/: the flag naming a CODE commit does not pass check mode"
+
+# --- sweep ------------------------------------------------------------------
+run P --acquire feat/sw-live --me "$ME" --harness claude-code --now "$EXPIRED"
+want 0 "sweep fixture: a live lease"
+run P --acquire feat/sw-exp --me "$ME" --harness claude-code --now "$NOW"
+want 0 "sweep fixture: a lease that will be expired"
+run P --acquire feat/sw-rel --me "$ME" --harness claude-code --now "$NOW"
+want 0 "sweep fixture: a lease to release"
+run P --release feat/sw-rel --me "$ME" --now "$NOW"
+want 0 "sweep fixture: released"
+plant refs/heads/claims/feat/sw-other "CLAIM harness=cursor session=$OTHER at=$EXPIRED ttl=4h"
+
+run P --sweep --now "$EXPIRED"
+want 0 "sweep: runs"
+if [ -z "$(remote_sha refs/heads/claims/feat/sw-exp)" ]; then ok "sweep: deletes an EXPIRED lease"
+else bad "sweep: deletes an EXPIRED lease" "still there. out: $OUT"; fi
+if [ -z "$(remote_sha refs/heads/claims/feat/sw-rel)" ]; then ok "sweep: deletes a RELEASED lease"
+else bad "sweep: deletes a RELEASED lease" "still there. out: $OUT"; fi
+if [ -n "$(remote_sha refs/heads/claims/feat/sw-live)" ]; then ok "sweep: keeps my live lease"
+else bad "sweep: keeps my live lease" "deleted. out: $OUT"; fi
+if [ -n "$(remote_sha refs/heads/claims/feat/sw-other)" ]; then ok "sweep: keeps another session's live lease"
+else bad "sweep: keeps another session's live lease" "deleted. out: $OUT"; fi
+case "$OUT" in
+  *"deleted refs/heads/claims/feat/sw-exp"*) ok "sweep: says what it deleted" ;;
+  *) bad "sweep: says what it deleted" "out: $OUT" ;;
+esac
+run P --sweep --now "$EXPIRED"
+want 0 "sweep: safe to re-run"
+must git -C "$TMP/p" push -q --force origin "HEAD:refs/heads/claims/feat/sw-garb"
+run P --sweep --now "$EXPIRED"
+want 2 "sweep: reports 2 when a lease ref cannot be read"
+if [ -n "$(remote_sha refs/heads/claims/feat/sw-garb)" ]; then ok "sweep: never deletes what it cannot read"
+else bad "sweep: never deletes what it cannot read" "deleted"; fi
+run P feat/x --sweep --now "$EXPIRED"
+want 2 "sweep: takes no branch argument"
+
+# --- the branch argument must be a plain branch name ------------------------
+# Review finding on PR #32: `refs/heads/held` and `origin/held` read as two
+# OTHER branches (leases at refs/heads/claims/refs/heads/held and
+# .../origin/held, neither of which exists), so both answered 0 for a branch
+# that was held. A name that can mean a held branch must never read as free.
+run Q --acquire held --me "$OTHER" --harness cursor --now "$NOW"
+want 0 "branch-arg fixture: another session holds 'held'"
+run P held --me "$ME" --now "$NOW"
+want 1 "branch-arg control: the plain name reads HELD"
+run P refs/heads/held --me "$ME" --now "$NOW"
+want 2 "branch-arg: refs/heads/<b> is 2, not free"
+case "$OUT" in
+  *"plain branch name"*"'held'"*) ok "branch-arg: the refusal names the form it wants" ;;
+  *) bad "branch-arg: the refusal names the form it wants" "out: $OUT" ;;
+esac
+run P origin/held --me "$ME" --now "$NOW"
+want 2 "branch-arg: <remote>/<b> is 2, not free"
+case "$OUT" in
+  *"remote 'origin'"*"'held'"*) ok "branch-arg: the refusal says origin is a remote and names the branch" ;;
+  *) bad "branch-arg: the refusal says origin is a remote and names the branch" "out: $OUT" ;;
+esac
+run P --acquire refs/heads/held --me "$ME" --now "$NOW"
+want 2 "branch-arg: --acquire refuses refs/heads/<b>"
+run P --release origin/held --me "$ME" --now "$NOW"
+want 2 "branch-arg: --release refuses <remote>/<b>"
+run P 'bad..name' --me "$ME" --now "$NOW"
+want 2 "branch-arg: a name git would refuse is 2"
+# Grok review of the fix: git's own shorthands (gitrevisions tries refs/<name>)
+# passed every check above and read the held branch as free.
+run P heads/held --me "$ME" --now "$NOW"
+want 2 "branch-arg: heads/<b> is 2, not free"
+case "$OUT" in
+  *"plain branch name"*"'held'"*) ok "branch-arg: the heads/ refusal names the form it wants" ;;
+  *) bad "branch-arg: the heads/ refusal names the form it wants" "out: $OUT" ;;
+esac
+run P remotes/origin/held --me "$ME" --now "$NOW"
+want 2 "branch-arg: remotes/<r>/<b> is 2, not free"
+run P tags/held --me "$ME" --now "$NOW"
+want 2 "branch-arg: tags/<b> is 2, not free"
+# A first segment that is NOT a configured remote is an ordinary branch name.
+run P upstream/feature --me "$ME" --now "$NOW"
+want 0 "branch-arg: <not-a-remote>/<b> is still an ordinary branch"
+
+# --- nested lease names collide (directory/file) ----------------------------
+# refs/heads/claims/feat5 and refs/heads/claims/feat5/x cannot both exist: git
+# stores refs as paths. After `--release feat5` leaves a RELEASED marker at the
+# first, `--acquire feat5/x` is refused by the remote. That stays 2 (no lease was
+# taken), but the message has to say WHY and how to clear it, not "the ref
+# reads absent".
+run P --acquire feat5 --me "$ME" --harness claude-code --now "$NOW"
+want 0 "nested fixture: acquire feat5"
+run P --release feat5 --me "$ME" --now "$NOW"
+want 0 "nested fixture: release feat5 (a RELEASED marker stays)"
+run P --acquire feat5/x --me "$ME" --harness claude-code --now "$NOW"
+want 2 "nested: acquiring feat5/x beside a feat5 marker is 2"
+case "$OUT" in
+  *"refs/heads/claims/feat5"*"--sweep"*) ok "nested: the message names the conflicting lease ref and --sweep" ;;
+  *) bad "nested: the message names the conflicting lease ref and --sweep" "out: $OUT" ;;
+esac
+case "$OUT" in
+  *"reads as absent"*) bad "nested: the message is not the misleading 'reads as absent'" "out: $OUT" ;;
+  *) ok "nested: the message is not the misleading 'reads as absent'" ;;
+esac
+# The other direction: a lease BELOW the name blocks the name itself.
+run P --acquire feat6/x --me "$ME" --harness claude-code --now "$NOW"
+want 0 "nested fixture: acquire feat6/x"
+run P --acquire feat6 --me "$ME" --harness claude-code --now "$NOW"
+want 2 "nested: acquiring feat6 above a feat6/x lease is 2"
+case "$OUT" in
+  *"refs/heads/claims/feat6/x"*) ok "nested: the message names the lease below" ;;
+  *) bad "nested: the message names the lease below" "out: $OUT" ;;
+esac
+# A branch called `claims` is the lease namespace's own directory.
+run P claims --me "$ME" --now "$NOW"
+want 2 "nested: a branch named 'claims' is refused in check mode"
+run P --acquire claims --me "$ME" --harness claude-code --now "$NOW"
+want 2 "nested: a branch named 'claims' is refused by --acquire"
+if [ -z "$(remote_sha refs/heads/claims/claims)" ]; then ok "nested: no lease was written for 'claims'"
+else bad "nested: no lease was written for 'claims'" "refs/heads/claims/claims exists"; fi
+
+# --- --me and --harness are restricted to [A-Za-z0-9._:-] ------------------
+# Both are written into the marker and read back by a regex. A space or '='
+# would let one value forge another field, and an id carrying RELEASE or CLAIM
+# as a whole token makes the body hold both markers - which every reader treats
+# as could-not-tell, and --sweep will not delete what it cannot read. One bad id
+# would have jammed the branch until someone deleted the ref by hand.
+run P --acquire feat7 --me 'a b' --harness x --now "$NOW"
+want 2 "ids: --me with a space is 2"
+case "$OUT" in
+  *"--me"*"A-Za-z0-9"*) ok "ids: the refusal names the flag and the allowed set" ;;
+  *) bad "ids: the refusal names the flag and the allowed set" "out: $OUT" ;;
+esac
+run P --acquire feat7 --me 'x' --harness 'h session=evil' --now "$NOW"
+want 2 "ids: --harness that could forge a session= field is 2"
+run P --acquire feat7 --me 'RELEASE' --harness x --now "$NOW"
+want 2 "ids: --me RELEASE is 2"
+run P --acquire feat7 --me 'sess-CLAIM' --harness x --now "$NOW"
+want 2 "ids: --me with CLAIM as a token is 2"
+run P --acquire feat7 --me 'x' --harness 'RELEASE.1' --now "$NOW"
+want 2 "ids: --harness with RELEASE as a token is 2"
+run P feat7 --me 'a;b' --now "$NOW"
+want 2 "ids: check mode validates --me too"
+run P --release feat7 --me 'a b' --now "$NOW"
+want 2 "ids: --release validates --me too"
+if [ -z "$(remote_sha refs/heads/claims/feat7)" ]; then ok "ids: none of the refused calls wrote a lease"
+else bad "ids: none of the refused calls wrote a lease" "refs/heads/claims/feat7 exists"; fi
+run P --acquire feat7 --me 'sess.1:a-b_RELEASED' --harness 'claude-code' --now "$NOW"
+want 0 "ids: an id from the allowed set (RELEASED is not the token RELEASE) acquires"
+run Q feat7 --me "$OTHER" --now "$NOW"
+want 1 "ids: and that lease reads HELD to another session, not could-not-tell"
 
 echo
 echo "passed $PASS, failed $FAIL"
