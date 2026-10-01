@@ -736,6 +736,142 @@ jobs:
           #   installer: unguarded cd                        1 -> 1 red
           bash bin/tests/test-check-cdpath-cd.sh
 
+      # ---- optional, opt-in tooling --------------------------------------
+      # Each suite below guards something a fresh copy never enables. They
+      # still run on every pull request: an opt-in guard that rots while
+      # nobody has it switched on fails the first project that does. Each step
+      # is skipped only when its subject file has been pruned (SETUP.md § 5).
+
+      - name: Suite - check-main-checkouts (opt-in shared checkout)
+        if: hashFiles('bin/check-main-checkouts.sh') != ''
+        run: |
+          # Reports the END state a command-line guard cannot see: a main
+          # checkout off its default branch, dirty, or carrying a repo-local
+          # git identity. Three exit states: 0 parked, 1 problem, 2 could not
+          # check (outranks 1, and every finding still prints). Linked worktree
+          # vs main checkout is git dir vs common dir, never the shape of .git:
+          # a --separate-git-dir main checkout has a .git FILE. 30 cases.
+          #
+          # Mutation ledger, measured 2026-10-01, predicted -> observed red:
+          #
+          #   untracked files not listed                      3 -> 3
+          #   --no-optional-locks dropped (index write)       1 -> 1
+          #   prefix match on the branch name                 1 -> 1
+          #   detached HEAD read as clean                     1 -> 1
+          #   found (1) outranks could-not-check (2)          1 -> 1
+          #   a failed git status read as clean               1 -> 1
+          #   linked-worktree refusal removed                 1 -> 1
+          #   linked-vs-main decided by .git being a file     2 -> 2
+          #   user.name not checked                           1 -> 1
+          #   repo-local identity read as clean               3 -> 3
+          #   cannot() stops setting could-not-check          6 -> 6
+          #   "and N more" suffix dropped                     1 -> 1
+          #   inherited GIT_DIR not cleared                   1 -> 1
+          #   project.defaultBranch ignored (always main)     2 -> 2
+          #   includeIf remedy dropped from the message       1 -> 1
+          #
+          # Added 2026-10-01 (CodeRabbit on #31), predicted -> observed red:
+          #
+          #   symbolic-ref --short compared (tag named main)  1 -> 1
+          #   refs/heads/ prefix left in the report           1 -> 1
+          bash bin/tests/test-check-main-checkouts.sh
+
+      - name: Suite - session-start main-checkout section (opt-in)
+        if: hashFiles('bin/check-main-checkouts.sh') != ''
+        run: |
+          # Pins the opt-in wiring in session-start.sh, where a working check
+          # goes quietly dead or leaks into projects that never asked: unmarked,
+          # the checker never runs and nothing prints; marked, a session in a
+          # linked worktree still judges the MAIN checkout; a checker that is
+          # missing or fails says MISSING or FAILED, never nothing; a
+          # --separate-git-dir main checkout is still found; a marker read that
+          # fails (not "not set") says FAILED; an inherited GIT_DIR cannot answer
+          # for another repo. 16 cases.
+          # (The unmarked output is also byte-identical to the hook before this
+          # section existed; that was checked once by hand, not here.)
+          #
+          # Mutation ledger, measured 2026-10-01, predicted -> observed red:
+          #
+          #   opt-in gate removed                             3 -> 3
+          #   MISSING branch silenced                         1 -> 1
+          #   FAILED (exit 2) branch silenced                 1 -> 1
+          #   exit 1 not reported as "not parked"             2 -> 3
+          #     The extra red is the separate-git-dir off-main case, added after
+          #     this prediction was written; it reports through exit 1 too.
+          #   session root passed instead of main checkout    2 -> 2
+          #   non-boolean marker silenced                     1 -> 1
+          #   main checkout always from `git worktree list`   2 -> 2
+          #     (git names the separate git dir there, not the checkout)
+          #   session top level used even from a worktree     2 -> 2
+          #
+          # Added 2026-10-01 (CodeRabbit on #31), predicted -> observed red:
+          #
+          #   repo-local git variables not dropped            1 -> 1
+          #   failed marker read treated as not set           1 -> 1
+          #   "not set" (exit 1) also reported as FAILED      1 -> 1
+          bash bin/tests/test-session-start-main-checkout.sh
+
+      # node is preinstalled on ubuntu-latest, but its version is the image's
+      # choice. The suite uses node:test and the hook uses optional chaining,
+      # so pin a major rather than inherit whatever the image ships.
+      - uses: actions/setup-node@v7
+        if: hashFiles('.claude/hooks/heredoc-backslash-warn.mjs') != ''
+        with:
+          node-version: '22'
+
+      - name: Suite - heredoc backslash warning (optional hook)
+        if: hashFiles('.claude/hooks/heredoc-backslash-warn.mjs') != ''
+        run: |
+          # Optional, not wired by default (.claude/hooks/README.md). Warns,
+          # never blocks, when a Bash command feeds a heredoc body holding a
+          # backslash to python/node/bun/perl as SOURCE: the interpreter turns
+          # escapes meant for the output into real CR/NUL/backspace bytes. Data
+          # for a script (`python3 x.py <<EOF`) stays silent; an unparseable
+          # payload is reported, not silent. Every case runs the real hook with
+          # a PreToolUse payload on stdin. 64 cases.
+          #
+          # Mutation ledger, measured 2026-09-30, predicted -> observed red:
+          #
+          #   backslash test dropped (warn on any body)       4 -> 4
+          #   runner gating removed (`echo python -`)         1 -> 1
+          #   runners cut to env/exec/command/time/sudo       4 -> 4
+          #   `<<<` here-string guard removed                 1 -> 1
+          #   `<<-` tab strip dropped                         1 -> 1
+          #   unparseable payload read as silence             3 -> 3
+          #   JSON array accepted as a payload                1 -> 1
+          #   `&` of `2>&1` read as a separator               1 -> 1
+          #   `(` not a separator (heredoc inside `$( )`)     1 -> 1
+          #   no separator cut at all                         3 -> 3
+          #   interpreter path/.exe not normalised            1 -> 1
+          #   tool_name check removed                         1 -> 1
+          #   script path read as source                      5 -> 5
+          #   `||` read as a pipe                             1 -> 1
+          #   `> file` target read as a script path           1 -> 1
+          #   `bun run` not skipped                           1 -> 1
+          #   could-not-run made blocking (exit 2)            3 -> 3
+          #   chr(92) remedy dropped from the message        26 -> 26
+          #
+          # Added 2026-10-01 (CodeRabbit on #31), predicted -> observed red:
+          #
+          #   --eval= read as a flag, not the program         1 -> 1
+          #   words after the heredoc operator ignored        2 -> 2
+          #   separate option value read as a script path     1 -> 1
+          #   node -C dropped from the valued letters         1 -> 1
+          #
+          # Added 2026-10-01 (CodeRabbit on #31, second round), over 64 cases;
+          # the rows above were measured before these seven cases existed:
+          #
+          #   whitespace split kept the quotes                3 -> 3
+          #   runner scans past a non-runner wrapped word     2 -> 2
+          #   runner option values not skipped (-n, -u)       2 -> 2
+          #   timeout duration read as the wrapped command    1 -> 1
+          #   uv subcommand not checked for `run`             1 -> 1
+          #
+          # A perl -0/-l digit-skip branch was predicted 1 red and gave 0: the
+          # x of -0x1e already takes the rest of the cluster, so the branch was
+          # dead and was removed rather than kept untested.
+          node --test .claude/hooks/tests/heredoc-backslash-warn.test.mjs
+
       - name: JSON config is parseable
         run: |
           # settings.json wires every hook in this repo, and hooks.json does the
@@ -1073,3 +1209,12 @@ jobs:
         run: bash bin/tests/test-claim-branch-lease.sh
       - name: Suite - trellis-sync on Git for Windows
         run: bash bin/tests/test-trellis-sync.sh
+      # The shared-checkout pieces lean on path spellings (git's C:/ form
+      # beside Git Bash's /c/ form), which differ on Windows. Same suites,
+      # ledgers on the Linux steps above.
+      - name: Suite - check-main-checkouts on Git for Windows
+        if: hashFiles('bin/check-main-checkouts.sh') != ''
+        run: bash bin/tests/test-check-main-checkouts.sh
+      - name: Suite - session-start main-checkout section on Git for Windows
+        if: hashFiles('bin/check-main-checkouts.sh') != ''
+        run: bash bin/tests/test-session-start-main-checkout.sh

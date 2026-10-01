@@ -78,3 +78,57 @@ Lessons already baked into these scripts - keep them in mind when adding hooks:
   and context output. Edit policy here, never a per-harness copy. Test each adapter's
   verdict too: a Windows launcher that turns exit 2 into exit 1 can turn a block
   into a non-blocking hook error.
+
+## Optional hooks (not wired by default)
+
+These ship with their suites but nothing in `.claude/settings.json` runs them. A copy that never
+wires them behaves exactly as if they were absent; delete them if you will not use them.
+
+### `heredoc-backslash-warn.mjs` - backslashes in a heredoc fed to an interpreter
+
+`python - <<'EOF'` (or node, bun, perl) hands the heredoc body to the interpreter as SOURCE, so
+an escape meant for the output lands as a real CR, NUL or backspace byte, or vanishes. Agents
+writing file content this way corrupt it silently, and a written rule against it did not stop
+the habit in the project this came from - the warning has to arrive at the moment the command
+runs. The hook warns (exit 0, never blocks) when a Bash command feeds a heredoc body holding a
+backslash to python/node/bun/perl as program source, and stays silent for heredocs that are data
+for a script (`python3 x.py <<EOF`), cat-to-file, bash, `-c` one-liners and here-strings. An
+unparseable payload is reported in a `systemMessage`, never silently passed and never blocked.
+
+**Needs node 18 or later on PATH.** Without node, Claude Code shows a non-blocking hook error on
+every Bash call, so wire it only where node is installed. To turn it on, add this to the
+`PreToolUse` array in `.claude/settings.json`:
+
+```json
+{
+  "matcher": "Bash",
+  "hooks": [
+    {
+      "type": "command",
+      "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/heredoc-backslash-warn.mjs\"",
+      "timeout": 10
+    }
+  ]
+}
+```
+
+Suite: `node --test .claude/hooks/tests/heredoc-backslash-warn.test.mjs` (runs in hooks CI
+whether or not you wire the hook). Claude Code only: the Cursor, Grok and Codex adapters
+translate blocks, and a non-blocking warning has no equivalent there yet.
+
+### Shared main checkout check - `bin/check-main-checkouts.sh`
+
+Not a Claude Code hook, but the same opt-in shape. Once several sessions share one machine, the
+main checkout stays parked on the default branch (`docs/growing-into-a-workspace.md`). Mark it
+in its own local config - never tracked, so no clone inherits it:
+
+```bash
+git config --local project.sharedCheckout true
+git config --local project.defaultBranch trunk   # only if the default is not "main"
+```
+
+Then `session-start.sh` runs `bin/check-main-checkouts.sh` on the main checkout at every session
+start and reports it if it is off the default branch, dirty, or carries a repo-local git
+identity. It reports; it prevents nothing (the growing-into-a-workspace doc says why there is no
+git hook that blocks the move). Unmarked, session-start prints nothing new. Suites:
+`bin/tests/test-check-main-checkouts.sh`, `bin/tests/test-session-start-main-checkout.sh`.

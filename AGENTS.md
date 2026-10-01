@@ -70,7 +70,7 @@ If no, it goes in the issue tracker, not here.
 │   ├── coding-standards.md  # judgment standards the REVIEWER reads (not always loaded)
 │   ├── common-gotchas.md    # symptom → root cause → fix table (append after every bug fix)
 │   ├── decision-log.md      # what was decided, when, and why
-│   └── methodology/         # TDD, bug protocol, verification gates, adversarial review, sessions
+│   └── methodology/         # TDD, bug protocol, verification gates, adversarial review, sessions, rule changes
 ├── .claude/                 # Claude Code adapter (hooks, commands, skills, agents)
 ├── .agents/                 # Codex skill routers to the canonical procedures
 ├── .codex/                  # Codex hooks and payload adapter
@@ -216,6 +216,8 @@ format; delete the adapter and the rule goes with it.
   context (or a different model) reads in full: implement to make it work, review to make it
   good. When you shrink this file, move rules rather than delete them, and check that each rule
   an implementer needs BEFORE writing a line is still stated here, not only pointed to.
+  Measure a trim before making it, and prove a behavioral rule edit with a blinded A/B before
+  shipping it - see `docs/methodology/rule-changes.md`.
 - **Every PR body states its merge danger** - a one-way or two-way door plus the blast radius,
   per `.github/pull_request_template.md`, which lists the one-way triggers. A command-line
   `--body` bypasses the template, so write the lines yourself. A reviewer treats a door that
