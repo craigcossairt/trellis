@@ -1086,7 +1086,12 @@ else bad "fixture sanity: the old-namespace shim fired" "never saw refs/claims/f
 rm -f "$TMP/.unr-fired"
 
 # A code commit sitting on the lease ref is not a lease, whatever its message.
-must git -C "$TMP/p" push -q --force origin "HEAD:refs/heads/claims/feat/garb"
+# Its message is a well-formed RELEASE marker on purpose: with a message that
+# does not parse ("base"), the marker parser refuses it on its own and the case
+# passes whether or not the object's SHAPE is checked.
+GARB="$(git -C "$TMP/p" commit-tree "HEAD^{tree}" -p HEAD -m "RELEASE harness=x session=$OTHER at=$NOW")" \
+  || { echo "FIXTURE FAILED: could not build the code commit" >&2; exit 1; }
+must git -C "$TMP/p" push -q --force origin "$GARB:refs/heads/claims/feat/garb"
 run P feat/garb --me "$ME" --now "$NOW"
 want 2 "heads: a non-lease object on refs/heads/claims/<b> is 2, not free"
 must git -C "$TMP/p" push -q origin ":refs/heads/claims/feat/garb"
