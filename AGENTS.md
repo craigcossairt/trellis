@@ -147,8 +147,22 @@ format; delete the adapter and the rule goes with it.
   See `.claude/commands/worktree.md`.
 - **Plan first for non-trivial tasks** (3+ steps or architectural decisions) - write the plan,
   confirm before implementing. If something goes wrong mid-implementation, STOP and re-plan.
+  **A run with nobody to confirm with** (a scheduled job, a headless `-p` run, CI, a subagent)
+  writes the plan into its output and carries it out, stopping only where its own prompt or a
+  hard rule says to. Waiting for an approval that cannot arrive delivers nothing: in a measured
+  comparison, every run of a smaller model stopped at this line and delivered no work.
+- **Once the plan is approved, keep going until a named stop.** A step that does not need the
+  owner's input is not a reason to end the turn: put the status note in the same message as the
+  next action. Do not end on a summary that names the next step without taking it, an offer to
+  continue, or a list of options that blocks nothing. The named stops are: (1) plan approval on
+  non-trivial work; (2) a production go-signal; (3) a destructive or outward-facing action that
+  neither the approved plan nor a documented protocol calls for (deleting data, force-pushing,
+  sending a message on someone's behalf); (4) a claim check that returns CLAIMED or
+  could-not-tell; (5) a product or judgment fork only the owner can settle; (6) the plan stops
+  being true - a failure you cannot explain, or a result that changes the approach. Steps a
+  protocol already requires (the claim and lease, commits, push, PR) are not stops.
 - **Verify before marking done** - never claim a task is complete without proving it works. Run
-  tests, check logs, demonstrate correctness. Ask: "Would a staff engineer approve this?"
+  tests, check logs, demonstrate correctness.
   If the push gate is configured (`bin/verify-green.sh`), record the proof with
   `bash bin/verify-green.sh` before pushing - unverified pushes are blocked.
 - **Grade every claim on the certainty ladder, and say where it stopped.** Five levels:
@@ -198,6 +212,20 @@ format; delete the adapter and the rule goes with it.
   per `.github/pull_request_template.md`, which lists the one-way triggers. A command-line
   `--body` bypasses the template, so write the lines yourself. A reviewer treats a door that
   understates the diff as blocking: two-way doors get skimmed.
+- **Open PRs as drafts, and review in a fresh context before marking ready.** When the diff is
+  final, hand it to a subagent (or a new session) given only the PR and its acceptance criteria,
+  and have it read `docs/coding-standards.md` in full. The context that wrote the code shares its
+  blind spots and is the most expensive one to spend on reviewing. Verify each finding, then
+  gather every review finding and every CI failure and fix them in ONE push: each push reruns
+  the whole CI matrix and, where reviews are budgeted, may spend a review on a diff you are
+  about to change again.
+- **Show the change: before and after on every PR with a visible change.** Visible means a UI,
+  a page, or output a person sees (an email, a notification, an alert). Capture *before* from
+  the untouched tree before the first edit and *after* from the branch, on the same screen,
+  state and viewport; use a short video for motion, a flow or timing. Keep the media out of git
+  (attach it where the project tracks work) and link it from the PR's Evidence section. When a
+  half cannot be captured, say which and why; a PR with nothing visible says
+  `No visible change.`
 - **A user-facing change is verified by driving the running app, not by reading the code.** Once
   per project, build the lever and the feature map with `/build-verification-skill`; after that,
   reproduce bugs and prove fixes through it. Expect the first real run to find defects no stubbed
@@ -247,11 +275,17 @@ Context quality degrades in long sessions. Defaults for every session:
   "Do I need the tool output or just the conclusion?"
 - **Summarize before ending.** When closing a session mid-stream, write a handoff summary for the
   next session.
+- **Keep a long run's task list in a file.** For work that spans many steps or may outlive a
+  compaction, keep the checklist in a scratch file and tick each item as it lands. A compaction
+  summarizes the plan away; the file keeps it, and it is where the owner looks to see what is
+  done and what is left. Commit it only if it is itself a deliverable.
 
 ### Delegation & Model Routing
 
-For most tasks the right team size is 1 (yourself) or 2 (you + one reviewer agent). When you do
-delegate:
+For most tasks the right team size is 1 (yourself); add a reviewer agent only where a protocol
+names one. (In a measured comparison, removing "you plus one reviewer" as the default and
+"the higher your tier, the more you should delegate" changed nothing: agents rarely
+over-delegated either way, so the lines only cost context.) When you do delegate:
 
 - **Push work down, keep judgment up.** Spend the parent context on decisions, synthesis, and
   review; let subagents burn their own context on searches, file dumps, and mechanical edits.
@@ -264,14 +298,17 @@ delegate:
 - **Don't delegate the trivial.** Single-fact lookups, one-file edits, anything faster to do than
   to brief - do it yourself.
 
-| Tier | Best for | Delegate to it when |
+| Tier (family) | Best for | Delegate to it when |
 |---|---|---|
-| Fast <!-- FILL IN: current model --> | Bulk mechanical work: exhaustive greps, file inventories, formatting | Output is large, judgment is minimal, correctness is cheap to verify |
-| Mid <!-- FILL IN --> | Routine implementation following an established pattern | The pattern exists in the repo and a review pass will catch mistakes |
-| Strong <!-- FILL IN --> | Complex implementation, debugging, refactors, code review | The task needs real reasoning within known constraints |
-| Frontier <!-- FILL IN --> | Architecture decisions, auth/security design, ambiguous tradeoffs | One-shot hard calls; the escalation target |
+| Fast <!-- FILL IN: family alias, e.g. haiku in Claude Code --> | Bulk mechanical work: exhaustive greps, file inventories, formatting | Output is large, judgment is minimal, correctness is cheap to verify |
+| Mid <!-- FILL IN: e.g. sonnet --> | Routine implementation following an established pattern | The pattern exists in the repo and a review pass will catch mistakes |
+| Strong <!-- FILL IN: e.g. opus --> | Complex implementation, debugging, refactors, code review | The task needs real reasoning within known constraints |
+| Frontier <!-- FILL IN: the top family, or a second model family --> | Architecture decisions, auth/security design, ambiguous tradeoffs | One-shot hard calls; the escalation target |
 
-Refresh the model names when the model family turns over; the tier structure is the stable part.
+**Name model families or the aliases your harness's subagent dispatch takes, never exact
+versions,** so a model release does not make this table stale. An exact version belongs only
+where something can check it: a pinned constant in code, a CI job's configuration, a scheduled
+job's settings. Moving one of those is a real change with its own review, not a doc refresh.
 
 ### External Tools and MCP Servers
 
@@ -397,6 +434,13 @@ identity from the folder name or from the copied `.trellis/source` alone.
 
 - Use bullet points for action items
 - Use Markdown: sections, tables, numbered lists where appropriate
+- **End a substantive run with four headings, in this order: Needs from you, Found, Changed,
+  Next.** *Needs from you* is the decisions, approvals or actions only the owner can take, each
+  saying where to take it; write "Nothing" rather than dropping the heading, because an absent
+  section and an empty one read the same. *Found* is what was learned, each claim at its
+  certainty level, ending with the `Cleared` line. *Changed* is what was edited, written, pushed
+  or deployed. *Next* is what happens next and who does it. A short answer to a short question
+  skips the headings.
 - When writing externally-facing content, align with the brand voice
   (<!-- FILL IN: link brand/voice doc when one exists -->)
 - When writing internal/working docs, prioritize clarity and speed

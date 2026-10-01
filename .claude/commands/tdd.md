@@ -7,7 +7,6 @@ context.
 
 Non-negotiables (details and anti-patterns in the doc):
 
-- NEVER write implementation before its test
 - ONE test at a time, vertical slices - never batch all tests then all code
 - Agree the seams (public boundaries under test) with the user before writing any test
 - Confirm red before implementing; confirm green before moving on; refactor only while green

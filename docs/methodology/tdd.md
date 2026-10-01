@@ -102,11 +102,30 @@ is level 1 and a mutated run is level 4.
   misbehavior is not the natural output on your fixture, a passing check proves the fixture,
   not the guard.
 
+- **Identical results across unrelated mutations mean the battery never ran** - in either
+  direction. Every mutant red with the same set, or every mutant green, is the signature of a
+  run that failed before reaching any case: the harness spawned the suite from an environment
+  missing a tool it needs (an interpreter, `jq`, a real `bash`), the suite exited with its
+  could-not-run code, and the runner counted "no failure lines" as "everything passed". Make the
+  runner refuse any run whose output lacks the suite's own summary line before it reads a single
+  result, restore the mutated file before deciding anything else, and check the tree is clean
+  after the battery. Run suites from the shell they target; use a scripting runtime only for the
+  file edit.
+
+## Wiring suites into CI
+
+- **A suite that exists but is not wired reads as coverage.** Docs describe what it proves and
+  nobody notices that nothing runs it. Discover suites by glob (`tests/**/*_test.*`,
+  `bin/tests/*.sh`) and keep an explicit skip list in which each entry says why it is skipped,
+  rather than a hand-kept list of suites to run: a new suite is then covered by default, and a
+  skip has to be argued.
+- **Do not assert on source text.** A test that greps a file for a string passes when the
+  string is present and the behavior is broken, and fails on a harmless rewording. Add a seam
+  and assert on behavior instead (see "This can't be unit tested" in `AGENTS.md`).
+
 ## Key Rules
 
-- NEVER write implementation before its test
 - ONE test at a time - never batch all tests then all code (see anti-pattern above)
-- If you catch yourself writing implementation first, STOP and write the test
 - One test file per source file, mirroring the source tree
 - Test behavior through public interfaces, not implementation details - a test that breaks on a
   pure refactor was testing the wrong thing
