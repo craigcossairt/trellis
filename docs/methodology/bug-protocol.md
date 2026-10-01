@@ -48,6 +48,9 @@ Run the verification in step 7 and show its result. A fix that has not been run 
 and the report should say so.
 
 (This section used to be a five-line NEVER list, and step 3 said "search once". In a blinded
-comparison, agents given either version all fixed the bug at its source, so the removed lines
-changed nothing measurable while costing context in every session that loaded them. The one
-line kept is the one that carries policy.)
+comparison run in a downstream project - 8 headless agent runs on one bug task, each version
+assigned at random, graded by a separate model against a rubric fixed before any run - both
+versions scored the same: every run fixed the bug at its source. The removed lines changed
+nothing measurable while costing context in every session that loaded them. It is one task and
+a small sample, so treat it as "no evidence the lines helped", not proof they never could. The
+one line kept is the one that carries policy.)
