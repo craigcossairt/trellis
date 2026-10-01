@@ -491,6 +491,19 @@ jobs:
           #     contains - "actions[bot]@users.noreply.github.com" sits inside
           #     "41898282+github-actions[bot]@users.noreply.github.com" - which
           #     a substring match waves through.
+          #
+          # Additional ledger, measured 2026-09-30 over 95 cases: the warning
+          # when --acquire runs from a checkout not on that branch (the id lands
+          # where nothing pushes it). Predicted = actual for every row:
+          #   never warn                                     4 -> 4 red
+          #   inverted branch compare                        5 -> 5 red
+          #   no warning on a fresh acquire                  3 -> 3 red
+          #   no warning on the re-acquire path              1 -> 1 red
+          #   drop the PROJECT_SESSION_ID fix from the text  1 -> 1 red
+          #   drop the line naming the stray id file         1 -> 1 red
+          #   no warning after a refused push that reads MINE  NO TEST
+          #     Reachable only through a push that fails while the lease
+          #     already names this session; the same race shims would drive it.
           bash bin/tests/test-claim-branch-lease.sh
 
       - name: Suite - push gate (pre-push hook + verify-green)
