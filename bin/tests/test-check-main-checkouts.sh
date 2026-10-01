@@ -193,7 +193,7 @@ expect_silent "two-parked: two clean checkouts are silent"
 fresh; sleep 1; touch "$R/tracked.txt"; before=$(cksum < "$R/.git/index"); run "$R"
 after=$(cksum < "$R/.git/index")
 if [ "$before" = "$after" ] && [ "$RC" -eq 0 ]; then pass=$((pass+1)); printf '  ok   %s\n' "read-only: the index is not rewritten"; else
-  fail=$((fail+1)); echo "  FAIL read-only: the index was rewritten (or exit $RC)"; fi
+  fail=$((fail+1)); echo "  FAIL read-only: the index is not rewritten: it was (or exit $RC)"; fi
 
 echo
 echo "check-main-checkouts: $pass passed, $fail failed"

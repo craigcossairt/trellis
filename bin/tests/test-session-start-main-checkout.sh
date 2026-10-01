@@ -89,14 +89,14 @@ printf 'x' > "$REPO/dirt.txt"
 must git -C "$REPO" config user.email someone@example.invalid
 run "$REPO"
 check "unmarked, off main, dirty, local identity: no heading" 0 "Main checkout"
-if [ ! -e "$TMP/plain/ran" ]; then ok "unmarked: the checker was never run"; else bad "unmarked: the checker ran"; fi
+if [ ! -e "$TMP/plain/ran" ]; then ok "unmarked: the checker was never run"; else bad "unmarked: the checker was never run: it ran"; fi
 
 make_fixture marked-false stub
 mark false
 must git -C "$REPO" switch -q -c feat
 run "$REPO"
 check "project.sharedCheckout=false: no heading" 0 "Main checkout"
-if [ ! -e "$TMP/marked-false/ran" ]; then ok "marked false: the checker was never run"; else bad "marked false: the checker ran"; fi
+if [ ! -e "$TMP/marked-false/ran" ]; then ok "marked false: the checker was never run"; else bad "marked false: the checker was never run: it ran"; fi
 
 echo "== opted in =="
 make_fixture parked; mark

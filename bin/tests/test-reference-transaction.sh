@@ -116,7 +116,7 @@ echo "inert unless enabled"
 make_repo unmarked main off
 run git -C "$REPO" switch -c feat
 allowed "unmarked checkout: switch -c goes through (every fresh copy)"
-if [ "$(head_of "$REPO")" = feat ]; then ok "unmarked checkout: HEAD really moved"; else bad "unmarked checkout: HEAD did not move"; fi
+if [ "$(head_of "$REPO")" = feat ]; then ok "unmarked checkout: HEAD really moved"; else bad "unmarked checkout: HEAD really moved: it did not"; fi
 
 make_repo falsemark main off
 must git -C "$REPO" config --local project.sharedCheckout false
@@ -142,7 +142,7 @@ must git -C "$INST" config core.autocrlf false
 must git -C "$INST" add -A
 must git -C "$INST" commit -q -m fixture
 must bash "$INST/bin/install-git-hooks.sh" "$INST"
-if [ "$(git -C "$INST" config --get core.hooksPath)" = .githooks ]; then ok "installer wires .githooks (so this hook is live)"; else bad "installer did not wire core.hooksPath"; fi
+if [ "$(git -C "$INST" config --get core.hooksPath)" = .githooks ]; then ok "installer wires .githooks (so this hook is live)"; else bad "installer wires .githooks (so this hook is live): it did not"; fi
 run git -C "$INST" switch -c feat
 allowed "installed but not enabled: switch goes through"
 run git -C "$INST" switch main
@@ -174,8 +174,8 @@ refused "switch to an existing branch" "$REPO" main "switch to 'other'"
 make_repo wtadd
 run git -C "$REPO" worktree add -q ../app-wt-x -b feat
 allowed "worktree add -b from the shared checkout"
-if [ "$(head_of "$REPO")" = main ]; then ok "worktree add left the shared checkout on main"; else bad "worktree add moved the shared checkout"; fi
-if [ "$(head_of "$REPO/../app-wt-x")" = feat ]; then ok "worktree add landed on feat"; else bad "worktree add did not land on feat"; fi
+if [ "$(head_of "$REPO")" = main ]; then ok "worktree add left the shared checkout on main"; else bad "worktree add left the shared checkout on main: it moved"; fi
+if [ "$(head_of "$REPO/../app-wt-x")" = feat ]; then ok "worktree add landed on feat"; else bad "worktree add landed on feat: it did not"; fi
 
 make_repo wtexisting
 must git -C "$REPO" branch other
@@ -217,13 +217,13 @@ must git -C "$TMP/rebasepull/other" commit -q --allow-empty -m theirs
 must git -C "$REPO" commit -q --allow-empty -m ours
 run git -C "$REPO" -c rebase.autoStash=false pull -q --rebase "$TMP/rebasepull/other" main
 allowed "pull --rebase on a diverged main (the rebase detaches HEAD)"
-if [ ! -d "$REPO/.git/rebase-merge" ] && [ "$(head_of "$REPO")" = main ]; then ok "pull --rebase finished on main"; else bad "pull --rebase left the checkout mid-rebase"; fi
+if [ ! -d "$REPO/.git/rebase-merge" ] && [ "$(head_of "$REPO")" = main ]; then ok "pull --rebase finished on main"; else bad "pull --rebase finished on main: left mid-rebase or off main"; fi
 
 make_repo backtomain
 hookless -C "$REPO" switch -q -c stray
 run git -C "$REPO" switch main
 allowed "returning to main from another branch"
-if [ "$(head_of "$REPO")" = main ]; then ok "switch main landed on main"; else bad "switch main did not land on main"; fi
+if [ "$(head_of "$REPO")" = main ]; then ok "switch main landed on main"; else bad "switch main landed on main: it did not"; fi
 
 make_repo bypass
 run env PROJECT_ALLOW_CHECKOUT=1 git -C "$REPO" switch -c feat
