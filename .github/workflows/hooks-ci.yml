@@ -576,6 +576,9 @@ jobs:
           #   check mode skips the inert test on the vouch   lease 0, gate 1 -> 1 red
           #     (a code commit vouched by its own exact sha satisfies the
           #     hook's string binding; only this check refuses it)
+          #
+          # CodeRabbit on PR #32, measured 2026-10-01 over 191 cases:
+          #   symbolic-ref --short compared (same-named tag) 2 -> 2 red
           bash bin/tests/test-claim-branch-lease.sh
 
       - name: Suite - push gate (pre-push hook + verify-green)

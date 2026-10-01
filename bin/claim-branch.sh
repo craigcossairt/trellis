@@ -422,8 +422,11 @@ lease_object_is_inert() {
 # the cautious answer costs one extra line and nothing else.
 warn_if_not_on_branch() {
   local here
-  here="$(git symbolic-ref --quiet --short HEAD 2>/dev/null)" || here=""
-  [ "$here" = "$1" ] && return 0
+  # Full ref, not --short: with a tag of the same name, --short answers
+  # heads/<branch> and this would warn on the right checkout.
+  here="$(git symbolic-ref --quiet HEAD 2>/dev/null)" || here=""
+  [ "$here" = "refs/heads/$1" ] && return 0
+  here="${here#refs/heads/}"
   echo "warning: this checkout is on '${here:-a detached or unreadable HEAD}', not '$1'." >&2
   echo "         The session id is recorded in this checkout, so a push of '$1'" >&2
   echo "         from its own worktree will be refused as another session's." >&2
@@ -1004,8 +1007,10 @@ fi
 # that is pushing its own branch, so HEAD names the branch there. A detached or
 # unreadable HEAD honours no file: no identity, so a live lease reads HELD.
 if [ -z "$ME" ]; then
-  here_branch="$(git symbolic-ref --quiet --short HEAD 2>/dev/null)" || here_branch=""
-  if [ -n "$here_branch" ] && [ "$here_branch" = "$BRANCH" ]; then
+  here_branch="$(git symbolic-ref --quiet HEAD 2>/dev/null)" || here_branch=""
+  # Full ref, not --short: with a tag of the same name, --short answers
+  # heads/<branch> and the holder's own push would be refused.
+  if [ -n "$here_branch" ] && [ "$here_branch" = "refs/heads/$BRANCH" ]; then
     ME="$(session_id_read)"
   fi
 fi

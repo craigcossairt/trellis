@@ -561,6 +561,14 @@ must git -C "$TMP/a" checkout -q feat/idfile
 OUT="$( ( cd "$TMP/a" && env -u PROJECT_SESSION_ID bash "$SCRIPT" feat/idfile --quiet-if-free --now "$NOW" ) 2>&1 )"; ACTUAL=$?
 want 0 "the id file alone unblocks the holder's own push (no --me, no env var)"
 
+# CodeRabbit on PR #32: with a TAG of the same name, `symbolic-ref --short`
+# answers heads/feat/idfile, so a short-name comparison ignored the holder's
+# own id file and refused its push. The comparison is on the full ref.
+must git -C "$TMP/a" tag feat/idfile
+OUT="$( ( cd "$TMP/a" && env -u PROJECT_SESSION_ID bash "$SCRIPT" feat/idfile --quiet-if-free --now "$NOW" ) 2>&1 )"; ACTUAL=$?
+want 0 "a tag named like the branch does not hide the holder's id file"
+must git -C "$TMP/a" tag -d feat/idfile
+
 # It must not unblock ANYONE - a different session's worktree has its own file.
 OTHER_WT="$TMP/b"
 OTHER_ID="$(git -C "$OTHER_WT" rev-parse --absolute-git-dir)/claim-session-id"
@@ -878,6 +886,16 @@ case "$OUT" in
 esac
 run B feat/wt-ok --me "$OTHER" --now "$LATER"
 want 1 "the lease taken from the worktree is held"
+# A tag of the same name makes `symbolic-ref --short` answer heads/feat/wt-ok;
+# the right checkout must still not be warned about (CodeRabbit on PR #32).
+must git -C "$TMP/a-wt" tag feat/wt-ok
+run AW --acquire feat/wt-ok --me "$ME" --harness claude-code --now "$NOW"
+want 0 "re-acquiring with a same-named tag present succeeds"
+case "$OUT" in
+  *"$WARN_TEXT"*) bad "a same-named tag does not trigger the wrong-checkout warning" "out: $OUT" ;;
+  *) ok "a same-named tag does not trigger the wrong-checkout warning" ;;
+esac
+must git -C "$TMP/a-wt" tag -d feat/wt-ok
 
 # The id the wrong-checkout acquire leaves behind must NOT make a no --me check
 # from that checkout read the lease as its own. That checkout is usually the
