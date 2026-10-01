@@ -38,10 +38,10 @@
 //
 // Known misses, all rare: a `<<` inside quotes or `$((x<<y))` is read as a
 // heredoc and swallows the lines after it; a line continuation between the
-// interpreter and its `<<` hides the interpreter; a flag that takes a
-// separate value (`python -X utf8 -`) reads the value as a script path; and a
-// project-specific wrapper script in front of the interpreter is not a known
-// runner - add its basename to RUNNERS below.
+// interpreter and its `<<` hides the interpreter; an option that takes a
+// separate value and is not listed in OPTIONS below reads the value as a
+// script path; and a project-specific wrapper script in front of the
+// interpreter is not a known runner - add its basename to RUNNERS below.
 //
 // A payload it cannot parse is reported, never silent and never blocking:
 // exit 0 with a systemMessage saying the check could not run. "Could not read
@@ -81,13 +81,57 @@ function simpleCommand(text) {
   return text.slice(cut + 1);
 }
 
+// Per interpreter: short option letters that supply the program (-c code,
+// -m module, -e code), short letters that take a value (the rest of the
+// cluster, or the next word when the letter ends it), long options that
+// supply the program, and long options whose value is the next word.
+const OPTIONS = {
+  python: { program: 'cm', valued: 'WX', long: [], longValued: ['--check-hash-based-pycs'] },
+  node: {
+    program: 'ep',
+    valued: 'r',
+    long: ['--eval', '--print'],
+    longValued: ['--require', '--import', '--loader', '--experimental-loader', '--input-type', '--env-file'],
+  },
+  bun: { program: 'ep', valued: 'r', long: ['--eval', '--print'], longValued: ['--preload', '--cwd', '--env-file'] },
+  // perl: -0 and -l take optional digits; -i, -x, -C, -d, -D, -I, -M, -m take
+  // the rest of the cluster.
+  perl: { program: 'eE', valued: 'ixCdDIMm', digits: '0l', long: [], longValued: [] },
+};
+
+// What option word `a` means for interpreter `family`: 'program' (it, or the
+// word after it, is the program), 'value' (the next word is its value), or
+// 'flag'.
+function optionKind(family, a) {
+  const o = OPTIONS[family];
+  if (a.startsWith('--')) {
+    const name = a.split('=')[0];
+    if (o.long.includes(name)) return 'program';
+    if (!a.includes('=') && o.longValued.includes(name)) return 'value';
+    return 'flag';
+  }
+  const cluster = a.slice(1);
+  for (let i = 0; i < cluster.length; i += 1) {
+    const ch = cluster[i];
+    if (o.program.includes(ch)) return 'program';
+    if (o.digits?.includes(ch)) {
+      // perl -0 takes octal digits or x and hex digits (-0x1e: that e is a
+      // digit, not -e); -l takes octal digits.
+      const m = cluster.slice(i + 1).match(ch === '0' ? /^(x[0-9a-fA-F]*|[0-7]*)/ : /^[0-7]*/);
+      i += m[0].length;
+      continue;
+    }
+    if (o.valued.includes(ch)) return i === cluster.length - 1 ? 'value' : 'flag';
+  }
+  return 'flag';
+}
+
 // The interpreter in `segment` that would read stdin as SOURCE, or null.
 // The command word is the first word that is not an assignment; only a known
 // runner may put the interpreter later. Stdin is source only when the first
-// non-flag argument is `-` or absent: `python3 x.py <<EOF` hands the body to
-// x.py as data, backslashes intact. A -c/-e/-p/-m program needs no special
-// case, because its argument (the code, or the module name) is that first
-// non-flag word.
+// non-option argument is `-` or absent: `python3 x.py <<EOF` hands the body
+// to x.py as data, backslashes intact. An option that supplies the program
+// (-c, -m, -e, --eval=..., a perl cluster such as -lne) makes the body data.
 function stdinInterpreter(segment) {
   const words = segment.trim().split(/[ \t]+/).filter(Boolean);
   const baseOf = (w) => w.split(/[/\\]/).pop().toLowerCase().replace(/\.exe$/, '');
@@ -106,8 +150,14 @@ function stdinInterpreter(segment) {
         continue;
       }
       if (a === '-') return base;
-      if (a.startsWith('-')) continue;
-      return null; // a script path, or a -c/-e/-m program's argument
+      if (a === '--') return args[j + 1] === undefined || args[j + 1] === '-' ? base : null;
+      if (a.startsWith('-')) {
+        const kind = optionKind(base.startsWith('py') ? 'python' : base, a);
+        if (kind === 'program') return null;
+        if (kind === 'value') j += 1;
+        continue;
+      }
+      return null; // a script path
     }
     return base;
   }
@@ -115,13 +165,17 @@ function stdinInterpreter(segment) {
 }
 
 // Which interpreter, if any, reads the body of the heredoc at `line[index]`.
+// Redirections may sit anywhere in a simple command (`<<EOF python3 -`,
+// `python3 <<EOF script.py`), so the heredoc's own command is the text before
+// it AND the text after it up to the next separator, with every heredoc
+// operator removed.
 function consumer(line, index, end) {
-  const own = stdinInterpreter(simpleCommand(line.slice(0, index)));
+  const rest = line.slice(end).replace(/\d*>&\d*-?|&>>?/g, (m) => ' '.repeat(m.length));
+  const parts = rest.split(/(\|\||&&|[|;&])/);
+  const own = stdinInterpreter(`${simpleCommand(line.slice(0, index))} ${parts[0]}`.replace(HEREDOC, ' '));
   if (own) return own;
   // `cat <<EOF | cat | python -`: the body flows down the pipeline, through
   // any number of stages, until a `;`, `&&`, `||` or `&` ends it.
-  const rest = line.slice(end).replace(/\d*>&\d*-?|&>>?/g, (m) => ' '.repeat(m.length));
-  const parts = rest.split(/(\|\||&&|[|;&])/);
   for (let p = 1; p < parts.length; p += 2) {
     if (parts[p] !== '|') return null;
     const hit = stdinInterpreter(parts[p + 1] ?? '');

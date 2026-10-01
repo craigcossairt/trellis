@@ -192,6 +192,47 @@ test('silent: python -m module over heredoc data', () => {
   expectSilent(`python3 -m json.tool <<'EOF'\n{"a":"b${BS}nc"}\nEOF`);
 });
 
+// A program option whose value is attached to it (`--eval=...`, `-c'...'`,
+// a perl cluster ending in e) supplies the program, so the heredoc is data.
+test('silent: node --eval= with the program attached', () => {
+  expectSilent(`node --eval='0' <<'EOF'\nx${BS}ny\nEOF`);
+});
+
+test('silent: python -c with the program attached', () => {
+  expectSilent(`python3 -c'import sys' <<'EOF'\nx${BS}ny\nEOF`);
+});
+
+test('silent: perl -lne cluster with the program attached', () => {
+  expectSilent(`perl -lne'print' <<'EOF'\nx${BS}ny\nEOF`);
+});
+
+test('silent: python -Bc cluster, program in the next word', () => {
+  expectSilent(`python3 -Bc 'import sys' <<'EOF'\nx${BS}ny\nEOF`);
+});
+
+// Redirections may come before or between the words of a command, so the
+// script path can follow the heredoc and the command word can follow it too.
+test('silent: script path after the heredoc operator', () => {
+  expectSilent(`python3 <<'EOF' script.py\nx${BS}ny\nEOF`);
+});
+
+test('warns: interpreter after the heredoc operator', () => {
+  expectWarn(`<<'EOF' python3 -\nprint('a${BS}nb')\nEOF`, 'python3');
+});
+
+test('warns: python -X utf8 - (option value is a separate word)', () => {
+  expectWarn(`python -X utf8 - <<'EOF'\nprint('a${BS}nb')\nEOF`, 'python');
+});
+
+test('warns: perl -n cluster with no program option', () => {
+  expectWarn(`perl -ln <<'EOF'\nprint "a${BS}n";\nEOF`, 'perl');
+});
+
+// The e in -0x1e is a hex digit of the record separator, not -e.
+test('warns: perl -0x1e (hex digit e is not a program option)', () => {
+  expectWarn(`perl -0x1e <<'EOF'\nprint "a${BS}n";\nEOF`, 'perl');
+});
+
 test('silent: || is not a pipe', () => {
   expectSilent(`cat <<'EOF' > f.txt || python3 -\na${BS}nb\nEOF`);
 });
