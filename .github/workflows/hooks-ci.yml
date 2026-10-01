@@ -569,6 +569,13 @@ jobs:
           #     The 'none wrote a lease' and follow-on cases carry the red.
           #   hook: lease-push binding removed (finding 4)   lease 0, gate 4 -> 4 red
           #   hook: deletion bound to local_sha              lease 0, gate 3 -> 3 red
+          #
+          # Grok review of those fixes, measured 2026-10-01 over 188 cases
+          # (push gate 59):
+          #   heads/ remotes/ tags/ shorthand not refused    4 -> 4 red
+          #   check mode skips the inert test on the vouch   lease 0, gate 1 -> 1 red
+          #     (a code commit vouched by its own exact sha satisfies the
+          #     hook's string binding; only this check refuses it)
           bash bin/tests/test-claim-branch-lease.sh
 
       - name: Suite - push gate (pre-push hook + verify-green)
