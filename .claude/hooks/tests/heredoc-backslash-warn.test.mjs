@@ -220,6 +220,18 @@ test('warns: interpreter after the heredoc operator', () => {
   expectWarn(`<<'EOF' python3 -\nprint('a${BS}nb')\nEOF`, 'python3');
 });
 
+test('warns: node -C / --inspect-port values are not script paths', () => {
+  expectWarn(`node -C development <<'EOF'\nconsole.log('a${BS}nb')\nEOF`, 'node');
+  expectWarn(`node --inspect-port 9229 <<'EOF'\nconsole.log('a${BS}nb')\nEOF`, 'node');
+});
+
+// The redirect skipper drops `> out.py`, `>>out.py` and `2>err.txt` after the
+// heredoc, so the body is still source (Grok review, rejected as a finding).
+test('warns: output redirect after the heredoc is not a script path', () => {
+  expectWarn(`python3 <<'EOF' > out.py\nprint('a${BS}nb')\nEOF`, 'python3');
+  expectWarn(`python3 <<'EOF' 2>err.txt\nprint('a${BS}nb')\nEOF`, 'python3');
+});
+
 test('warns: python -X utf8 - (option value is a separate word)', () => {
   expectWarn(`python -X utf8 - <<'EOF'\nprint('a${BS}nb')\nEOF`, 'python');
 });

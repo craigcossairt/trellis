@@ -89,9 +89,12 @@ const OPTIONS = {
   python: { program: 'cm', valued: 'WX', long: [], longValued: ['--check-hash-based-pycs'] },
   node: {
     program: 'ep',
-    valued: 'r',
+    valued: 'rC',
     long: ['--eval', '--print'],
-    longValued: ['--require', '--import', '--loader', '--experimental-loader', '--input-type', '--env-file'],
+    longValued: [
+      '--require', '--import', '--loader', '--experimental-loader', '--input-type', '--env-file',
+      '--conditions', '--inspect-port', '--title', '--redirect-warnings', '--watch-path',
+    ],
   },
   bun: { program: 'ep', valued: 'r', long: ['--eval', '--print'], longValued: ['--preload', '--cwd', '--env-file'] },
   // perl: -i, -x, -C, -d, -D, -I, -M, -m take the rest of the cluster. The

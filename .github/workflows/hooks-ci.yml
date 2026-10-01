@@ -662,7 +662,7 @@ jobs:
           # escapes meant for the output into real CR/NUL/backspace bytes. Data
           # for a script (`python3 x.py <<EOF`) stays silent; an unparseable
           # payload is reported, not silent. Every case runs the real hook with
-          # a PreToolUse payload on stdin. 55 cases.
+          # a PreToolUse payload on stdin. 57 cases.
           #
           # Mutation ledger, measured 2026-09-30, predicted -> observed red:
           #
@@ -690,6 +690,7 @@ jobs:
           #   --eval= read as a flag, not the program         1 -> 1
           #   words after the heredoc operator ignored        2 -> 2
           #   separate option value read as a script path     1 -> 1
+          #   node -C dropped from the valued letters         1 -> 1
           #
           # A perl -0/-l digit-skip branch was predicted 1 red and gave 0: the
           # x of -0x1e already takes the rest of the cluster, so the branch was
