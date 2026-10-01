@@ -557,6 +557,10 @@ jobs:
           # broken parser left them green. The fix for the second pair is to
           # assert the refusal MESSAGE, which is the only place those two
           # outcomes differ.
+          #
+          # Section K (2026-09-30, now 61 cases) runs the hook and its
+          # Cursor/Grok adapter by a RELATIVE path with CDPATH exported; its
+          # ledger is with the CDPATH checker step below.
           bash bin/tests/test-block-sensitive-files.sh
 
       - name: Suite - session-start hook
@@ -581,7 +585,62 @@ jobs:
           #   list cap tightened to 5                       2 -> 2 red
           #   installer self-heal removed                   1 -> 1 red
           #   closing marker removed                        3 -> 3 red
+          #
+          # Additional ledger, measured 2026-09-30 over 29 cases:
+          #   installer's self-dir cd loses its CDPATH guard 1 -> 1 red
+          #     Run relatively with CDPATH=. and no argument, the installer
+          #     could not resolve its own repo and wired nothing, exit 0.
           bash bin/tests/test-session-start.sh
+
+      - name: CDPATH-guarded self-location
+        run: |
+          # Hard gate, no budget: every cd into a script's own directory
+          # (`$(dirname ...)`, `${BASH_SOURCE[0]%/*}`, `${0%/*}`) carries an
+          # EMPTY CDPATH= prefix. Unguarded, a script run by a relative path
+          # with CDPATH exported captures its directory twice and loses every
+          # sibling. The Cursor/Grok adapter is invoked exactly that way and
+          # fails open on a missing target, so this let a .env write through.
+          # `bash bin/check-cdpath-cd.sh --list` prints every site.
+          bash bin/check-cdpath-cd.sh
+
+      - name: Suite - CDPATH checker
+        run: |
+          # Every case runs against a throwaway repo; scanning this tree only
+          # proves the tree is clean today. 37 cases.
+          #
+          # Mutation ledger, measured 2026-09-30 over 37 cases. Predicted case
+          # sets were named before each run:
+          #
+          #   a non-empty CDPATH prefix counts as a guard   1 -> 1 red
+          #   comment-line skip removed                     9 -> 9 red
+          #     Every fixture carries the checker, whose header quotes the
+          #     bad form, so all nine expected-clean cases go red.
+          #   per-line guard (any guard clears the line)    1 -> 1 red
+          #   cd options (-P) not recognized                2 -> 2 red
+          #   empty surface reads as clean                  1 -> 1 red
+          #   unreadable file ignored                       1 -> 1 red
+          #   marker inside quotes honoured (no stripping)  2 -> 2 red
+          #     This was 0 red at first, and the reason is worth keeping: the
+          #     fixture put the marker right after the opening quote, where the
+          #     "# must start a word" rule rejects it on its own. The marker now
+          #     follows a space inside the quotes.
+          #   # glued to a word honoured                    1 -> 1 red
+          #   opt-out reason not required                   1 -> 1 red
+          #   .githooks/* dropped from the surface          1 -> 1 red
+          #   ls-files failure not checked                  0 -> 0 red
+          #     Predicted 0: a failed listing is also an empty one, and the
+          #     empty-surface check refuses it. Recorded so the redundancy is
+          #     a known fact rather than a coverage gap found later.
+          #
+          # Hook ledger for the relative-invocation cases (sensitive-file and
+          # session-start suites), all predicted = actual:
+          #   block hook: drop the CDPATH='' prefix only     1 -> 1 red (decoy)
+          #   block hook: drop >/dev/null only               0 -> 0 red
+          #     Belt and braces: an empty CDPATH alone already stops the echo.
+          #   block hook: unguarded cd                       3 -> 3 red
+          #   adapter (run-claude-hook.sh): unguarded cd     1 -> 1 red
+          #   installer: unguarded cd                        1 -> 1 red
+          bash bin/tests/test-check-cdpath-cd.sh
 
       - name: JSON config is parseable
         run: |
@@ -907,6 +966,8 @@ jobs:
         run: bash bin/tests/test-block-sensitive-files.sh
       - name: Suite - session-start on Git for Windows
         run: bash bin/tests/test-session-start.sh
+      - name: Suite - CDPATH checker on Git for Windows
+        run: bash bin/tests/test-check-cdpath-cd.sh
       - name: Suite - trellis-survey on Git for Windows
         run: bash bin/tests/test-trellis-survey.sh
       # These three were missing here with no reason recorded. All three pass
