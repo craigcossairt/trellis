@@ -213,7 +213,7 @@ class CodexHooksTest(unittest.TestCase):
     def test_configured_context_commands_never_block(self):
         env = os.environ.copy()
         env.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
-        subprocess.run(["git", "init", "-q", str(self.root)], check=True, env=env, capture_output=True)
+        subprocess.run(["git", "init", "-q", str(self.root)], check=True, env=env, capture_output=True, timeout=15)
         self.hook.rename(self.hook.with_suffix(".disabled"))
         config = json.loads((ROOT / ".codex/hooks.json").read_text())
         for event in ("SessionStart", "UserPromptSubmit"):
@@ -237,7 +237,7 @@ class CodexHooksTest(unittest.TestCase):
     def test_configured_command_preserves_block_verdict_from_nested_cwd(self):
         env = os.environ.copy()
         env.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
-        subprocess.run(["git", "init", "-q", str(self.root)], check=True, env=env, capture_output=True)
+        subprocess.run(["git", "init", "-q", str(self.root)], check=True, env=env, capture_output=True, timeout=15)
         nested = self.root / "nested folder"
         nested.mkdir()
         config = json.loads((ROOT / ".codex/hooks.json").read_text())
