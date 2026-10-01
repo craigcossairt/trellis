@@ -76,7 +76,7 @@ If no, it goes in the issue tracker, not here.
 ├── .codex/                  # Codex hooks and payload adapter
 ├── .cursor/                 # Cursor adapter (rules + hooks + skill routers)
 ├── .grok/                   # Grok Build adapter (config + hooks)
-├── .githooks/               # real git pre-push hook (opt-in push gate)
+├── .githooks/               # real git hooks: pre-push (opt-in push gate), reference-transaction (opt-in)
 ├── bin/                     # verify-green, git-hook installer, harness hook adapter
 └── brain/                   # optional local knowledge base (see brain/README.md)
 ```

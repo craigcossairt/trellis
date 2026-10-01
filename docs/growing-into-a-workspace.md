@@ -88,10 +88,26 @@ session B mid-edit. The pattern that survives this:
   <branch>` - one worktree per task, one session per worktree, removed when the branch merges.
 - `git pull` on the main checkout is fine. `git switch`, `git checkout <branch>`, and
   `git reset --hard` there are not - each moves HEAD or rewrites the shared tree.
-- **Enforce it, don't just document it.** A PreToolUse hook that blocks branch-switching
-  commands in the main checkout turns the rule from etiquette into a guardrail - the same
-  fail-closed philosophy as the push gate, whose relative `core.hooksPath` already covers
-  every linked worktree.
+- **Enforce it, don't just document it** - and know what each enforcement point can see.
+  A PreToolUse hook that blocks branch-switching commands in the main checkout turns the rule
+  from etiquette into a guardrail, but it reads only the tool-call command line. **A guard that
+  reads the command line misses git run from a script file.** An agent that writes its git
+  steps into `fix.sh` and runs `bash fix.sh` shows the guard nothing but `bash fix.sh`, and can
+  leave the shared checkout on its own branch, full of dirty files, with a repo-local identity
+  it set on the way. Widening the pattern list does not close that; two things do:
+  - **Enforce inside git.** `.githooks/reference-transaction` runs inside git itself, so it sees
+    every caller - tool call, script file, terminal, any harness - and refuses a HEAD move off
+    the default branch in the main checkout while letting `git worktree add`, commits, pulls
+    and fetches through.
+  - **Check the end state.** `bin/check-main-checkouts.sh <dir>...` reports a main checkout that
+    is off its default branch, dirty, or carries a repo-local git identity, however it got that
+    way. `session-start.sh` runs it on every session once the checkout is marked.
+
+  Both are opt-in and do nothing until you mark the main checkout, in its own local config:
+  `git config --local project.sharedCheckout true` (plus `project.defaultBranch <name>` if the
+  default is not `main`). Details and the bypass: `.claude/hooks/README.md` § Optional hooks.
+  The push gate's relative `core.hooksPath` already covers every linked worktree, so the git
+  hook needs no extra wiring there.
 
 ## Migration steps (about an hour)
 

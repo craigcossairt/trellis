@@ -1,0 +1,151 @@
+#!/bin/sh
+# reference-transaction - refuse HEAD moves off the default branch in a SHARED
+# main checkout. OPT-IN: inert unless the checkout says it is shared.
+#
+# Why it exists. Once several agent sessions work one machine, the main
+# checkout is shared state and stays parked on the default branch; branch work
+# goes in linked worktrees (docs/growing-into-a-workspace.md). A PreToolUse
+# guard that blocks `git switch` on the agent's tool-call command line enforces
+# that only for commands it can read. An agent that writes its git steps into a
+# script file and runs the file gets straight past it. This hook runs inside
+# git itself, so it sees every caller - a tool call, a script file, a terminal,
+# any harness - before the move lands. bin/check-main-checkouts.sh reports the
+# end state afterwards, for whatever this hook lets through.
+#
+# Enable it in the main checkout only (local config, never tracked, so a fresh
+# copy or clone is never affected):
+#
+#     git config --local project.sharedCheckout true
+#     git config --local project.defaultBranch trunk   # only if not "main"
+#
+# Off again: git config --local --unset project.sharedCheckout
+#
+# Only LOCAL config counts. A global value would mark every repository on the
+# machine as shared, including ones that have nothing to do with this project.
+# Git also needs core.hooksPath=.githooks (bin/install-git-hooks.sh sets it);
+# with that set and the marker absent, this hook exits 0 for every transaction.
+#
+# Git calls this hook once per ref transaction with the state as $1 and one
+# "<old> <new> <refname>" line per ref on stdin. It refuses only when ALL of
+# these hold, in state "prepared" (the only state where a non-zero exit aborts):
+#
+#   1. a line's refname is exactly HEAD (never ORIG_HEAD or FETCH_HEAD, which
+#      reset and pull write) and its new value is not the default branch.
+#      A switch writes ref:refs/heads/<branch>, a detach writes an object id.
+#      Commits, fast-forward pulls and reset --soft on the default branch never
+#      write a HEAD line at all, so they never reach the checks below - and an
+#      unmarked checkout never pays for more than this scan and one config read.
+#   2. the checkout is marked: project.sharedCheckout=true in local config.
+#   3. this is the main checkout: the git dir IS the common dir. Linked
+#      worktrees share the local config (so they see the marker) but have
+#      their own git dir, and are where branch work belongs.
+#   4. the main checkout's OWN HEAD.lock is held. This is what tells a real
+#      switch from `git worktree add`: both run with the main checkout's git
+#      dir, cwd and environment, but worktree add updates the NEW worktree's
+#      HEAD, so git holds <common>/worktrees/<id>/HEAD.lock and leaves
+#      <common>/HEAD.lock alone. Measured on git 2.53.
+#
+# Fail policy: every read that cannot be made lets the transaction through.
+# This hook runs on every ref update in the checkout, including the `git pull`
+# every session depends on, so a hook that failed closed would stall them all.
+# check-main-checkouts.sh still reports whatever gets past.
+#
+# Known limits:
+#   - A blocked `git switch -c <b>` still creates <b>: git commits the branch in
+#     its own transaction before the HEAD update this hook refuses. Harmless,
+#     and the message says how to use it from a worktree.
+#   - Reftable repos have no HEAD.lock file, so the hook stands aside there.
+#   - On git older than 2.48 it stands aside (see the version check below), so
+#     a machine on an older or vendor git is covered only by
+#     check-main-checkouts.sh.
+#   - A rebase in progress may detach HEAD, so `git rebase` in the main
+#     checkout gets past this hook.
+#   - A worktree add racing a commit in the main checkout can see the commit's
+#     HEAD.lock and be refused. Retrying works.
+#
+# Bypass (the owner's call, not an agent's): PROJECT_ALLOW_CHECKOUT=1 in git's
+# environment. Unlike a PreToolUse guard, an inline prefix reaches this hook,
+# because git runs it.
+
+state=$1
+input=$(cat)
+
+[ "$state" = prepared ] || exit 0
+[ "${PROJECT_ALLOW_CHECKOUT:-}" = 1 ] && exit 0
+
+target=""
+nl='
+'
+IFS_SAVE=$IFS
+IFS=$nl
+set -f
+for line in $input; do
+  ref=${line##* }
+  [ "$ref" = HEAD ] || continue
+  rest=${line% *}
+  target=${rest#* }
+  break
+done
+IFS=$IFS_SAVE
+set +f
+[ -n "$target" ] || exit 0
+
+shared=$(git config --local --type=bool --get project.sharedCheckout 2>/dev/null) || exit 0
+[ "$shared" = true ] || exit 0
+
+default=$(git config --local --get project.defaultBranch 2>/dev/null) || default=main
+[ -n "$default" ] || default=main
+[ "$target" = "ref:refs/heads/$default" ] && exit 0
+
+gd=$(git rev-parse --absolute-git-dir 2>/dev/null) || exit 0
+common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || exit 0
+[ -n "$gd" ] && [ "$gd" = "$common" ] || exit 0
+
+top=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+
+[ -d "$common/reftable" ] && exit 0
+[ -e "$gd/HEAD.lock" ] || exit 0
+
+# A rebase in progress detaches HEAD as one of its own steps. Refusing that
+# step leaves the checkout stuck mid-rebase, which blocks every session, and
+# `git pull --rebase` on a diverged default branch reaches exactly that.
+{ [ -d "$gd/rebase-merge" ] || [ -d "$gd/rebase-apply" ]; } && exit 0
+
+# Git before 2.48 also hands this hook the log-only HEAD update of every
+# commit, reset and fast-forward (an object id on a HEAD line, with HEAD.lock
+# held), and before 2.46 a branch switch never reaches it at all. On such a git
+# the signals above mean something else, so stand aside.
+ver=$(git version 2>/dev/null) || exit 0
+ver=${ver#git version }
+major=${ver%%.*}; rest=${ver#*.}; minor=${rest%%.*}
+case "$major$minor" in *[!0-9]*|'') exit 0 ;; esac
+[ "$major" -gt 2 ] || { [ "$major" -eq 2 ] && [ "$minor" -ge 48 ]; } || exit 0
+
+case "$target" in
+  ref:refs/heads/*) what="switch to '${target#ref:refs/heads/}'" ;;
+  ref:*) what="point HEAD at '${target#ref:}'" ;;
+  *) what="detach HEAD at ${target}" ;;
+esac
+name=$(basename "$top")
+
+cat >&2 <<EOF
+BLOCKED (.githooks/reference-transaction): refusing to $what in the
+SHARED main checkout at $top.
+
+This checkout is marked shared (project.sharedCheckout=true), so every session
+uses it at once and it stays parked on '$default'. Moving its HEAD yanks the
+working tree out from under whoever is mid-task.
+
+Do branch work in a linked worktree instead:
+
+    git -C "$top" worktree add ../$name-wt-<task> -b <branch> $default
+
+If git already created the branch before this refusal, use it as it is:
+
+    git -C "$top" worktree add ../$name-wt-<task> <branch>
+
+'git switch $default', commits, pulls and worktree commands stay allowed.
+Bypass (the owner's call): PROJECT_ALLOW_CHECKOUT=1 in git's environment.
+Not a shared checkout after all: git config --local --unset project.sharedCheckout
+EOF
+exit 1

@@ -550,6 +550,44 @@ jobs:
           #   closing marker removed                        3 -> 3 red
           bash bin/tests/test-session-start.sh
 
+      # ---- optional, opt-in tooling --------------------------------------
+      # Each suite below guards something a fresh copy never enables. They
+      # still run on every pull request: an opt-in guard that rots while
+      # nobody has it switched on fails the first project that does. Each step
+      # is skipped only when its subject file has been pruned (SETUP.md § 5).
+
+      - name: Suite - reference-transaction hook (opt-in shared checkout)
+        if: hashFiles('.githooks/reference-transaction') != ''
+        run: |
+          # LEDGER_REFTX
+          bash bin/tests/test-reference-transaction.sh
+
+      - name: Suite - check-main-checkouts (opt-in shared checkout)
+        if: hashFiles('bin/check-main-checkouts.sh') != ''
+        run: |
+          # LEDGER_CMC
+          bash bin/tests/test-check-main-checkouts.sh
+
+      - name: Suite - session-start main-checkout section (opt-in)
+        if: hashFiles('bin/check-main-checkouts.sh') != ''
+        run: |
+          # LEDGER_SSMC
+          bash bin/tests/test-session-start-main-checkout.sh
+
+      # node is preinstalled on ubuntu-latest, but its version is the image's
+      # choice. The suite uses node:test and the hook uses optional chaining,
+      # so pin a major rather than inherit whatever the image ships.
+      - uses: actions/setup-node@v7
+        if: hashFiles('.claude/hooks/heredoc-backslash-warn.mjs') != ''
+        with:
+          node-version: '22'
+
+      - name: Suite - heredoc backslash warning (optional hook)
+        if: hashFiles('.claude/hooks/heredoc-backslash-warn.mjs') != ''
+        run: |
+          # LEDGER_HEREDOC
+          node --test .claude/hooks/tests/heredoc-backslash-warn.test.mjs
+
       - name: JSON config is parseable
         run: |
           # settings.json wires every hook in this repo, and hooks.json does the
@@ -847,3 +885,15 @@ jobs:
         run: bash bin/tests/test-session-start.sh
       - name: Suite - trellis-survey on Git for Windows
         run: bash bin/tests/test-trellis-survey.sh
+      # The shared-checkout pieces lean on path spellings (git's C:/ form
+      # beside Git Bash's /c/ form) and on HEAD.lock timing, both of which
+      # differ on Windows. Same suites, ledgers on the Linux steps above.
+      - name: Suite - reference-transaction hook on Git for Windows
+        if: hashFiles('.githooks/reference-transaction') != ''
+        run: bash bin/tests/test-reference-transaction.sh
+      - name: Suite - check-main-checkouts on Git for Windows
+        if: hashFiles('bin/check-main-checkouts.sh') != ''
+        run: bash bin/tests/test-check-main-checkouts.sh
+      - name: Suite - session-start main-checkout section on Git for Windows
+        if: hashFiles('bin/check-main-checkouts.sh') != ''
+        run: bash bin/tests/test-session-start-main-checkout.sh
