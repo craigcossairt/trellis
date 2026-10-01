@@ -830,6 +830,68 @@ case "$OUT" in
   *)                             ok "a failed push is NOT reported as another session's lease" ;;
 esac
 
+# --- acquiring outside the worktree that will push --------------------------
+# --acquire records the session id in the CURRENT checkout's git dir, and the
+# pre-push hook reads it from the worktree that pushes. Acquired from the main
+# checkout before `git worktree add`, the id lands where nothing ever pushes the
+# branch, and the worktree's own push is later refused as an intruder ("you
+# are: <no --me given>"). Warn, never refuse: reserving the name before the
+# worktree exists is legitimate, and the lease on the remote is real either way.
+WARN_TEXT="session id is recorded in this checkout"
+
+run A --acquire feat/wt-warn --me "$ME" --harness claude-code --now "$NOW"
+want 0 "acquiring from a checkout on another branch still succeeds"
+case "$OUT" in
+  *"$WARN_TEXT"*"'feat/wt-warn'"*) ok "it warns that the id lands in this checkout, naming the branch" ;;
+  *) bad "it warns that the id lands in this checkout, naming the branch" "out: $OUT" ;;
+esac
+case "$OUT" in
+  *"git worktree add"*"PROJECT_SESSION_ID"*) ok "the warning gives both fixes" ;;
+  *) bad "the warning gives both fixes" "out: $OUT" ;;
+esac
+run B feat/wt-warn --me "$OTHER" --now "$LATER"
+want 1 "the lease taken with a warning is really held"
+
+run A --acquire feat/wt-warn --me "$ME" --harness claude-code --now "$LATER"
+want 0 "re-acquiring my own lease from the wrong checkout succeeds"
+case "$OUT" in
+  *"$WARN_TEXT"*) ok "the re-acquire repair path warns too" ;;
+  *) bad "the re-acquire repair path warns too" "out: $OUT" ;;
+esac
+
+must git -C "$TMP/a" worktree add -q -b feat/wt-ok "$TMP/a-wt" main
+AW() { ( cd "$TMP/a-wt" && bash "$SCRIPT" "$@" ); }
+run AW --acquire feat/wt-ok --me "$ME" --harness claude-code --now "$NOW"
+want 0 "acquiring from the worktree on that branch succeeds"
+case "$OUT" in
+  *"$WARN_TEXT"*) bad "no warning from the worktree on that branch" "out: $OUT" ;;
+  *) ok "no warning from the worktree on that branch" ;;
+esac
+run B feat/wt-ok --me "$OTHER" --now "$LATER"
+want 1 "the lease taken from the worktree is held"
+
+# Following the whole warning must leave the first checkout safe. The id the
+# wrong-checkout acquire left behind makes a no --me check there read the lease
+# as its own (FREE on a held branch), so the warning names that file to remove.
+A_ID_FILE="$(git -C "$TMP/a" rev-parse --absolute-git-dir)/claim-session-id"
+run A --acquire feat/wt-follow --me "$ME" --harness claude-code --now "$NOW"
+want 0 "follow: acquire from the wrong checkout"
+case "$OUT" in
+  *"remove $A_ID_FILE"*) ok "the warning names the exact id file to remove" ;;
+  *) bad "the warning names the exact id file to remove" "want $A_ID_FILE in: $OUT" ;;
+esac
+OUT="$( ( cd "$TMP/a" && env -u PROJECT_SESSION_ID bash "$SCRIPT" feat/wt-follow --now "$LATER" ) 2>&1 )"; ACTUAL=$?
+want 0 "follow: before cleanup, a no --me check there reads the lease as its own"
+must git -C "$TMP/a" worktree add -q -b feat/wt-follow "$TMP/a-wt2" main
+AW2() { ( cd "$TMP/a-wt2" && bash "$SCRIPT" "$@" ); }
+run AW2 --acquire feat/wt-follow --me "$ME" --harness claude-code --now "$LATER"
+want 0 "follow: re-acquire from the worktree"
+must rm -f "$A_ID_FILE"
+OUT="$( ( cd "$TMP/a" && env -u PROJECT_SESSION_ID bash "$SCRIPT" feat/wt-follow --now "$LATER" ) 2>&1 )"; ACTUAL=$?
+want 1 "follow: after the named cleanup, a no --me check there sees CLAIMED"
+OUT="$( ( cd "$TMP/a-wt2" && env -u PROJECT_SESSION_ID bash "$SCRIPT" feat/wt-follow --now "$LATER" ) 2>&1 )"; ACTUAL=$?
+want 0 "follow: the worktree still recognizes its own lease"
+
 echo
 echo "passed $PASS, failed $FAIL"
 [ "$FAIL" -eq 0 ]

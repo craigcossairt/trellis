@@ -56,6 +56,15 @@ Acquire from the worktree you will actually work in: `--acquire` records the
 session id in that worktree's own git dir, which is how the hook tells your own
 push from an intruder's.
 
+If the checkout you run `--acquire` from is not on that branch, the script still
+takes the lease but prints `warning: this checkout is on '<x>', not '<branch>'`.
+That is the id landing in the wrong git dir, and the worktree's push will be
+refused as another session's. Re-run `--acquire` from inside the worktree:
+re-acquiring your own lease is idempotent and rewrites the id there. Then delete
+the stray `claim-session-id` file the warning names in the first checkout. Left
+in place, a later check there with no `--me` reads your live lease as its own
+and reports the branch free.
+
 ## Setup a Worktree
 
 ```bash

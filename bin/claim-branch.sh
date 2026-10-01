@@ -278,6 +278,35 @@ lease_object_is_inert() {
   return 0
 }
 
+# warn_if_not_on_branch <branch>
+# --acquire writes the session id into THIS checkout's git dir, and the pre-push
+# hook reads it from the worktree that pushes. Run from the main checkout before
+# `git worktree add`, the id lands where nothing will ever push the branch, and
+# the worktree's own push is later refused as an intruder ("you are: <no --me
+# given>"). In the project this template came from, that happened three times
+# in two days before this warning existed.
+#
+# WARN, never refuse: acquiring before the worktree exists is a legitimate way
+# to reserve the name, and the lease on the remote is real either way. A HEAD
+# that cannot be read (detached, or git failing) also warns; this is advice, so
+# the cautious answer costs one extra line and nothing else.
+warn_if_not_on_branch() {
+  local here
+  here="$(git symbolic-ref --quiet --short HEAD 2>/dev/null)" || here=""
+  [ "$here" = "$1" ] && return 0
+  echo "warning: this checkout is on '${here:-a detached or unreadable HEAD}', not '$1'." >&2
+  echo "         The session id is recorded in this checkout, so a push of '$1'" >&2
+  echo "         from its own worktree will be refused as another session's." >&2
+  echo "         Fix: git worktree add first, then re-run --acquire from inside it," >&2
+  echo "         or export PROJECT_SESSION_ID=<session-id> in the shell that pushes." >&2
+  # The id left here is the second hazard: a later check in this checkout with
+  # no --me reads it as its own identity, so any OTHER session checking from
+  # this (often shared) checkout sees this live lease as FREE. The write stays (a single-clone session acquires, then switches
+  # branch in place), so name the file to remove once the worktree holds the id.
+  echo "         Then remove $(session_id_path 2>/dev/null || echo '<this git dir>/claim-session-id')," >&2
+  echo "         or other sessions checking from here will read this lease as theirs." >&2
+}
+
 lease_marker() { # $1 session  $2 harness  $3 iso  $4 ttl-hours
   printf 'CLAIM harness=%s session=%s at=%s ttl=%sh\n' "$2" "$1" "$3" "$4"
 }
@@ -449,6 +478,7 @@ if [ "$MODE" != "check" ]; then
         echo "warning: could not record the session id, so your own pushes may" >&2
         echo "         still be refused; check that $(session_id_path 2>/dev/null) is writable" >&2
       fi
+      warn_if_not_on_branch "$BRANCH"
       sayf "lease on '$BRANCH' is already yours (session $ME)"; exit 0 ;;
     HELD) report_held "$HOLDER" "$HELD_AT"; exit 1 ;;
   esac
@@ -497,6 +527,7 @@ if [ "$MODE" != "check" ]; then
       echo "warning: acquired the lease but could not record the session id;" >&2
       echo "         your own pushes may be refused until you re-run --acquire" >&2
     fi
+    warn_if_not_on_branch "$BRANCH"
     sayf "acquired the lease on '$BRANCH' (session $ME, ttl ${TTL_H}h)"
     exit 0
   fi
@@ -536,6 +567,7 @@ if [ "$MODE" != "check" ]; then
         echo "warning: could not record the session id, so your own pushes may" >&2
         echo "         still be refused; check that $(session_id_path 2>/dev/null) is writable" >&2
       fi
+      warn_if_not_on_branch "$BRANCH"
       sayf "lease on '$BRANCH' is already yours (session $ME)"; exit 0 ;;
     *)
       echo "the lease push was refused but the ref reads as absent - refusing to guess" >&2
