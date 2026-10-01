@@ -162,10 +162,76 @@ class CodexHooksTest(unittest.TestCase):
         self.assertEqual((result.returncode, result.stdout), (0, ""), result.stderr)
 
     def test_retained_brain_with_missing_hook_reports_failure(self):
+        # Reported, never blocking: exit 2 on UserPromptSubmit blocks the
+        # user's prompt, so a broken context hook would stop every prompt.
         (self.root / "brain").mkdir()
         result = self.invoke("brain-enrich", None)
-        self.assertEqual(result.returncode, 2, result.stderr)
-        self.assertIn("missing canonical hook", result.stderr)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        note = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("missing canonical hook", note)
+
+    def test_context_hook_with_a_bad_cwd_falls_back_instead_of_blocking(self):
+        payload = {"hook_event_name": "SessionStart", "cwd": str(self.root / "no-such-dir")}
+        result = subprocess.run([sys.executable, str(self.hook), "session-start"], input=json.dumps(payload),
+                                text=True, capture_output=True, cwd=self.root, timeout=45)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("SESSION CONTEXT", json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"])
+
+    def test_unicode_line_separator_cannot_split_a_header(self):
+        # str.splitlines() also breaks on U+2028 and U+0085, so this header
+        # read as `docs/x` plus a body line here while Codex, splitting on
+        # newline only, reads one path that normalizes to .env.
+        (self.root / "docs").mkdir()
+        for sep in ("\u2028", "\x85"):
+            with self.subTest(sep=repr(sep)):
+                result = self.invoke("block-sensitive-files",
+                                     "*** Begin Patch\n*** Add File: docs/x" + sep + "+y/../../.env\n+T=1\n*** End Patch")
+                self.assertEqual(result.returncode, 2, result.stderr)
+
+    def test_crlf_patch_still_parses(self):
+        result = self.invoke("block-sensitive-files", "*** Begin Patch\r\n*** Add File: demo.txt\r\n+hello\r\n*** End Patch\r\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_launcher_timeouts_outlast_the_adapter(self):
+        # A launcher that times out before the adapter decides by its own
+        # failure path; for a context hook that used to mean exit 2.
+        import importlib.util, re
+        spec = importlib.util.spec_from_file_location("trellis_codex_hooks", HOOK)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        config = json.loads((ROOT / ".codex/hooks.json").read_text())
+        for groups in config["hooks"].values():
+            for handler in (h for g in groups for h in g["hooks"]):
+                operation = re.search(r'hooks\.py" (\S+)', handler["command"]).group(1)
+                # The last timeout= is the adapter call; the first is git's 3s.
+                launcher = int(re.findall(r"timeout=(\d+)", handler["commandWindows"])[-1])
+                inner = module.TIMEOUT.get(operation, module.DEFAULT_TIMEOUT)
+                with self.subTest(operation=operation):
+                    self.assertGreaterEqual(launcher, inner + 5)
+                    self.assertLess(launcher, handler["timeout"])
+
+    def test_configured_context_commands_never_block(self):
+        env = os.environ.copy()
+        env.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
+        subprocess.run(["git", "init", "-q", str(self.root)], check=True, env=env, capture_output=True)
+        self.hook.rename(self.hook.with_suffix(".disabled"))
+        config = json.loads((ROOT / ".codex/hooks.json").read_text())
+        for event in ("SessionStart", "UserPromptSubmit"):
+            handler = config["hooks"][event][0]["hooks"][0]
+            if os.name == "nt":
+                commands = [
+                    ["powershell", "-NoProfile", "-NonInteractive", "-Command", handler["commandWindows"]],
+                    '"' + os.environ.get("COMSPEC", "C:/Windows/System32/cmd.exe")
+                    + '" /D /S /C "' + handler["commandWindows"] + '"',
+                ]
+            else:
+                commands = [["bash", "-c", handler["command"]]]
+            for command in commands:
+                with self.subTest(event=event, shell=command[0]):
+                    result = subprocess.run(command, cwd=self.root, input=json.dumps({"cwd": str(self.root), "prompt": "p"}),
+                                            env=env, capture_output=True, text=True, timeout=60)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertIn("could not run", result.stdout)
 
 
     def test_configured_command_preserves_block_verdict_from_nested_cwd(self):
