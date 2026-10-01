@@ -418,6 +418,12 @@ jobs:
           # author path. They still assert the right verdict; they stopped
           # asserting it about the code they were written for. The shim case
           # that fails only the SECOND ls-remote is what covers it now.
+          #
+          # Re-measured 2026-09-30 after leases moved to refs/heads/claims/:
+          # the same mutation, 1 -> 1 red. The shim now fails the branch read by
+          # REF NAME. It used to count calls, and the lease read grew a second
+          # ls-remote (the probe of the old refs/claims/ namespace), so "the
+          # second call" stopped being the branch read.
           bash bin/tests/test-claim-branch.sh
 
       - name: Suite - claim-branch (lease)
@@ -504,6 +510,46 @@ jobs:
           #   no warning after a refused push that reads MINE  NO TEST
           #     Reachable only through a push that fails while the lease
           #     already names this session; the same race shims would drive it.
+          #
+          # Leases moved to refs/heads/claims/<b> with RELEASED markers, a
+          # claims/ name guard, --sweep and a could-not-tell probe of the old
+          # refs/claims/<b>. Ledger measured 2026-09-30 over 152 cases, with
+          # the push-gate suite (51 cases) run too where the real hook matters.
+          # predicted -> actual:
+          #   release deletes first, marker as fallback      1 -> 1 red
+          #   no deletion fallback                           2 -> 2 red
+          #   RELEASED read as HELD                          7 -> 10 red
+          #     The three extra are the awk cases: they run on a branch that
+          #     was released earlier, so a RELEASED-as-HELD lease stops them
+          #     before the counting path they test. Push gate: 1 -> 1.
+          #   no shape check on the object read              1 -> 1 red
+          #     0 red until the fixture changed: a code commit whose message is
+          #     "base" fails the marker parser on its own. The fixture's code
+          #     commit now carries a well-formed RELEASE message.
+          #   RELEASE+CLAIM ambiguity check removed          1 -> 1 red
+          #   claims/ flag not checked for inertness         2 -> 2 red (gate 1 -> 1)
+          #   claims/ guard removed                          6 -> 6 red (gate 5 -> 5)
+          #     The gate's set differed from the one predicted: --acquire still
+          #     passes (its ref does not exist yet when the hook runs), and the
+          #     RELEASE push is the one refused, as a branch with a foreign
+          #     author. Same count, different cases - the set is what counts.
+          #   lease push without PROJECT_CLAIM_LEASE_PUSH    0 -> 0 red (gate 3 -> 3)
+          #   lease push without PROJECT_SKIP_VERIFY         3 -> 2 red (gate 3 -> 3)
+          #     --release survives here: its marker push is refused by the
+          #     modelled gate, and the deletion fallback (no tree) goes through.
+          #   deletion vouches with an empty sha             0 -> 0 red (gate 2 -> 2)
+          #   old-namespace verdict removed                  7 -> 5 red
+          #     Two predicted cases stay green because the probe still RUNS;
+          #     only its verdict was removed, and the unreadable case fails in
+          #     the probe itself. That is the next row.
+          #   old-namespace probe failure read as absent     1 -> 1 red
+          #   author check: exact-match loop only removed    0 -> 0 red
+          #   author check: --heads pattern query only       0 -> 0 red
+          #     Each half of the exact-ref fix covers the other.
+          #   author check: both halves reverted             9 red (predicted >= 4)
+          #   RELEASED not CASed on acquire                  4 -> 4 red
+          #   sweep deletes live leases                      2 -> 2 red
+          #   sweep skip not counted as a failure            1 -> 1 red
           bash bin/tests/test-claim-branch-lease.sh
 
       - name: Suite - push gate (pre-push hook + verify-green)
@@ -533,6 +579,12 @@ jobs:
           # guard fails the predicted 5: assume-unchanged and skip-worktree
           # before checks, either flag introduced during checks, and a failed
           # index-flag scan. Verification leaves the user's flags unchanged.
+          #
+          # 51 cases since leases moved to refs/heads/claims/: the real hook
+          # passes --acquire, a RELEASED-marker --release (deletion refused)
+          # and a --sweep deletion, and refuses a code commit pushed to a
+          # claims/ name, with or without a bare PROJECT_CLAIM_LEASE_PUSH=1.
+          # Its mutation rows are in the lease step's ledger above.
           bash bin/tests/test-push-gate.sh
 
       - name: Suite - sensitive-file block hook
