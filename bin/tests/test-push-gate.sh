@@ -375,6 +375,42 @@ else bad 'a code push to refs/heads/claims/<x> is BLOCKED' "it went through: $OU
 OUT="$( PROJECT_CLAIM_LEASE_PUSH=1 git -C "$WORK" push -q origin HEAD:refs/heads/claims/sneaky2 2>&1 )"; RC=$?
 if [ "$RC" -ne 0 ]; then ok 'a bare PROJECT_CLAIM_LEASE_PUSH=1 does not open it'
 else bad 'a bare PROJECT_CLAIM_LEASE_PUSH=1 does not open it' "it went through: $OUT"; fi
+
+# --- the lease-push exemption is bound to the object pushed -----------------
+# Review finding on PR #32: the exemption used to check only that the variable
+# named SOME inert lease-shaped commit. Any such sha opened it, so
+#   PROJECT_CLAIM_LEASE_PUSH=<any inert sha> git push origin work:refs/heads/claims/x
+# put a verified CODE commit on a lease ref. The hook now requires the variable
+# to equal the sha being pushed (for a deletion, the sha being removed).
+EMPTY_TREE="$(git -C "$WORK" hash-object -t tree /dev/null)"
+INERT_A="$(git -C "$WORK" commit-tree "$EMPTY_TREE" -m 'CLAIM harness=t session=s1 at=2026-09-08T12:00:00Z ttl=4h')"
+INERT_B="$(git -C "$WORK" commit-tree "$EMPTY_TREE" -m 'CLAIM harness=t session=s2 at=2026-09-08T12:00:00Z ttl=4h')"
+[ -n "$INERT_A" ] && [ -n "$INERT_B" ] || { echo "FIXTURE FAILED: inert commits" >&2; exit 1; }
+# not-a-lease is still checked out and green-verified, so ONLY the binding can refuse it.
+OUT="$( PROJECT_CLAIM_LEASE_PUSH="$INERT_A" git -C "$WORK" push -q origin HEAD:refs/heads/claims/sneaky3 2>&1 )"; RC=$?
+if [ "$RC" -ne 0 ]; then ok 'an inert sha that is NOT the pushed object does not open claims/'
+else bad 'an inert sha that is NOT the pushed object does not open claims/' "it went through: $OUT"; fi
+case "$OUT" in
+  *"does not name the object being pushed"*) ok 'the mismatch block says the variable names a different object' ;;
+  *) bad 'the mismatch block says the variable names a different object' "got: $OUT" ;;
+esac
+# Two lease-shaped objects: pushing A while vouching for B is still a mismatch.
+OUT="$( PROJECT_SKIP_VERIFY=1 PROJECT_CLAIM_LEASE_PUSH="$INERT_B" git -C "$WORK" push -q origin "$INERT_A:refs/heads/claims/bound1" 2>&1 )"; RC=$?
+if [ "$RC" -ne 0 ]; then ok 'vouching for one inert object does not let another through'
+else bad 'vouching for one inert object does not let another through' "it went through: $OUT"; fi
+OUT="$( PROJECT_SKIP_VERIFY=1 PROJECT_CLAIM_LEASE_PUSH=1 git -C "$WORK" push -q origin "$INERT_A:refs/heads/claims/bound2" 2>&1 )"; RC=$?
+if [ "$RC" -ne 0 ]; then ok 'PROJECT_CLAIM_LEASE_PUSH=1 does not open even an inert push'
+else bad 'PROJECT_CLAIM_LEASE_PUSH=1 does not open even an inert push' "it went through: $OUT"; fi
+OUT="$( PROJECT_SKIP_VERIFY=1 PROJECT_CLAIM_LEASE_PUSH="$INERT_A" git -C "$WORK" push -q origin "$INERT_A:refs/heads/claims/bound3" 2>&1 )"; RC=$?
+if [ "$RC" -eq 0 ]; then ok 'the exact pushed inert sha is accepted'
+else bad 'the exact pushed inert sha is accepted' "exit $RC: $OUT"; fi
+# A deletion sends zeros as the local sha, so it is bound to the REMOTE sha.
+OUT="$( PROJECT_CLAIM_LEASE_PUSH="$INERT_B" git -C "$WORK" push -q origin ":refs/heads/claims/bound3" 2>&1 )"; RC=$?
+if [ "$RC" -ne 0 ]; then ok 'a deletion vouched by a different inert sha is refused'
+else bad 'a deletion vouched by a different inert sha is refused' "it went through: $OUT"; fi
+OUT="$( PROJECT_CLAIM_LEASE_PUSH="$INERT_A" git -C "$WORK" push -q origin ":refs/heads/claims/bound3" 2>&1 )"; RC=$?
+if [ "$RC" -eq 0 ]; then ok 'a deletion vouched by the exact remote sha is accepted'
+else bad 'a deletion vouched by the exact remote sha is accepted' "exit $RC: $OUT"; fi
 must git -C "$WORK" checkout -q main
 
 # --- could-not-tell must block ----------------------------------------------

@@ -550,6 +550,25 @@ jobs:
           #   RELEASED not CASed on acquire                  4 -> 4 red
           #   sweep deletes live leases                      2 -> 2 red
           #   sweep skip not counted as a failure            1 -> 1 red
+          #
+          # Review fixes on PR #32, measured 2026-10-01 over 184 cases (push
+          # gate 58 run against every mutation too; 0 red there unless noted).
+          # Each mutation ran in a scratch copy; diffs read before running.
+          #   id file honoured off-branch (finding 2)        1 -> 1 red
+          #   id file never honoured                         4 -> 4 red
+          #   refs/ prefix not refused (finding 3)           3 -> 3 red
+          #   <remote>/ prefix not refused                   3 -> 3 red
+          #   check-ref-format skipped                       1 -> 1 red
+          #   D/F clash not diagnosed (finding 5)            3 -> 3 red
+          #   branch 'claims' not refused                    3 -> 3 red
+          #   --me/--harness charset not checked (finding 7) 7 -> 7 red
+          #   RELEASE/CLAIM token not checked                4 -> 4 red
+          #     Two token cases (sess-CLAIM, harness RELEASE.1) stay green under
+          #     it, as predicted, for the wrong reason: the RELEASE lease the
+          #     first case wrote is unreadable, so they exit 2 from the reader.
+          #     The 'none wrote a lease' and follow-on cases carry the red.
+          #   hook: lease-push binding removed (finding 4)   lease 0, gate 4 -> 4 red
+          #   hook: deletion bound to local_sha              lease 0, gate 3 -> 3 red
           bash bin/tests/test-claim-branch-lease.sh
 
       - name: Suite - push gate (pre-push hook + verify-green)
@@ -584,6 +603,9 @@ jobs:
           # passes --acquire, a RELEASED-marker --release (deletion refused)
           # and a --sweep deletion, and refuses a code commit pushed to a
           # claims/ name, with or without a bare PROJECT_CLAIM_LEASE_PUSH=1.
+          # 58 since PR #32's review: PROJECT_CLAIM_LEASE_PUSH must equal the
+          # sha pushed (remote sha for a deletion); 4 of the 7 new cases were
+          # red before the fix (the =1 and exact-sha cases already held).
           # Its mutation rows are in the lease step's ledger above.
           bash bin/tests/test-push-gate.sh
 

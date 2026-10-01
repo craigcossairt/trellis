@@ -513,9 +513,13 @@ want 1 "PROJECT_SESSION_ID of another session: still CLAIMED"
 # to suppress the per-worktree file. Here the file says this worktree is the
 # holder and the environment lies that it is someone else; the file has to win,
 # or one global export would hand every session one identity.
+# The checkout is ON the branch: the file is honoured only there (see the
+# stray-file cases further down).
 printf '%s\n' "$ME" > "$SELF_ID"
+must git -C "$TMP/a" checkout -q feat/selfpush
 OUT="$( ( cd "$TMP/a" && PROJECT_SESSION_ID="$OTHER" bash "$SCRIPT" feat/selfpush --quiet-if-free --now "$NOW" ) 2>&1 )"; ACTUAL=$?
 want 0 "the id file outranks a stray machine-wide PROJECT_SESSION_ID"
+must git -C "$TMP/a" checkout -q main
 rm -f "$SELF_ID"
 
 # The fallback is CHECK-ONLY. Acquiring must keep naming itself explicitly, or
@@ -551,7 +555,9 @@ if [ "$(tr -d '[:space:]' < "$ID_FILE")" = "$ME" ]; then ok "the recorded id is 
 else bad "the recorded id is the acquiring session" "got '$(cat "$ID_FILE")'"; fi
 
 # THE case the whole mechanism exists for: the pre-push hook's exact
-# invocation, no --me and no env var, must not be blocked by my own lease.
+# invocation, no --me and no env var, must not be blocked by my own lease. The
+# push happens from the checkout that is ON the branch, so the check runs there.
+must git -C "$TMP/a" checkout -q feat/idfile
 OUT="$( ( cd "$TMP/a" && env -u PROJECT_SESSION_ID bash "$SCRIPT" feat/idfile --quiet-if-free --now "$NOW" ) 2>&1 )"; ACTUAL=$?
 want 0 "the id file alone unblocks the holder's own push (no --me, no env var)"
 
@@ -571,6 +577,7 @@ rm -f "$OTHER_ID"
 # --me still outranks the file.
 OUT="$( ( cd "$TMP/a" && env -u PROJECT_SESSION_ID bash "$SCRIPT" feat/idfile --me "$OTHER" --quiet-if-free --now "$NOW" ) 2>&1 )"; ACTUAL=$?
 want 1 "--me outranks the id file"
+must git -C "$TMP/a" checkout -q main
 
 # --release clears it, so the file never outlives the lease it vouches for.
 run A --release feat/idfile --me "$ME" --now "$NOW"
@@ -595,7 +602,9 @@ rm -f "$ID_FILE"
 # file would be visible to every worktree and two sessions would answer MINE to
 # each other's leases - the defect the lease exists to prevent, reintroduced by
 # a one-flag mistake.
-must git -C "$TMP/a" worktree add -q -b wt-session-a "$TMP/wt-a"
+# Worktree A is ON the leased branch, as a real session's worktree is: the id
+# file is honoured only by a checkout on the branch it was written for.
+must git -C "$TMP/a" worktree add -q -b feat/wtlease "$TMP/wt-a"
 must git -C "$TMP/a" worktree add -q -b wt-session-b "$TMP/wt-b"
 
 WT_A_ID="$(git -C "$TMP/wt-a" rev-parse --absolute-git-dir)/claim-session-id"
@@ -870,9 +879,11 @@ esac
 run B feat/wt-ok --me "$OTHER" --now "$LATER"
 want 1 "the lease taken from the worktree is held"
 
-# Following the whole warning must leave the first checkout safe. The id the
-# wrong-checkout acquire left behind makes a no --me check there read the lease
-# as its own (FREE on a held branch), so the warning names that file to remove.
+# The id the wrong-checkout acquire leaves behind must NOT make a no --me check
+# from that checkout read the lease as its own. That checkout is usually the
+# shared main checkout, where ANOTHER session may run the check: adopting the
+# file there answered FREE on a held branch (review finding on PR #32). So check
+# mode honours the file only when the checkout is on the branch being checked.
 A_ID_FILE="$(git -C "$TMP/a" rev-parse --absolute-git-dir)/claim-session-id"
 run A --acquire feat/wt-follow --me "$ME" --harness claude-code --now "$NOW"
 want 0 "follow: acquire from the wrong checkout"
@@ -881,7 +892,7 @@ case "$OUT" in
   *) bad "the warning names the exact id file to remove" "want $A_ID_FILE in: $OUT" ;;
 esac
 OUT="$( ( cd "$TMP/a" && env -u PROJECT_SESSION_ID bash "$SCRIPT" feat/wt-follow --now "$LATER" ) 2>&1 )"; ACTUAL=$?
-want 0 "follow: before cleanup, a no --me check there reads the lease as its own"
+want 1 "follow: a no --me check from a checkout NOT on the branch ignores its stray id file"
 must git -C "$TMP/a" worktree add -q -b feat/wt-follow "$TMP/a-wt2" main
 AW2() { ( cd "$TMP/a-wt2" && bash "$SCRIPT" "$@" ); }
 run AW2 --acquire feat/wt-follow --me "$ME" --harness claude-code --now "$LATER"
@@ -1162,6 +1173,105 @@ if [ -n "$(remote_sha refs/heads/claims/feat/sw-garb)" ]; then ok "sweep: never 
 else bad "sweep: never deletes what it cannot read" "deleted"; fi
 run P feat/x --sweep --now "$EXPIRED"
 want 2 "sweep: takes no branch argument"
+
+# --- the branch argument must be a plain branch name ------------------------
+# Review finding on PR #32: `refs/heads/held` and `origin/held` read as two
+# OTHER branches (leases at refs/heads/claims/refs/heads/held and
+# .../origin/held, neither of which exists), so both answered 0 for a branch
+# that was held. A name that can mean a held branch must never read as free.
+run Q --acquire held --me "$OTHER" --harness cursor --now "$NOW"
+want 0 "branch-arg fixture: another session holds 'held'"
+run P held --me "$ME" --now "$NOW"
+want 1 "branch-arg control: the plain name reads HELD"
+run P refs/heads/held --me "$ME" --now "$NOW"
+want 2 "branch-arg: refs/heads/<b> is 2, not free"
+case "$OUT" in
+  *"plain branch name"*"'held'"*) ok "branch-arg: the refusal names the form it wants" ;;
+  *) bad "branch-arg: the refusal names the form it wants" "out: $OUT" ;;
+esac
+run P origin/held --me "$ME" --now "$NOW"
+want 2 "branch-arg: <remote>/<b> is 2, not free"
+case "$OUT" in
+  *"remote 'origin'"*"'held'"*) ok "branch-arg: the refusal says origin is a remote and names the branch" ;;
+  *) bad "branch-arg: the refusal says origin is a remote and names the branch" "out: $OUT" ;;
+esac
+run P --acquire refs/heads/held --me "$ME" --now "$NOW"
+want 2 "branch-arg: --acquire refuses refs/heads/<b>"
+run P --release origin/held --me "$ME" --now "$NOW"
+want 2 "branch-arg: --release refuses <remote>/<b>"
+run P 'bad..name' --me "$ME" --now "$NOW"
+want 2 "branch-arg: a name git would refuse is 2"
+# A first segment that is NOT a configured remote is an ordinary branch name.
+run P upstream/feature --me "$ME" --now "$NOW"
+want 0 "branch-arg: <not-a-remote>/<b> is still an ordinary branch"
+
+# --- nested lease names collide (directory/file) ----------------------------
+# refs/heads/claims/feat5 and refs/heads/claims/feat5/x cannot both exist: git
+# stores refs as paths. After `--release feat5` leaves a RELEASED marker at the
+# first, `--acquire feat5/x` is refused by the remote. That stays 2 (no lease was
+# taken), but the message has to say WHY and how to clear it, not "the ref
+# reads absent".
+run P --acquire feat5 --me "$ME" --harness claude-code --now "$NOW"
+want 0 "nested fixture: acquire feat5"
+run P --release feat5 --me "$ME" --now "$NOW"
+want 0 "nested fixture: release feat5 (a RELEASED marker stays)"
+run P --acquire feat5/x --me "$ME" --harness claude-code --now "$NOW"
+want 2 "nested: acquiring feat5/x beside a feat5 marker is 2"
+case "$OUT" in
+  *"refs/heads/claims/feat5"*"--sweep"*) ok "nested: the message names the conflicting lease ref and --sweep" ;;
+  *) bad "nested: the message names the conflicting lease ref and --sweep" "out: $OUT" ;;
+esac
+case "$OUT" in
+  *"reads as absent"*) bad "nested: the message is not the misleading 'reads as absent'" "out: $OUT" ;;
+  *) ok "nested: the message is not the misleading 'reads as absent'" ;;
+esac
+# The other direction: a lease BELOW the name blocks the name itself.
+run P --acquire feat6/x --me "$ME" --harness claude-code --now "$NOW"
+want 0 "nested fixture: acquire feat6/x"
+run P --acquire feat6 --me "$ME" --harness claude-code --now "$NOW"
+want 2 "nested: acquiring feat6 above a feat6/x lease is 2"
+case "$OUT" in
+  *"refs/heads/claims/feat6/x"*) ok "nested: the message names the lease below" ;;
+  *) bad "nested: the message names the lease below" "out: $OUT" ;;
+esac
+# A branch called `claims` is the lease namespace's own directory.
+run P claims --me "$ME" --now "$NOW"
+want 2 "nested: a branch named 'claims' is refused in check mode"
+run P --acquire claims --me "$ME" --harness claude-code --now "$NOW"
+want 2 "nested: a branch named 'claims' is refused by --acquire"
+if [ -z "$(remote_sha refs/heads/claims/claims)" ]; then ok "nested: no lease was written for 'claims'"
+else bad "nested: no lease was written for 'claims'" "refs/heads/claims/claims exists"; fi
+
+# --- --me and --harness are restricted to [A-Za-z0-9._:-] ------------------
+# Both are written into the marker and read back by a regex. A space or '='
+# would let one value forge another field, and an id carrying RELEASE or CLAIM
+# as a whole token makes the body hold both markers - which every reader treats
+# as could-not-tell, and --sweep will not delete what it cannot read. One bad id
+# would have jammed the branch until someone deleted the ref by hand.
+run P --acquire feat7 --me 'a b' --harness x --now "$NOW"
+want 2 "ids: --me with a space is 2"
+case "$OUT" in
+  *"--me"*"A-Za-z0-9"*) ok "ids: the refusal names the flag and the allowed set" ;;
+  *) bad "ids: the refusal names the flag and the allowed set" "out: $OUT" ;;
+esac
+run P --acquire feat7 --me 'x' --harness 'h session=evil' --now "$NOW"
+want 2 "ids: --harness that could forge a session= field is 2"
+run P --acquire feat7 --me 'RELEASE' --harness x --now "$NOW"
+want 2 "ids: --me RELEASE is 2"
+run P --acquire feat7 --me 'sess-CLAIM' --harness x --now "$NOW"
+want 2 "ids: --me with CLAIM as a token is 2"
+run P --acquire feat7 --me 'x' --harness 'RELEASE.1' --now "$NOW"
+want 2 "ids: --harness with RELEASE as a token is 2"
+run P feat7 --me 'a;b' --now "$NOW"
+want 2 "ids: check mode validates --me too"
+run P --release feat7 --me 'a b' --now "$NOW"
+want 2 "ids: --release validates --me too"
+if [ -z "$(remote_sha refs/heads/claims/feat7)" ]; then ok "ids: none of the refused calls wrote a lease"
+else bad "ids: none of the refused calls wrote a lease" "refs/heads/claims/feat7 exists"; fi
+run P --acquire feat7 --me 'sess.1:a-b_RELEASED' --harness 'claude-code' --now "$NOW"
+want 0 "ids: an id from the allowed set (RELEASED is not the token RELEASE) acquires"
+run Q feat7 --me "$OTHER" --now "$NOW"
+want 1 "ids: and that lease reads HELD to another session, not could-not-tell"
 
 echo
 echo "passed $PASS, failed $FAIL"

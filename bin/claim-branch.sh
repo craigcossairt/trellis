@@ -54,7 +54,10 @@
 #        judged: every mode reports could-not-tell and names the command that
 #        removes it. Reading it as free could hand a held branch to a second
 #        session, and carrying a reader for a format no new copy ever writes
-#        would be permanent code for a one-time transition.
+#        would be permanent code for a one-time transition. The REVERSE is not
+#        covered and cannot be from here: an OLD copy reads only refs/claims/,
+#        so it sees a lease under refs/heads/claims/ as free and can take a
+#        second one. Upgrading is a cut-over (.claude/commands/worktree.md).
 #
 # CHECKING RESERVES NOTHING, AND THAT IS WHY THE LEASE EXISTS. Signal 1 only
 # reads the remote. Two sessions can both run the check, both get exit 0, and
@@ -173,6 +176,42 @@ if [ "${#TTL_H}" -gt 5 ] || [ "$TTL_H" -lt 1 ] || [ "$TTL_H" -gt 8760 ]; then
   echo "--ttl must be between 1 and 8760 hours" >&2; exit 2
 fi
 
+# --me and --harness are stamped into the lease marker and read back by regex
+# (lease_read_ref), so they are restricted to [A-Za-z0-9._:-]. Outside that set
+# a value can forge another field: a space or '=' lets `--harness 'h session=x'`
+# put a second session= in the body, and `--me 'a b'` is read back as session
+# `a`. Inside it, one more case: the markers are found as WHOLE TOKENS
+# (/\bRELEASE\b/, /\bCLAIM\b/), and perl's \b treats . : - as boundaries, so an
+# id like `x-CLAIM` or `RELEASE` would make the body carry both markers. Every
+# reader calls that could-not-tell and --sweep will not delete what it cannot
+# read, so one such id would jam the branch until someone deleted the ref by
+# hand. Refused here instead. (`RELEASED` is fine: D is a word character, so it
+# does not contain the token.)
+valid_id() { # $1 flag  $2 value
+  case "$2" in
+    ''|*[!A-Za-z0-9._:-]*)
+      echo "$1 '$2' must be one or more of [A-Za-z0-9._:-]" >&2
+      exit 2 ;;
+  esac
+  # Pure shell, no perl: a token is a maximal run of [A-Za-z0-9_], exactly what
+  # \b delimits inside the allowed set. (perl is probed further down; doing this
+  # with perl here would make a missing perl skip the check - fail open.)
+  local tok rest="$2"
+  while [ -n "$rest" ]; do
+    tok="${rest%%[.:-]*}"
+    case "$tok" in
+      RELEASE|CLAIM)
+        echo "$1 '$2' contains $tok as a whole token, which the lease marker parser" >&2
+        echo "would read as a second marker. Pick an id without it." >&2
+        exit 2 ;;
+    esac
+    [ "$tok" = "$rest" ] && break
+    rest="${rest#"$tok"?}"
+  done
+}
+[ -z "$ME" ] || valid_id --me "$ME"
+valid_id --harness "$HARNESS"
+
 say() { [ "$QUIET" -eq 1 ] || printf '%s\n' "$*"; }
 # sayf: chatter that only ever appears on a FREE verdict. Suppressed by
 # --quiet-if-free as well as --quiet. Every free-path message goes through this
@@ -186,6 +225,56 @@ else
   [ -n "$BRANCH" ] || { echo "usage: claim-branch.sh <branch> [--quiet|--quiet-if-free]" >&2; exit 2; }
 fi
 git rev-parse --git-dir >/dev/null 2>&1 || { echo "not a git repository" >&2; exit 2; }
+
+# --- the branch argument is a plain branch name -----------------------------
+#
+# Every lease path is built as refs/heads/claims/$BRANCH and the author check
+# asks for refs/heads/$BRANCH. So `refs/heads/held` and `origin/held` are read
+# as two OTHER branches, whose leases do not exist, and both answered 0 for a
+# branch that was held (review finding on PR #32). A spelling that can name a
+# held branch must never read as free, so the ambiguous forms are refused (2)
+# with the form wanted, in every mode that takes a branch.
+#
+# The <remote>/ test matches only CONFIGURED remote names. A branch whose first
+# segment merely looks like one (feature/x, upstream/x with no such remote) is
+# an ordinary name. The cost is that a real branch named after a remote
+# (origin/x as a local branch) cannot be claimed - rename it.
+#
+# check-ref-format --branch, and its output must equal the input: it also
+# EXPANDS @{-1} and friends to some other branch, which is the same ambiguity.
+want_plain_branch() { # $1 why
+  echo "'$BRANCH' is not a plain branch name ($1)." >&2
+  echo "Pass the branch the way 'git switch' takes it, e.g. '${2:-feature/x}'." >&2
+  exit 2
+}
+if [ "$MODE" != "sweep" ]; then
+  case "$BRANCH" in
+    refs/*) want_plain_branch "it is a full ref; give the name under refs/heads/" "${BRANCH#refs/heads/}" ;;
+  esac
+  if ! remotes="$(git remote 2>/dev/null)"; then
+    echo "could not list remotes, so cannot tell whether '$BRANCH' names a remote-tracking branch" >&2
+    exit 2
+  fi
+  while IFS= read -r r; do
+    [ -n "$r" ] || continue
+    case "$BRANCH" in
+      "$r"/*) want_plain_branch "'$r' is a configured remote, so this reads as remote '$r', branch '${BRANCH#"$r"/}'" "${BRANCH#"$r"/}" ;;
+    esac
+  done <<REMOTES_EOF
+$remotes
+REMOTES_EOF
+  if ! normalized="$(git check-ref-format --branch "$BRANCH" 2>/dev/null)" || [ "$normalized" != "$BRANCH" ]; then
+    want_plain_branch "git does not accept it as a branch name as written"
+  fi
+  # `claims` itself is the directory every lease lives in: refs/heads/claims
+  # cannot exist beside refs/heads/claims/<b>. (claims/<b> is handled below,
+  # where the lease push's own check-mode pass-through lives.)
+  if [ "$BRANCH" = "claims" ]; then
+    echo "'claims' is the lease namespace's own directory (refs/heads/claims/*), not a work branch." >&2
+    echo "Pick another name." >&2
+    exit 2
+  fi
+fi
 
 # LEASE_REF is the only lease ref this script reads, writes or releases.
 # OLD_LEASE_REF is only ever probed for existence (see the header).
@@ -336,12 +425,14 @@ warn_if_not_on_branch() {
   echo "         from its own worktree will be refused as another session's." >&2
   echo "         Fix: git worktree add first, then re-run --acquire from inside it," >&2
   echo "         or export PROJECT_SESSION_ID=<session-id> in the shell that pushes." >&2
-  # The id left here is the second hazard: a later check in this checkout with
-  # no --me reads it as its own identity, so any OTHER session checking from
-  # this (often shared) checkout sees this live lease as FREE. The write stays (a single-clone session acquires, then switches
-  # branch in place), so name the file to remove once the worktree holds the id.
-  echo "         Then remove $(session_id_path 2>/dev/null || echo '<this git dir>/claim-session-id')," >&2
-  echo "         or other sessions checking from here will read this lease as theirs." >&2
+  # The id left here is a smaller hazard than it was: check mode now honours it
+  # only from a checkout ON the branch, so another session checking from this
+  # (often shared) checkout no longer reads the lease as its own. It still
+  # would if this checkout later switched to the branch. The write stays (a
+  # single-clone session acquires, then switches branch in place), so name the
+  # file to remove once the worktree holds the id.
+  echo "         Then remove $(session_id_path 2>/dev/null || echo '<this git dir>/claim-session-id'):" >&2
+  echo "         if this checkout is ever switched to '$1', it would read this lease as its own." >&2
 }
 
 lease_marker() { # $1 session  $2 harness  $3 iso  $4 ttl-hours
@@ -576,6 +667,27 @@ release_ref() {
   push_lease_ref "$LEASE_REF" "$old" "$rel" && return 0
   push_lease_ref "$LEASE_REF" "$old" "" && return 0
   return 1
+}
+
+# lease_df_clash -> prints, one per line, every lease ref on origin that a ref
+# at $LEASE_REF would clash with as directory vs file: one ABOVE it (a lease on
+# a prefix of $BRANCH) or BELOW it (a lease on $BRANCH/<anything>). Non-zero
+# when origin could not be listed. Used only to EXPLAIN a refused push; the
+# verdict (2) does not depend on it.
+lease_df_clash() {
+  local listing _l_sha l_ref
+  listing="$(git ls-remote origin 'refs/heads/claims/*' 2>/dev/null)" || return 1
+  while IFS=$'\t' read -r _l_sha l_ref; do
+    [ -n "${l_ref:-}" ] || continue
+    case "$LEASE_REF" in
+      "$l_ref"/*) printf '%s\n' "$l_ref" ;;
+    esac
+    case "$l_ref" in
+      "$LEASE_REF"/*) printf '%s\n' "$l_ref" ;;
+    esac
+  done <<DF_EOF
+$listing
+DF_EOF
 }
 
 report_held() { # $1 session  $2 at
@@ -818,6 +930,19 @@ if [ "$MODE" != "check" ]; then
       warn_if_not_on_branch "$BRANCH"
       sayf "lease on '$BRANCH' is already yours (session $ME)"; exit 0 ;;
     *)
+      # Absent AND refused: the usual cause is a directory/file clash. git
+      # stores refs as paths, so refs/heads/claims/feat and
+      # refs/heads/claims/feat/x cannot both exist, and a RELEASED marker left
+      # by `--release feat` keeps the first one alive. Name it, and the fix.
+      if clash="$(lease_df_clash)" && [ -n "$clash" ]; then
+        echo "could not take the lease on '$BRANCH': git cannot store $LEASE_REF" >&2
+        echo "beside an existing lease ref on a nested name:" >&2
+        printf '%s\n' "$clash" | sed 's/^/    /' >&2
+        echo "If that lease is RELEASED or EXPIRED, run: bin/claim-branch.sh --sweep" >&2
+        echo "(from a session that can delete refs), then --acquire again. If it is live," >&2
+        echo "its holder has to release it first, or pick a branch name that does not nest." >&2
+        exit 2
+      fi
       echo "the lease push was refused but the ref reads as absent - refusing to guess" >&2
       exit 2
       ;;
@@ -838,7 +963,8 @@ fi
 #
 # So the check path resolves an identity when no --me is given:
 #
-#     --me  >  the per-worktree session-id file  >  $PROJECT_SESSION_ID
+#     --me  >  the per-worktree session-id file (only when HEAD is <branch>)
+#           >  $PROJECT_SESSION_ID
 #
 # THE FILE OUTRANKS THE ENV VAR, and that order is the safety property rather
 # than a preference. The env var is the source that CANNOT be made per-session;
@@ -864,7 +990,21 @@ fi
 # Deliberately CHECK-ONLY. --acquire and --release keep requiring an explicit
 # --me: taking a lease is a deliberate act that should name itself. The fallback
 # exists for the one caller that provably cannot pass a flag.
-[ -n "$ME" ] || ME="$(session_id_read)"
+#
+# AND ONLY FROM A CHECKOUT ON THIS BRANCH. The file records who acquired from
+# this checkout, not who is running the check. --acquire run from the shared
+# main checkout (before `git worktree add`) leaves the holder's id there, and
+# another session checking from that same checkout then adopted it and read
+# the live lease as MINE - exit 0 on a held branch (review finding on PR #32).
+# The caller the fallback exists for, the pre-push hook, runs in the worktree
+# that is pushing its own branch, so HEAD names the branch there. A detached or
+# unreadable HEAD honours no file: no identity, so a live lease reads HELD.
+if [ -z "$ME" ]; then
+  here_branch="$(git symbolic-ref --quiet --short HEAD 2>/dev/null)" || here_branch=""
+  if [ -n "$here_branch" ] && [ "$here_branch" = "$BRANCH" ]; then
+    ME="$(session_id_read)"
+  fi
+fi
 [ -n "$ME" ] || ME="${PROJECT_SESSION_ID:-}"
 check_state="$(lease_read_ref "$LEASE_REF")" || exit 2
 case "${check_state%%|*}" in

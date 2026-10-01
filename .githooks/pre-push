@@ -96,9 +96,9 @@ if [ "$GREEN_ON" -eq 1 ]; then
 fi
 
 blocked=0
-# shellcheck disable=SC2034  # remote_sha is consumed on purpose: `read` assigns the
-# rest of the line to its LAST variable, so dropping the fourth name would glue the
-# remote sha onto remote_ref and corrupt the branch name in the block message.
+# remote_sha must stay a separate name: `read` assigns the rest of the line to its
+# LAST variable, so dropping it would glue the remote sha onto remote_ref and corrupt
+# the branch name. It is also what a lease DELETION is bound to (see below).
 while read -r local_ref local_sha remote_ref remote_sha; do
   [ -n "${local_sha:-}" ] || continue
 
@@ -118,8 +118,29 @@ while read -r local_ref local_sha remote_ref remote_sha; do
   # Only refs/heads/*. A tag has no branch to judge. A lease ref
   # (refs/heads/claims/*) IS judged here, as "claims/<branch>": claim-branch.sh
   # refuses that name unless the push came from its own --acquire, --release or
-  # --sweep, which name the inert lease object in PROJECT_CLAIM_LEASE_PUSH. So
-  # this hook needs no special case, and a code branch cannot hide in there.
+  # --sweep, which name the inert lease object in PROJECT_CLAIM_LEASE_PUSH.
+  #
+  # BOUND TO THE OBJECT PUSHED. Check mode only sees a branch NAME, so all it
+  # can verify is that the variable names SOME parentless empty-tree commit. On
+  # its own that let `PROJECT_CLAIM_LEASE_PUSH=<any inert sha> git push origin
+  # work:refs/heads/claims/x` put a code commit on a lease ref. This hook is the
+  # one place that sees the sha actually being sent, so it pins the variable to
+  # it: local_sha for an update, remote_sha for a deletion (which sends zeros).
+  # claim-branch.sh sets it to exactly that sha for its one push.
+  case "$remote_ref" in
+    refs/heads/claims/*)
+      if [ "$CLAIM_ON" -eq 1 ]; then
+        if [ "$deleting" -eq 1 ]; then bound_sha="$remote_sha"; else bound_sha="$local_sha"; fi
+        if [ -z "${PROJECT_CLAIM_LEASE_PUSH:-}" ] || [ "$PROJECT_CLAIM_LEASE_PUSH" != "$bound_sha" ]; then
+          echo "BLOCKED: $remote_ref is a lease ref (refs/heads/claims/*), and PROJECT_CLAIM_LEASE_PUSH" >&2
+          echo "does not name the object being pushed there ($bound_sha). Lease refs are written" >&2
+          echo "only by bin/claim-branch.sh --acquire/--release/--sweep." >&2
+          blocked=1
+          continue
+        fi
+      fi
+      ;;
+  esac
   case "$remote_ref" in
     refs/heads/*)
       if [ "$CLAIM_ON" -eq 1 ]; then
