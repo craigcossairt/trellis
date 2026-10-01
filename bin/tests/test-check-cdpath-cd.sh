@@ -103,9 +103,12 @@ expect_rc 'pure comment line'                    0 "# e.g. X=\"\$(cd \"$D\" && p
 expect_rc 'opt-out with a reason'                0 "cd \"$Z\"  # cdpath-ok: CDPATH is unset at the top of this script"
 expect_rc 'opt-out WITHOUT a reason still fires' 1 "cd \"$Z\"  # cdpath-ok:"
 # The marker only counts as a real shell comment. Inside quoted text it is data,
-# and a line carrying it that way must not be waved through.
-expect_rc 'marker inside double quotes fires'    1 "echo \"# cdpath-ok: not a comment\"; cd \"$Z\""
-expect_rc 'marker inside single quotes fires'    1 "echo '# cdpath-ok: not a comment'; cd \"$Z\""
+# and a line carrying it that way must not be waved through. The marker sits
+# after a SPACE inside the quotes on purpose: directly after the opening quote
+# it fails the "# must start a word" rule on its own, and the case would pass
+# with the quote stripping removed (measured: 0 red until this was changed).
+expect_rc 'marker inside double quotes fires'    1 "echo \"see # cdpath-ok: not a comment\"; cd \"$Z\""
+expect_rc 'marker inside single quotes fires'    1 "echo 'see # cdpath-ok: not a comment'; cd \"$Z\""
 # `#` glued to a word is not a comment in shell either.
 expect_rc 'marker glued to a word fires'         1 "cd \"$Z\"#cdpath-ok: glued"
 
