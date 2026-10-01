@@ -14,6 +14,18 @@ TARGETS = {
     "format-on-edit": (".claude/hooks/format-on-edit.sh", "PostToolUse"),
     "brain-enrich": ("brain/hooks/context-enrichment.sh", "UserPromptSubmit"),
 }
+# Context hooks never block. Exit 2 on UserPromptSubmit blocks the user's
+# prompt, so a missing or slow context script would stop every prompt; a
+# failure is reported as context instead.
+CONTEXT = {"session-start", "brain-enrich"}
+# Seconds each canonical script may run. The launchers in hooks.json must
+# outlast these, or their own timeout decides the verdict.
+TIMEOUT = {"brain-enrich": 8, "session-start": 20}
+DEFAULT_TIMEOUT = 30
+# Characters str.splitlines() treats as line breaks that Codex does not (it
+# splits on newline). Left in, one splits a header in two here while Codex
+# reads a single path, so the policy checks a different file than Codex writes.
+LINE_BREAK_LOOKALIKES = "\x0b\x0c\x1c\x1d\x1e\x85  "
 
 def bash_path():
     configured = os.environ.get("TRELLIS_BASH")
@@ -38,7 +50,8 @@ def patch_paths(command, cwd):
     """Read operation headers, never text inside added/removed/context lines."""
     if not isinstance(command, str):
         raise ValueError("apply_patch requires tool_input.command")
-    lines = command.strip().splitlines()
+    # Split on newline only, as Codex does, and drop a CR left by a CRLF patch.
+    lines = [line[:-1] if line.endswith("\r") else line for line in command.strip().split("\n")]
     if len(lines) < 3 or lines[0].strip() != "*** Begin Patch" or lines[-1].strip() != "*** End Patch":
         raise ValueError("invalid patch envelope")
     paths = []
@@ -58,7 +71,7 @@ def patch_paths(command, cwd):
         if raw is not None:
             # Codex trims trailing header whitespace before interpreting paths.
             raw = raw.rstrip()
-            if not raw or any(ord(char) < 32 for char in raw):
+            if not raw or any(ord(char) < 32 or char in LINE_BREAK_LOOKALIKES for char in raw):
                 raise ValueError("empty or invalid patch target")
             named = (cwd / raw).absolute()
             if os.name == "nt" and any(
@@ -96,7 +109,7 @@ def run_target(operation, payload, cwd, bash):
     env["PATH"] = str(Path(bash).parent) + os.pathsep + env.get("PATH", "")
     result = subprocess.run(
         [bash, target.as_posix()], input=json.dumps(payload), text=True,
-        capture_output=True, cwd=cwd, env=env, timeout=30,
+        capture_output=True, cwd=cwd, env=env, timeout=TIMEOUT.get(operation, DEFAULT_TIMEOUT),
     )
     if result.returncode:
         raise ValueError(result.stderr.strip() or "canonical hook failed")
@@ -111,7 +124,11 @@ def main():
         raise ValueError("hook payload must be an object")
     cwd = Path(payload.get("cwd", str(ROOT))).resolve()
     if not cwd.is_relative_to(ROOT) or not cwd.is_dir():
-        raise ValueError("hook cwd must be inside this repository")
+        # A context hook reads no paths from the payload, so the root is a
+        # safe base; a file check resolves paths against cwd and must refuse.
+        if operation not in CONTEXT:
+            raise ValueError("hook cwd must be inside this repository")
+        cwd = ROOT
     bash = bash_path()
     if operation in ("block-sensitive-files", "format-on-edit"):
         if payload.get("tool_name") != "apply_patch":
@@ -138,5 +155,13 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except (ValueError, TypeError, OSError, subprocess.SubprocessError) as error:
+        operation = sys.argv[1] if len(sys.argv) == 2 else ""
+        if operation in CONTEXT:
+            # Visible, never blocking: see CONTEXT above.
+            print(json.dumps({"hookSpecificOutput": {
+                "hookEventName": TARGETS[operation][1],
+                "additionalContext": "NOTE: Trellis Codex " + operation + " hook could not run: " + str(error),
+            }}))
+            sys.exit(0)
         print("Trellis Codex hook: " + str(error), file=sys.stderr)
         sys.exit(2)

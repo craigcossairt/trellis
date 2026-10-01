@@ -290,6 +290,13 @@ jobs:
           # Configured-command cases exercise cmd and PowerShell. Structured
           # deny output preserves blocking through either outer shell, including
           # policy denial, missing hooks.py and a missing Git root.
+          # Ledger, measured 2026-09-30 (ported from a downstream review); each
+          # named case and only it went red:
+          #   splitlines() instead of a newline split -> separator case, 1 red
+          #   context errors exit 2 again             -> missing-brain case, 1 red
+          #   bad cwd raises for context hooks        -> bad-cwd case, 1 red
+          #   launcher drops its context branch       -> context-commands case, 1 red
+          #   brain timeout above its launcher's      -> timeout case, 1 red
           python -m unittest discover -s bin/tests -p test_codex_hooks.py -v
 
       # ---- behavioral suites ----------------------------------------------

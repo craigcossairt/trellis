@@ -50,6 +50,18 @@ as Codex does, checks both symlink spellings, and rejects ambiguous Windows
 filenames such as trailing dots and alternate data streams. Malformed or unknown patch input,
 missing policy scripts, and failed policy execution block the edit.
 
+The patch is split on newlines only, as Codex splits it. Python's
+`splitlines()` also breaks on U+2028, U+0085 and similar characters, which let
+one header read as two lines here while Codex read a single path; a header
+containing any of them is refused.
+
+The two context hooks never block. Exit 2 on `UserPromptSubmit` blocks the
+user's prompt, so a missing adapter, a missing Git root, a slow brain or a
+crashed context script is reported as a `NOTE:` in the session's context and
+the hook exits 0, on both the POSIX and the Windows command. Each launcher's
+timeout outlasts the script it runs, so the adapter, not the launcher's own
+timeout, decides the result.
+
 These edit hooks cover `apply_patch`. Shell commands and other tools can also
 write files and are outside this path check. Keep Codex's sandbox and permission
 controls enabled, and use the Git push gate and CI for verification. Do not
