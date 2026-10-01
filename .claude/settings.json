@@ -7,7 +7,7 @@
           {
             "type": "command",
             "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/session-start.sh\"",
-            "timeout": 10000
+            "timeout": 15
           }
         ]
       }
@@ -30,7 +30,7 @@
           {
             "type": "command",
             "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/format-on-edit.sh\"",
-            "timeout": 30000
+            "timeout": 30
           }
         ]
       }
@@ -41,7 +41,7 @@
           {
             "type": "command",
             "command": "bash \"$CLAUDE_PROJECT_DIR/brain/hooks/context-enrichment.sh\"",
-            "timeout": 5000
+            "timeout": 15
           }
         ]
       }

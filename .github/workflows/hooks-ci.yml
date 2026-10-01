@@ -602,6 +602,35 @@ jobs:
           done
           exit $fail
 
+      - name: Claude hook timeouts are in seconds
+        run: |
+          # Claude Code reads a hook's `timeout` in SECONDS. This template once
+          # shipped 10000 / 30000 / 5000 - millisecond values - so a hung hook
+          # could hold a session for hours instead of seconds, and nothing
+          # complained because a too-large timeout never fires. Claude Code's
+          # own default ceiling is 600s, so anything above it is a unit error.
+          [ -f .claude/settings.json ] || { echo "no .claude/settings.json - nothing to check"; exit 0; }
+          node -e '
+            const s = JSON.parse(require("fs").readFileSync(".claude/settings.json", "utf8"));
+            let seen = 0, bad = 0;
+            const walk = (o, p) => {
+              if (Array.isArray(o)) return o.forEach((v, i) => walk(v, p + "[" + i + "]"));
+              if (o && typeof o === "object") for (const [k, v] of Object.entries(o)) {
+                if (k === "timeout") {
+                  seen++;
+                  if (typeof v !== "number" || v > 600) {
+                    bad++;
+                    console.log("::error file=.claude/settings.json::" + p + " timeout " + v + " - Claude Code reads seconds; above 600 is almost certainly milliseconds");
+                  }
+                }
+                walk(v, p + "/" + k);
+              }
+            };
+            walk(s, "");
+            console.log("checked " + seen + " timeout(s), " + bad + " out of range");
+            process.exit(bad ? 1 : 0);
+          '
+
       - name: Suite - trellis-sync (classification + manifest)
         run: |
           # The whole value of sync is one distinction: "I changed this" vs
