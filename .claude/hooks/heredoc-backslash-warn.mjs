@@ -94,9 +94,10 @@ const OPTIONS = {
     longValued: ['--require', '--import', '--loader', '--experimental-loader', '--input-type', '--env-file'],
   },
   bun: { program: 'ep', valued: 'r', long: ['--eval', '--print'], longValued: ['--preload', '--cwd', '--env-file'] },
-  // perl: -0 and -l take optional digits; -i, -x, -C, -d, -D, -I, -M, -m take
-  // the rest of the cluster.
-  perl: { program: 'eE', valued: 'ixCdDIMm', digits: '0l', long: [], longValued: [] },
+  // perl: -i, -x, -C, -d, -D, -I, -M, -m take the rest of the cluster. The
+  // digits after -0 and -l are never e or E, except in -0x1e, where the x
+  // already swallows them.
+  perl: { program: 'eE', valued: 'ixCdDIMm', long: [], longValued: [] },
 };
 
 // What option word `a` means for interpreter `family`: 'program' (it, or the
@@ -114,13 +115,6 @@ function optionKind(family, a) {
   for (let i = 0; i < cluster.length; i += 1) {
     const ch = cluster[i];
     if (o.program.includes(ch)) return 'program';
-    if (o.digits?.includes(ch)) {
-      // perl -0 takes octal digits or x and hex digits (-0x1e: that e is a
-      // digit, not -e); -l takes octal digits.
-      const m = cluster.slice(i + 1).match(ch === '0' ? /^(x[0-9a-fA-F]*|[0-7]*)/ : /^[0-7]*/);
-      i += m[0].length;
-      continue;
-    }
     if (o.valued.includes(ch)) return i === cluster.length - 1 ? 'value' : 'flag';
   }
   return 'flag';

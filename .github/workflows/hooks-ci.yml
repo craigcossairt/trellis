@@ -662,7 +662,7 @@ jobs:
           # escapes meant for the output into real CR/NUL/backspace bytes. Data
           # for a script (`python3 x.py <<EOF`) stays silent; an unparseable
           # payload is reported, not silent. Every case runs the real hook with
-          # a PreToolUse payload on stdin. 46 cases.
+          # a PreToolUse payload on stdin. 55 cases.
           #
           # Mutation ledger, measured 2026-09-30, predicted -> observed red:
           #
@@ -683,7 +683,17 @@ jobs:
           #   `> file` target read as a script path           1 -> 1
           #   `bun run` not skipped                           1 -> 1
           #   could-not-run made blocking (exit 2)            3 -> 3
-          #   chr(92) remedy dropped from the message        22 -> 22
+          #   chr(92) remedy dropped from the message        26 -> 26
+          #
+          # Added 2026-10-01 (CodeRabbit on #31), predicted -> observed red:
+          #
+          #   --eval= read as a flag, not the program         1 -> 1
+          #   words after the heredoc operator ignored        2 -> 2
+          #   separate option value read as a script path     1 -> 1
+          #
+          # A perl -0/-l digit-skip branch was predicted 1 red and gave 0: the
+          # x of -0x1e already takes the rest of the cluster, so the branch was
+          # dead and was removed rather than kept untested.
           node --test .claude/hooks/tests/heredoc-backslash-warn.test.mjs
 
       - name: JSON config is parseable
