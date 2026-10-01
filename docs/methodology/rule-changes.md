@@ -10,9 +10,9 @@ prove a behavioral edit with a blinded comparison before you ship it.
 The intuition is that a rule file is mostly history - dates, incident notes, "added after X" -
 and that moving it out is the big win. Measure it before you act on that. In the project this
 template came from, a trim was planned on exactly that assumption; moving every history and
-provenance sentence out of the two root rule files saved **about 5%**, because an earlier pass
-had already taken most of it and what remained was live rule text. The same session cut nearly
-**19%** by a different move.
+provenance sentence out of the two root rule files saved **5.3%** of their bytes, because an
+earlier pass had already taken most of it and what remained was live rule text. The same session
+cut **18.6%** by a different move.
 
 - **Count bytes first.** `wc -c AGENTS.md CLAUDE.md` before and after, in the commit message.
   A trim with no number cannot be compared with the next one.
@@ -54,6 +54,10 @@ protocol or a rule file:
   if you catch yourself, STOP" kind tied exactly across 16 runs, and were cut.
 - **An addition, or a rewrite meant to change behavior, must show an effect.** If it ties, drop
   it: a rule that changes nothing measurable is cost with no benefit, however right it reads.
+
+A removal ships on any tie, including a ceiling tie where every run passes on both arms: the
+burden of proof sits with the text that costs context in every session, so "could not show a
+difference" is enough to cut it. A ceiling tie only blocks claiming that an addition works.
 
 The comparisons also surface findings worth more than the edit itself. In one round, every run
 of a smaller model stopped to ask for plan approval when run unattended, under a "plan first,
