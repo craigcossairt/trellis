@@ -1201,6 +1201,18 @@ run P --release origin/held --me "$ME" --now "$NOW"
 want 2 "branch-arg: --release refuses <remote>/<b>"
 run P 'bad..name' --me "$ME" --now "$NOW"
 want 2 "branch-arg: a name git would refuse is 2"
+# Grok review of the fix: git's own shorthands (gitrevisions tries refs/<name>)
+# passed every check above and read the held branch as free.
+run P heads/held --me "$ME" --now "$NOW"
+want 2 "branch-arg: heads/<b> is 2, not free"
+case "$OUT" in
+  *"plain branch name"*"'held'"*) ok "branch-arg: the heads/ refusal names the form it wants" ;;
+  *) bad "branch-arg: the heads/ refusal names the form it wants" "out: $OUT" ;;
+esac
+run P remotes/origin/held --me "$ME" --now "$NOW"
+want 2 "branch-arg: remotes/<r>/<b> is 2, not free"
+run P tags/held --me "$ME" --now "$NOW"
+want 2 "branch-arg: tags/<b> is 2, not free"
 # A first segment that is NOT a configured remote is an ordinary branch name.
 run P upstream/feature --me "$ME" --now "$NOW"
 want 0 "branch-arg: <not-a-remote>/<b> is still an ordinary branch"

@@ -394,6 +394,13 @@ case "$OUT" in
   *"does not name the object being pushed"*) ok 'the mismatch block says the variable names a different object' ;;
   *) bad 'the mismatch block says the variable names a different object' "got: $OUT" ;;
 esac
+# Grok review: the binding is string equality, so vouching for the CODE commit
+# itself satisfies it. Only claim-branch.sh's inertness check (check mode, the
+# lease_object_is_inert test on the variable) can refuse that.
+CODE_SHA="$(git -C "$WORK" rev-parse HEAD)"
+OUT="$( PROJECT_CLAIM_LEASE_PUSH="$CODE_SHA" git -C "$WORK" push -q origin HEAD:refs/heads/claims/sneaky4 2>&1 )"; RC=$?
+if [ "$RC" -ne 0 ]; then ok 'a code commit vouched by its own exact sha does not open claims/'
+else bad 'a code commit vouched by its own exact sha does not open claims/' "it went through: $OUT"; fi
 # Two lease-shaped objects: pushing A while vouching for B is still a mismatch.
 OUT="$( PROJECT_SKIP_VERIFY=1 PROJECT_CLAIM_LEASE_PUSH="$INERT_B" git -C "$WORK" push -q origin "$INERT_A:refs/heads/claims/bound1" 2>&1 )"; RC=$?
 if [ "$RC" -ne 0 ]; then ok 'vouching for one inert object does not let another through'

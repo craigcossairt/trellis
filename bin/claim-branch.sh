@@ -250,6 +250,10 @@ want_plain_branch() { # $1 why
 if [ "$MODE" != "sweep" ]; then
   case "$BRANCH" in
     refs/*) want_plain_branch "it is a full ref; give the name under refs/heads/" "${BRANCH#refs/heads/}" ;;
+    # git resolves heads/x, remotes/<r>/x and tags/x by trying refs/<name>, so
+    # each names some other ref than the lease would be keyed on.
+    heads/*|remotes/*|tags/*)
+      want_plain_branch "git reads '${BRANCH%%/*}/' as refs/${BRANCH%%/*}/, a shorthand for another ref" "${BRANCH##*/}" ;;
   esac
   if ! remotes="$(git remote 2>/dev/null)"; then
     echo "could not list remotes, so cannot tell whether '$BRANCH' names a remote-tracking branch" >&2
