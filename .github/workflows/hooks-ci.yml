@@ -54,6 +54,33 @@ jobs:
           # it costs nothing here.
           persist-credentials: false
 
+      - name: Every suite is wired
+        run: |
+          # A suite that exists but that nothing runs reads as coverage: its docs
+          # say what it proves and nobody notices CI never calls it. Named steps
+          # below carry the mutation ledgers, so this compares the suite files on
+          # disk with this workflow and fails on one it never mentions. A skip
+          # must be argued: add `name: reason` to SKIP. A glob that matches
+          # nothing is could-not-run, never "all wired".
+          SKIP=""
+          found=0; missing=0
+          for f in bin/tests/test-*.sh bin/tests/test_*.py; do
+            [ -e "$f" ] || continue
+            found=$((found + 1))
+            name=$(basename "$f")
+            case "$SKIP" in *"$name:"*) continue ;; esac
+            if ! grep -qF "$name" .github/workflows/hooks-ci.yml; then
+              echo "::error file=$f::$name is not run by hooks CI and not on the SKIP list with a reason"
+              missing=$((missing + 1))
+            fi
+          done
+          if [ "$found" -eq 0 ]; then
+            echo "::error::no suite files matched bin/tests/test-* - this check could not run"
+            exit 1
+          fi
+          [ "$missing" -eq 0 ] || exit 1
+          echo "every suite is wired: $found suite file(s)"
+
       - uses: actions/setup-python@v7
         if: hashFiles('.agents/**', '.codex/**') != ''
         with:
@@ -840,3 +867,12 @@ jobs:
         run: bash bin/tests/test-session-start.sh
       - name: Suite - trellis-survey on Git for Windows
         run: bash bin/tests/test-trellis-survey.sh
+      # These three were missing here with no reason recorded. All three pass
+      # on Git for Windows (measured 2026-09-30: 18, 80 and 87 cases), so the
+      # gap was an unargued skip, not a platform limit.
+      - name: Suite - claim-branch on Git for Windows
+        run: bash bin/tests/test-claim-branch.sh
+      - name: Suite - claim-branch lease on Git for Windows
+        run: bash bin/tests/test-claim-branch-lease.sh
+      - name: Suite - trellis-sync on Git for Windows
+        run: bash bin/tests/test-trellis-sync.sh

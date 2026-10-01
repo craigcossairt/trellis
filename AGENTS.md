@@ -147,20 +147,27 @@ format; delete the adapter and the rule goes with it.
   See `.claude/commands/worktree.md`.
 - **Plan first for non-trivial tasks** (3+ steps or architectural decisions) - write the plan,
   confirm before implementing. If something goes wrong mid-implementation, STOP and re-plan.
-  **A run with nobody to confirm with** (a scheduled job, a headless `-p` run, CI, a subagent)
-  writes the plan into its output and carries it out, stopping only where its own prompt or a
-  hard rule says to. Waiting for an approval that cannot arrive delivers nothing: in a measured
-  comparison, every run of a smaller model stopped at this line and delivered no work.
+  **A run with nobody to confirm with** (a scheduled job, a headless run such as `claude -p` or
+  `codex exec`, CI, a subagent) writes the plan into its output and carries it out, stopping
+  only where its own prompt or one of the named stops below says to. Waiting for an approval
+  that cannot arrive delivers nothing: in a measured comparison, every run of a smaller model
+  stopped at this line and delivered no work. **Stops (2) and (3) always bind such a run, and a
+  plan it wrote itself is never the approval that lifts stop (3).** At such a stop it writes up
+  what it would do and ends, rather than doing it. A subagent returns at any stop (see
+  Delegation).
 - **Once the plan is approved, keep going until a named stop.** A step that does not need the
   owner's input is not a reason to end the turn: put the status note in the same message as the
   next action. Do not end on a summary that names the next step without taking it, an offer to
   continue, or a list of options that blocks nothing. The named stops are: (1) plan approval on
-  non-trivial work; (2) a production go-signal; (3) a destructive or outward-facing action that
-  neither the approved plan nor a documented protocol calls for (deleting data, force-pushing,
+  non-trivial work; (2) a production go-signal - an explicit instruction from the owner naming
+  the target, before anything that deploys to production or matches a one-way trigger in
+  `.github/pull_request_template.md`; (3) a destructive or outward-facing action that neither
+  the owner-approved plan nor a documented protocol calls for (deleting data, force-pushing,
   sending a message on someone's behalf); (4) a claim check that returns CLAIMED or
   could-not-tell; (5) a product or judgment fork only the owner can settle; (6) the plan stops
   being true - a failure you cannot explain, or a result that changes the approach. Steps a
-  protocol already requires (the claim and lease, commits, push, PR) are not stops.
+  protocol already requires (the claim and lease, commits, push, opening a draft PR) are not
+  stops.
 - **Verify before marking done** - never claim a task is complete without proving it works. Run
   tests, check logs, demonstrate correctness.
   If the push gate is configured (`bin/verify-green.sh`), record the proof with
@@ -184,7 +191,8 @@ format; delete the adapter and the rule goes with it.
     things run (microtasks, teardown, unmount), and follow what a symbol search cannot see:
     the JSON an endpoint returns, a database column, a wire format another language reads, a
     feature flag, code three hops downstream.
-  - **Report what you cleared, not only what you found.** End with a `Cleared` line naming what
+  - **Report what you cleared, not only what you found.** Include a `Cleared` line (at the end
+    of the *Found* section, see Formatting Preferences) naming what
     you checked and why it was fine. A findings-only writeup is indistinguishable from a shallow
     one, and gives a reviewer nothing to re-check.
 
@@ -218,7 +226,9 @@ format; delete the adapter and the rule goes with it.
   blind spots and is the most expensive one to spend on reviewing. Verify each finding, then
   gather every review finding and every CI failure and fix them in ONE push: each push reruns
   the whole CI matrix and, where reviews are budgeted, may spend a review on a diff you are
-  about to change again.
+  about to change again. This fresh-context pass is the floor for every PR; it does not
+  replace the different-model review above for the work that bullet names, and a diff that
+  touches auth, permissions or secrets also gets `.claude/agents/security-reviewer.md`.
 - **Show the change: before and after on every PR with a visible change.** Visible means a UI,
   a page, or output a person sees (an email, a notification, an alert). Capture *before* from
   the untouched tree before the first edit and *after* from the branch, on the same screen,
@@ -396,7 +406,8 @@ identity from the folder name or from the copied `.trellis/source` alone.
 **After every completed task (feature, bug fix, refactor):**
 - Commit the changes with a descriptive message. Stage only the relevant files (never .env,
   secrets, or lock files unless intentional).
-- Push to the remote branch. If on a feature branch, offer to create a PR.
+- Push to the remote branch. If on a feature branch, open the PR as a draft (see Working
+  Methodology) - a step, not a question to end the turn on.
 
 **After making or discovering a project decision:**
 - Append an entry to `docs/decision-log.md`
@@ -439,8 +450,8 @@ identity from the folder name or from the copied `.trellis/source` alone.
   saying where to take it; write "Nothing" rather than dropping the heading, because an absent
   section and an empty one read the same. *Found* is what was learned, each claim at its
   certainty level, ending with the `Cleared` line. *Changed* is what was edited, written, pushed
-  or deployed. *Next* is what happens next and who does it. A short answer to a short question
-  skips the headings.
+  or deployed. *Next* is what happens next and who does it. A skill with its own report format
+  puts that report in the *Found* slot. A short answer to a short question skips the headings.
 - When writing externally-facing content, align with the brand voice
   (<!-- FILL IN: link brand/voice doc when one exists -->)
 - When writing internal/working docs, prioritize clarity and speed

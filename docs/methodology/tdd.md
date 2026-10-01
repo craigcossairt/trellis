@@ -68,7 +68,7 @@ This is the suite-level form of step 2's "confirm it FAILS (red)" - a test you h
 fail has never been tested. In the language of the certainty ladder in `AGENTS.md`, a green run
 is level 1 and a mutated run is level 4.
 
-### Four ways a mutation still lies to you
+### Ways a mutation still lies to you
 
 - **Name the cases that must fail before you run the mutation, then compare.** A red mutation
   vindicates the *case*, not each assertion inside it, and it only has to fail the cases that
@@ -115,13 +115,17 @@ is level 1 and a mutated run is level 4.
 ## Wiring suites into CI
 
 - **A suite that exists but is not wired reads as coverage.** Docs describe what it proves and
-  nobody notices that nothing runs it. Discover suites by glob (`tests/**/*_test.*`,
-  `bin/tests/*.sh`) and keep an explicit skip list in which each entry says why it is skipped,
-  rather than a hand-kept list of suites to run: a new suite is then covered by default, and a
-  skip has to be argued.
-- **Do not assert on source text.** A test that greps a file for a string passes when the
-  string is present and the behavior is broken, and fails on a harmless rewording. Add a seam
-  and assert on behavior instead (see "This can't be unit tested" in `AGENTS.md`).
+  nobody notices that nothing runs it. Named CI steps are fine (they carry the mutation
+  ledgers), but a mechanical check must compare the suite files on disk (found by glob, such
+  as `bin/tests/test-*.sh`) with what CI runs, and fail on any suite that is neither run nor
+  on a skip list whose every entry says why. A new suite is then caught the day it lands, and
+  a skip has to be argued. This template's `hooks-ci.yml` does this in its "every suite is
+  wired" step.
+- **Do not test code behavior by grepping its source.** A test that greps a file for a string
+  passes when the string is present and the behavior is broken, and fails on a harmless
+  rewording. Add a seam and assert on behavior instead (see "This can't be unit tested" in
+  `AGENTS.md`). A check whose subject IS the text (docs, config, routers, a changelog) is not
+  this.
 
 ## Key Rules
 

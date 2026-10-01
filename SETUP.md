@@ -28,9 +28,10 @@ re-explain your project.
 - [ ] Open `AGENTS.md` and fill in every slot marked `<!-- FILL IN -->`: project name, what it
       does, who owns it, what stage it is at, and your tech stack. If you do not know your stack
       yet, write what you are leaning toward. You can fix it later.
-- [ ] In the same file, find the **Delegation** section and fill in a model name for each tier.
-      AI models get replaced every few months, so this is a note to yourself, not a setting.
-      If you are not sure, ask your AI: *"what are the current models for each tier?"*
+- [ ] In the same file, find the **Delegation** section and fill in a model family for each
+      tier - the alias your AI tool takes (for example `haiku`, `sonnet`, `opus`), not a
+      version number, so the table does not go stale when a new model ships. If you are not
+      sure, ask your AI: *"which model families can my tool dispatch to?"*
 - [ ] Decide whether to keep the em dash rule. Em dashes are the long dashes that AI writing
       uses constantly, so banning them is a quick way to make your public writing read as human.
       Keep the rule or delete it.
