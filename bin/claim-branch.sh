@@ -707,12 +707,16 @@ report_held() { # $1 session  $2 at
   say "  Do not work this branch. Either pick a different one, or coordinate -"
   say "  that session may still be mid-task. The lease expires on its own."
   # Set only in check mode with no --me, when this checkout is not on the
-  # branch (see OFF_BRANCH_ID below).
+  # branch (see OFF_BRANCH_ID below). It explains; it never hands over a way to
+  # pass as the holder. The file names the holder but cannot say who is RUNNING
+  # the check: in a shared checkout left with the holder's id by a misplaced
+  # --acquire, the reader is usually somebody else, and a printed
+  # "set PROJECT_SESSION_ID=<holder>" recipe is one an agent would follow.
   if [ -n "${OFF_BRANCH_ID:-}" ] && [ "$OFF_BRANCH_ID" = "$1" ]; then
     say ""
     say "  This checkout recorded session $1, but it is not on '$BRANCH', and the id"
-    say "  file counts only there. If this is your lease, push from a checkout on"
-    say "  '$BRANCH', or set PROJECT_SESSION_ID=$1 for this one push."
+    say "  file counts only on that branch. If this lease is yours, push from a"
+    say "  checkout that is on '$BRANCH'."
   fi
 }
 

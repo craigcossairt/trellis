@@ -915,8 +915,15 @@ want 1 "follow: a no --me check from a checkout NOT on the branch ignores its st
 # another local name. The skipped file names the holder here, so the report
 # must say why, or the holder reads "leased by another session" over its own id.
 case "$OUT" in
-  *"recorded session $ME"*"PROJECT_SESSION_ID=$ME"*) ok "follow: an off-branch id file naming the holder gets the push-from-the-branch hint" ;;
+  *"recorded session $ME"*"push from a"*"checkout that is on 'feat/wt-follow'"*) ok "follow: an off-branch id file naming the holder gets the push-from-the-branch hint" ;;
   *) bad "follow: an off-branch id file naming the holder gets the push-from-the-branch hint" "out: $OUT" ;;
+esac
+# This checkout ($TMP/a) is the shared one a misplaced --acquire left the
+# holder's id in, so whoever reads this is as likely a stranger as the holder.
+# The hint must not print a recipe for passing as the holder.
+case "$OUT" in
+  *"PROJECT_SESSION_ID=$ME"*) bad "follow: the hint never prints a recipe to pass as the holder" "out: $OUT" ;;
+  *) ok "follow: the hint never prints a recipe to pass as the holder" ;;
 esac
 OUT="$( ( cd "$TMP/a" && env -u PROJECT_SESSION_ID bash "$SCRIPT" feat/wt-follow --me "$OTHER" --now "$LATER" ) 2>&1 )"; ACTUAL=$?
 want 1 "follow: --me naming somebody else is still CLAIMED"
