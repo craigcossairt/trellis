@@ -197,6 +197,39 @@ must cp "$INSTALLER" "$REL_REPO/bin/install-git-hooks.sh"
 c_eq "relative + CDPATH=. with no argument still wires its own repo" \
   "$(git -C "$REL_REPO" config --get core.hooksPath || true)" ".githooks"
 
+# Run from inside a git hook (or `git rebase --exec`), the session inherits
+# GIT_DIR, GIT_WORK_TREE and GIT_INDEX_FILE, and `git -C` does not override
+# them. Aimed here at a SENTINEL repo: unisolated, the Git State section prints
+# the sentinel's branch, and the installer wires the sentinel and leaves the
+# session's own repo with no pre-push hook and no message.
+SENT="$TMP/env-sentinel"; new_repo "$SENT"
+must git -C "$SENT" checkout -q -b sentinel-branch
+ENV_REPO="$TMP/env-session"; new_repo "$ENV_REPO"
+must git -C "$ENV_REPO" checkout -q -b session-branch
+must mkdir -p "$ENV_REPO/bin" "$ENV_REPO/.githooks"
+must cp "$INSTALLER" "$ENV_REPO/bin/install-git-hooks.sh"
+: > "$ENV_REPO/.githooks/pre-push"
+OUT="$(cd "$ENV_REPO" && GIT_DIR="$SENT/.git" GIT_WORK_TREE="$SENT" GIT_INDEX_FILE="$SENT/.git/index" \
+  CLAUDE_PROJECT_DIR="$ENV_REPO" bash "$HOOK" 2>&1)"; RC=$?
+c_has    "inherited GIT_DIR: Git State names the session's branch" 'Branch: session-branch'
+c_hasnot "inherited GIT_DIR: Git State does not name the sentinel's branch" 'sentinel-branch'
+c_eq "inherited GIT_DIR: the session's repo is wired" \
+  "$(git -C "$ENV_REPO" config --get core.hooksPath || true)" ".githooks"
+c_eq "inherited GIT_DIR: the sentinel repo is left alone" \
+  "$(git -C "$SENT" config --get core.hooksPath || true)" ""
+
+# The installer isolates itself too, since it is also run on its own.
+INST_REPO="$TMP/env-installer"; new_repo "$INST_REPO"
+must mkdir -p "$INST_REPO/bin" "$INST_REPO/.githooks"
+must cp "$INSTALLER" "$INST_REPO/bin/install-git-hooks.sh"
+: > "$INST_REPO/.githooks/pre-push"
+( GIT_DIR="$SENT/.git" GIT_WORK_TREE="$SENT" GIT_INDEX_FILE="$SENT/.git/index" \
+  bash "$INST_REPO/bin/install-git-hooks.sh" "$INST_REPO" >/dev/null 2>&1 )
+c_eq "installer under an inherited GIT_DIR wires the repo it was given" \
+  "$(git -C "$INST_REPO" config --get core.hooksPath || true)" ".githooks"
+c_eq "installer under an inherited GIT_DIR leaves the sentinel alone" \
+  "$(git -C "$SENT" config --get core.hooksPath || true)" ""
+
 # An installer someone deleted during the prune step must not break the session.
 NOINST="$TMP/noinstaller"; new_repo "$NOINST"
 run "$NOINST"

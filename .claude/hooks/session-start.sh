@@ -4,6 +4,12 @@
 
 ROOT="${CLAUDE_PROJECT_DIR:-$(pwd)}"
 
+# Every section describes ROOT, so drop the repo-local git variables (GIT_DIR,
+# GIT_WORK_TREE, GIT_INDEX_FILE, ...) once, here. `git -C` does not override
+# them: inherited from a git hook, the Git State section would print the branch
+# of the repo they name, and its `git status` would refresh that repo's index.
+for v in $(git rev-parse --local-env-vars 2>/dev/null); do unset "$v"; done
+
 echo "=== SESSION CONTEXT ==="
 echo ""
 
@@ -44,10 +50,11 @@ fi
 # Runs synchronously and costs one `git status` of the main checkout, which
 # counts against this hook's timeout on a very large tree.
 if [ -d "$ROOT/.git" ] || [ -f "$ROOT/.git" ]; then (
-  # A subshell, so this can drop the repo-local git variables (GIT_DIR,
-  # GIT_WORK_TREE, GIT_INDEX_FILE, ...) without changing the rest of the hook.
-  # `git -C` does not override them: inherited from a git hook, every read
-  # below would describe the repo they name, opted in or not.
+  # The top of this hook already dropped the repo-local git variables. This
+  # section drops them again on purpose: it is the one that decides whether to
+  # report a shared checkout, and it must stay correct if someone moves it or
+  # removes the top-level unset. Inherited from a git hook, every read below
+  # would describe the repo they name, opted in or not.
   for v in $(git rev-parse --local-env-vars 2>/dev/null); do unset "$v"; done
   mc_rc=0
   mc_raw=$(git -C "$ROOT" config --local --get project.sharedCheckout 2>/dev/null) || mc_rc=$?
