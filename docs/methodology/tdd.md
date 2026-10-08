@@ -33,7 +33,9 @@ RIGHT (vertical):    test1 → impl1   then   test2 → impl2   then   test3 →
    method, component surface, API endpoint) - tests live at seams, never against internals. Write
    down which seams are under test and confirm them with the user before writing any test; you
    can't test everything, so agreed seams put the effort on critical paths and complex logic.
-   Ask: "What's the public interface, and which seams should we test?"
+   Ask: "What's the public interface, and which seams should we test?" Give each proposed seam
+   a one-line note on what it catches and what it misses, so the gaps are agreed rather than
+   discovered.
 
 2. **Tracer bullet** - Write ONE failing test for the first/most-important behavior.
    - Run the test suite - confirm it FAILS (red). If it passes, it isn't testing anything new.

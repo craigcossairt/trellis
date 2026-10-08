@@ -15,6 +15,13 @@
 # Usage: bash bin/install-git-hooks.sh [repo-path]
 set -uo pipefail
 
+# `git -C` does not override an inherited GIT_DIR, GIT_WORK_TREE or
+# GIT_INDEX_FILE, and this runs from session-start, which can inherit them from
+# a git hook (or `git rebase --exec`). Left set, every read below and the config
+# write hit the repo they name: core.hooksPath lands there, and this repo stays
+# unwired with no message.
+for v in $(git rev-parse --local-env-vars 2>/dev/null); do unset "$v"; done
+
 SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname "${BASH_SOURCE[0]}")" >/dev/null && pwd)"
 REPO="${1:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 

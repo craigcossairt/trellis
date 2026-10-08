@@ -231,6 +231,17 @@ format; delete the adapter and the rule goes with it.
   about to change again. This fresh-context pass is the floor for every PR; it does not
   replace the different-model review above for the work that bullet names, and a diff that
   touches auth, permissions or secrets also gets `.claude/agents/security-reviewer.md`.
+- **A blocking review finding is cleared by a reviewer, never by the author alone.** Your
+  own verification (above) decides what you fix and what you rebut; it does not decide that
+  a finding is closed. It clears when a later review of a newer head lists it as fixed (a
+  fresh-context reviewer that no longer exists is replaced by a new one given the new head
+  and the finding), or when the reviewer explicitly accepts your fix or your rebuttal. A
+  rebuttal on its own clears nothing, and silence is not acceptance: whoever wrote the
+  change must not also be the one who decides a finding against it was wrong. A disputed
+  finding goes to the owner, and the PR waits. A nit clears with a reasoned reply. Before calling a PR clean, read every place a
+  review can land: inline threads, review bodies, AND plain top-level comments - some
+  reviewers (other models, bots) post there, and a check that reads only threads will merge
+  straight past their blocking findings. A review counts only for the head commit it read.
 - **Show the change: before and after on every PR with a visible change.** Visible means a UI,
   a page, or output a person sees (an email, a notification, an alert). Capture *before* from
   the untouched tree before the first edit and *after* from the branch, on the same screen,

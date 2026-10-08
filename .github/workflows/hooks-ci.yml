@@ -579,6 +579,17 @@ jobs:
           #
           # CodeRabbit on PR #32, measured 2026-10-01 over 191 cases:
           #   symbolic-ref --short compared (same-named tag) 2 -> 2 red
+          #
+          # Off-branch holder hint, measured 2026-10-08 over 196 cases (197
+          # after the review fix; the recipe row was measured over 197):
+          #   "set PROJECT_SESSION_ID=<holder>" recipe put back 1 -> 1 red
+          #     (the fresh-context review's finding: in a shared checkout a
+          #     stranger reads the holder's id, so the hint must not say how
+          #     to pass as the holder)
+          #   hint block removed from report_held            1 -> 1 red
+          #   holder-equality test dropped                   1 -> 1 red
+          #     (a stranger's file would be told the holder's id)
+          #   off-branch id read even when --me is given     1 -> 1 red
           bash bin/tests/test-claim-branch-lease.sh
 
       - name: Suite - push gate (pre-push hook + verify-green)
@@ -687,6 +698,16 @@ jobs:
           #   installer's self-dir cd loses its CDPATH guard 1 -> 1 red
           #     Run relatively with CDPATH=. and no argument, the installer
           #     could not resolve its own repo and wired nothing, exit 0.
+          #
+          # Inherited GIT_DIR ledger, measured 2026-10-08 over 35 cases
+          # (main-checkout suite run beside it: 16, 0 red under all three):
+          #   session-start's top-level unset removed       2 -> 2 red
+          #     The two Git State cases. The hooksPath cases stay green because
+          #     the installer isolates itself; that is the next row.
+          #   installer's own unset removed                 2 -> 2 red
+          #     The two direct-installer cases. Through session-start the
+          #     variables are already gone.
+          #   both removed                                  6 -> 6 red
           bash bin/tests/test-session-start.sh
 
       - name: CDPATH-guarded self-location
