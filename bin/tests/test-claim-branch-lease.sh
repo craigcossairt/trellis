@@ -911,6 +911,29 @@ case "$OUT" in
 esac
 OUT="$( ( cd "$TMP/a" && env -u PROJECT_SESSION_ID bash "$SCRIPT" feat/wt-follow --now "$LATER" ) 2>&1 )"; ACTUAL=$?
 want 1 "follow: a no --me check from a checkout NOT on the branch ignores its stray id file"
+# The same refusal is what the HOLDER sees pushing from a detached HEAD or under
+# another local name. The skipped file names the holder here, so the report
+# must say why, or the holder reads "leased by another session" over its own id.
+case "$OUT" in
+  *"recorded session $ME"*"PROJECT_SESSION_ID=$ME"*) ok "follow: an off-branch id file naming the holder gets the push-from-the-branch hint" ;;
+  *) bad "follow: an off-branch id file naming the holder gets the push-from-the-branch hint" "out: $OUT" ;;
+esac
+OUT="$( ( cd "$TMP/a" && env -u PROJECT_SESSION_ID bash "$SCRIPT" feat/wt-follow --me "$OTHER" --now "$LATER" ) 2>&1 )"; ACTUAL=$?
+want 1 "follow: --me naming somebody else is still CLAIMED"
+case "$OUT" in
+  *"recorded session"*) bad "follow: no hint when --me is given (the file was never consulted)" "out: $OUT" ;;
+  *) ok "follow: no hint when --me is given (the file was never consulted)" ;;
+esac
+# An off-branch file naming somebody OTHER than the holder gets no hint: telling
+# a stranger to "set PROJECT_SESSION_ID=<holder>" would be advice to take it.
+printf '%s\n' "$OTHER" > "$A_ID_FILE"
+OUT="$( ( cd "$TMP/a" && env -u PROJECT_SESSION_ID bash "$SCRIPT" feat/wt-follow --now "$LATER" ) 2>&1 )"; ACTUAL=$?
+want 1 "follow: an off-branch file naming a non-holder is still CLAIMED"
+case "$OUT" in
+  *"recorded session"*) bad "follow: no hint when the off-branch file names someone other than the holder" "out: $OUT" ;;
+  *) ok "follow: no hint when the off-branch file names someone other than the holder" ;;
+esac
+printf '%s\n' "$ME" > "$A_ID_FILE"
 must git -C "$TMP/a" worktree add -q -b feat/wt-follow "$TMP/a-wt2" main
 AW2() { ( cd "$TMP/a-wt2" && bash "$SCRIPT" "$@" ); }
 run AW2 --acquire feat/wt-follow --me "$ME" --harness claude-code --now "$LATER"
