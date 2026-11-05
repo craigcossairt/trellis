@@ -565,12 +565,13 @@ jobs:
           #   history fallback scans head alone         -> key removed before
           #     head, 1
           # The history cases need the gitleaks binary, installed above; a skip
-          # here means they did not run, so it fails the step.
+          # here means they did not run, so it fails the step. A copy that pruned
+          # .gitleaks.toml never installs gitleaks, so there the skip is by design.
           rc=0
           python -m unittest discover -s bin/tests -p test_leak_check_workflow.py -v > "$RUNNER_TEMP/leak-step-suite.log" 2>&1 || rc=$?
           cat "$RUNNER_TEMP/leak-step-suite.log"
           [ "$rc" -eq 0 ] || exit "$rc"
-          if grep -q "skipped" "$RUNNER_TEMP/leak-step-suite.log"; then
+          if [ -f .gitleaks.toml ] && grep -q "skipped" "$RUNNER_TEMP/leak-step-suite.log"; then
             echo "::error::a case was skipped although gitleaks and bash are on this runner"
             exit 1
           fi
