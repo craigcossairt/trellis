@@ -66,6 +66,26 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual(self.run_builder().returncode, 0)
         self.assertIn("| First half second half. |", self.read())
 
+    def test_a_quoted_scalar_followed_by_a_comment_drops_the_comment_and_the_quotes(self):
+        self.skill("sq", "---\nname: sq\ndescription: 'Ready.' # owner note\n---\n")
+        self.skill("dq", "---\nname: dq\ndescription: \"Set.\"   # owner note\n---\n")
+        self.skill("sqhash", "---\nname: sqhash\ndescription: 'Keep # this, it''s text.' # drop\n---\n")
+        self.skill("dqhash", "---\nname: dqhash\ndescription: \"Keep # this \\\"too\\\".\" # drop\n---\n")
+        self.assertEqual(self.run_builder().returncode, 0)
+        text = self.read()
+        self.assertIn("| [`sq`](.claude/skills/sq/SKILL.md) | Ready. |", text)
+        self.assertIn("| [`dq`](.claude/skills/dq/SKILL.md) | Set. |", text)
+        self.assertIn("| Keep # this, it's text. |", text)
+        self.assertIn("| Keep # this \"too\". |", text)
+        self.assertNotIn("owner", text)
+        self.assertNotIn("drop", text)
+
+    def test_text_after_a_closing_quote_that_is_not_a_comment_is_malformed(self):
+        self.skill("junk", "---\nname: junk\ndescription: 'Ready.' trailing\n---\n")
+        result = self.run_builder()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("junk/SKILL.md", result.stderr)
+
     def test_quoted_scalars_decode_their_escapes(self):
         # YAML: in single quotes '' is one quote; in double quotes \" and \\ are escapes.
         self.skill("single", "---\nname: single\ndescription: 'It''s ready.'\n---\n")

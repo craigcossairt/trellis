@@ -128,17 +128,20 @@ class GitleaksConfigTests(unittest.TestCase):
 
     @unittest.skipUnless(shutil.which("gitleaks"), "skipped: gitleaks binary not on PATH")
     def test_the_real_scanner_flags_each_fixture_and_passes_a_clean_file(self):
-        with tempfile.TemporaryDirectory(prefix="gitleaks fixture ") as tmp:
+        # The report gets its own private directory: not the shared temp root (a fixed
+        # name there collides between runs and outlives a failed assert), and not the
+        # scanned directory (gitleaks would scan its own report).
+        with tempfile.TemporaryDirectory(prefix="gitleaks fixture ") as tmp, \
+                tempfile.TemporaryDirectory(prefix="gitleaks report ") as report_dir:
             for n, (rule_id, positive) in enumerate(positives()):
                 (Path(tmp) / f"{rule_id}-{n}.txt").write_text(f"value = {positive}\n", encoding="utf-8")
-            report = Path(tmp).parent / "gitleaks-report.json"
+            report = Path(report_dir) / "gitleaks-report.json"
             proc = subprocess.run(
                 ["gitleaks", "detect", "--no-git", "--source", tmp, "--config", str(CONFIG),
                  "--redact", "--report-format", "json", "--report-path", str(report), "--exit-code", "7"],
                 capture_output=True, encoding="utf-8", errors="replace", check=False)
             self.assertEqual(proc.returncode, 7, proc.stdout + proc.stderr)
             found = report.read_text(encoding="utf-8")
-            report.unlink()
             for rule_id in FIXTURES:
                 with self.subTest(rule=rule_id):
                     self.assertIn(f'"RuleID": "{rule_id}"', found)

@@ -81,7 +81,11 @@ comment. To catch that:
 3. For CI, put the same text in a repository secret named `LEAKS_LIST`. Without one, CI prints
    `skipped: no list` and a notice, so a skipped check never looks like a pass. GitHub gives no
    secrets to a pull request from a fork, so there the step fails instead: before merging, run
-   the check locally with the list, or push the branch to your repository so CI runs it.
+   the check locally with the list, or push the branch to your repository so CI runs it. On a
+   pull request CI runs the base branch's copy of `bin/check-leaks.py`, in a job of its own, so
+   a pull request that edits the script never gets its own copy handed the list. The pull
+   request that first adds the script has no base copy, so with a list configured its check
+   fails until you run it locally; the push to the default branch after merge runs it in CI.
 
 Never commit the list: a public repo that carried it would publish the names. For credentials,
 `.gitleaks.toml` extends gitleaks' default rules; run `gitleaks detect --no-git --source . --redact`

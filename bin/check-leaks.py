@@ -24,7 +24,8 @@ missing list exit 2, which is what a local run before publishing should use.
 The output names the file, the line and the list entry NUMBER, never the matched
 text or the pattern, because CI logs on a public repo are public. A matching path
 is printed with every listed match masked (each entry matched against the
-original path, so one mask cannot hide another entry's match). An entry that does
+original path, so one mask cannot hide another entry's match; an entry that
+matches with zero length, such as a lookahead, masks the whole path). An entry that does
 not compile is reported by number only, since Python's error text can quote part
 of it. Use --show on your own machine to print the matched text and the detail.
 
@@ -81,16 +82,20 @@ def parse_list(text):
 
 
 def load_entries(list_arg, root):
-    """Return (entries, source_description), or (None, None) when no list exists."""
+    """Return (entries, source_description), or (None, None) when no list exists.
+
+    List files are read as utf-8-sig: a byte order mark (some Windows editors write
+    one) would otherwise become part of entry 1, which would then never match.
+    """
     if list_arg:
         path = Path(list_arg)
-        return parse_list(path.read_text(encoding="utf-8")), str(path)
+        return parse_list(path.read_text(encoding="utf-8-sig")), str(path)
     env = os.environ.get(ENV_LIST)
     if env is not None and env.strip():
         return parse_list(env), f"${ENV_LIST}"
     path = root / DEFAULT_LIST
     if path.exists():
-        return parse_list(path.read_text(encoding="utf-8")), DEFAULT_LIST.as_posix()
+        return parse_list(path.read_text(encoding="utf-8-sig")), DEFAULT_LIST.as_posix()
     return None, None
 
 
@@ -167,9 +172,14 @@ def _mask(text, entries):
     later entry needs (a lookbehind, say), leaving that later match in plain
     view. So every entry's spans are collected first, overlaps merged, then the
     text is masked once.
+
+    A zero-length match (a lookahead such as `(?=Name)`) has no span to hide, yet
+    the name sits right after it, so any zero-length match masks the whole text.
     """
-    spans = sorted((m.start(), m.end()) for _, pattern in entries
-                   for m in pattern.finditer(text) if m.end() > m.start())
+    matches = [m for _, pattern in entries for m in pattern.finditer(text)]
+    if any(m.end() == m.start() for m in matches):
+        return "***"
+    spans = sorted((m.start(), m.end()) for m in matches)
     merged = []
     for start, end in spans:
         if merged and start <= merged[-1][1]:

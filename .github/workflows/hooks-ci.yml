@@ -420,41 +420,8 @@ jobs:
         with:
           python-version: '3.13'
 
-      - name: Leak check (private names in tracked files)
-        if: hashFiles('bin/check-leaks.py') != ''
-        # Only this step sees the secret. The same-repo case runs code from the
-        # PR beside the secret, which is the price of a CI-side list; keep the
-        # list to names, never credentials.
-        #
-        # On a pull_request from a fork GitHub passes no secret, so the script
-        # has nothing to check. That must not read as a pass a maintainer can
-        # merge on, so on a fork PR the skip FAILS the step. It is not fixed by
-        # pull_request_target: that would hand the secret to the fork's code.
-        # The way through is a maintainer running the check locally with the
-        # private list, or pushing the branch to this repository so the PR runs
-        # with the secret. Same-repo PRs and pushes keep the announced skip
-        # (exit 0 with a notice) when no secret is configured at all.
-        # A deleted fork leaves head.repo null, which compares unequal: fails closed.
-        env:
-          LEAKS_LIST: ${{ secrets.LEAKS_LIST }}
-          FORK_PR: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
-        run: |
-          # Three outcomes, kept apart: 0 clean or announced skip, 1 a match,
-          # 2 could not run. The script never prints the listed term, because
-          # this log is public. `rc=0; cmd || rc=$?` so bash -e does not end
-          # the step before the skip notice below is written.
-          rc=0
-          out=$(python bin/check-leaks.py) || rc=$?
-          printf '%s\n' "$out"
-          case "$out" in
-            *"skipped: no list"*)
-              if [ "$FORK_PR" = "true" ]; then
-                echo "::error title=Leak check not run::this pull request comes from a fork, so GitHub withheld the LEAKS_LIST secret and nothing was checked. Before merging, a maintainer must run 'python bin/check-leaks.py --require' locally with the private list, or push the branch to this repository so CI runs the check."
-                exit 1
-              fi
-              echo "::notice title=Leak check skipped::no LEAKS_LIST secret and no tools/leaks.local.txt, so nothing was checked" ;;
-          esac
-          exit $rc
+      # The leak check itself, which needs the LEAKS_LIST secret, runs in its
+      # own job (leak-check, below), never here: this job runs PR code.
 
       - name: Suite - leak check
         run: |
@@ -480,6 +447,9 @@ jobs:
           #   symlink mode not special-cased       -> 3 (index symlink, clean
           #     symlink, real filesystem symlink; the last skips where the
           #     platform cannot make a link and runs here on Linux)
+          # Second review round, 27 cases:
+          #   list read as plain utf-8 (BOM kept)  -> BOM list, 1
+          #   zero-length match not masking all    -> lookahead entry, 1
           python -m unittest discover -s bin/tests -p test_check_leaks.py -v
 
       - name: Skills catalog is current
@@ -524,6 +494,10 @@ jobs:
           #   indented line with no key ignored           -> orphan line, 1
           #   whole README line endings normalised        -> mixed endings, 1
           #   '' in a single-quoted scalar not decoded    -> quoted escapes, 1
+          # Second review round, 28 cases:
+          #   quoted value must end the line (old rule)   -> 2 (quote then
+          #     comment, junk after the quote)
+          #   text after the closing quote accepted       -> junk after quote, 1
           python -m unittest discover -s bin/tests -p test_build_skills_catalog.py -v
 
       - name: Install gitleaks (pinned, checksum verified)
@@ -574,6 +548,33 @@ jobs:
             exit 1
           fi
 
+      - name: Suite - leak-check job and history scan steps
+        run: |
+          # Runs the `run:` scripts of the leak-check step (leak-check job) and
+          # the commit-range secret scan step below, taken out of this file, in
+          # throwaway repos. Mutation ledger, measured 2026-11-05 over 12 cases
+          # (predicted = actual, diffs read):
+          #   PR runs its own checked-out copy          -> 3 (base copy, fork
+          #     fails, same-repo skip notice)
+          #   base without the script + secret falls through -> base missing, 1
+          #   LEAKS_LIST not unset before the PR copy   -> no-secret PR copy, 1
+          #   base-commit existence check removed       -> missing base, 1
+          #   a `run:` step before the secret step      -> isolation, 1
+          #   fork skip passes                          -> fork fails, 1
+          #   secret also on a lint step                -> only-the-leak-step, 1
+          #   history fallback scans head alone         -> key removed before
+          #     head, 1
+          # The history cases need the gitleaks binary, installed above; a skip
+          # here means they did not run, so it fails the step.
+          rc=0
+          python -m unittest discover -s bin/tests -p test_leak_check_workflow.py -v > "$RUNNER_TEMP/leak-step-suite.log" 2>&1 || rc=$?
+          cat "$RUNNER_TEMP/leak-step-suite.log"
+          [ "$rc" -eq 0 ] || exit "$rc"
+          if grep -q "skipped" "$RUNNER_TEMP/leak-step-suite.log"; then
+            echo "::error::a case was skipped although gitleaks and bash are on this runner"
+            exit 1
+          fi
+
       - name: Secret scan (gitleaks, working tree)
         if: hashFiles('.gitleaks.toml') != ''
         run: |
@@ -610,13 +611,15 @@ jobs:
           git cat-file -e "$head^{commit}" 2>/dev/null || {
             echo "::error::head commit $head is not in this checkout - the history scan could not run"; exit 1; }
           # A new branch pushes before=000..0, and a force push can leave
-          # `before` unreachable. Then there is no range to name: scan the head
-          # commit alone and say so, rather than pass on an empty range.
+          # `before` unreachable. Then there is no range to name, so scan every
+          # commit reachable from head, and say so. Never head alone: that would
+          # miss a key added and then removed before it, and report a partial
+          # scan as clean. bin/tests/test_leak_check_workflow.py pins this.
           if [ -n "$base" ] && git cat-file -e "$base^{commit}" 2>/dev/null; then
             range="$base..$head"
           else
-            echo "::warning title=History scan narrowed::no usable base commit ('$base'), so only $head itself was scanned"
-            range="-1 $head"
+            echo "::warning title=History scan widened::no usable base commit ('$base'), so every commit reachable from $head is scanned"
+            range="$head"
           fi
           echo "scanning commits: $range"
           rc=0
@@ -1409,6 +1412,101 @@ jobs:
           echo "template logs checked"
           exit $fail
 
+  # The one job that holds the LEAKS_LIST secret, kept apart from `lint` because
+  # lint runs PR-author code (the suites execute scripts out of the checkout),
+  # and anything that ran earlier in a job can leave files, PATH entries or
+  # GITHUB_ENV values that a later step inherits. Here nothing from the PR tree
+  # runs before or beside the secret: on a pull_request the step runs the BASE
+  # branch's copy of bin/check-leaks.py (read from git, isolated mode) over the
+  # PR tree as data. A same-repo PR that edits the script therefore cannot have
+  # its own copy handed the list. bin/tests/test_leak_check_workflow.py pins
+  # this: it runs this step's script, and fails if any step before it in this
+  # job runs a command.
+  #
+  # What this does NOT cover: on a pull_request GitHub reads the workflow file
+  # itself from the PR, so anyone who can push a branch here can still edit
+  # this job. The boundary for the secret is who has write access; this keeps
+  # the script from being a second, quieter way in.
+  leak-check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          # The base commit must be in the clone to read its copy of the script.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+
+      - name: Leak check (private names in tracked files)
+        if: hashFiles('bin/check-leaks.py') != ''
+        # Only this step sees the secret. Keep the list to names, never credentials.
+        #
+        # Which copy of the script runs:
+        #   push (main only)        the checked-out copy: main is already merged.
+        #   pull_request            the base branch's copy, from `git show`.
+        #   pull_request, the base has no copy (the PR that first adds the check)
+        #     with a secret         FAIL, and the PR's copy never runs: there is
+        #                           no trusted copy to hand the list to. Run the
+        #                           check locally with the list before merging;
+        #                           the push to main after merge runs it in CI.
+        #     with no secret        the PR's copy runs with LEAKS_LIST unset, so
+        #                           there is nothing to leak, and it announces its
+        #                           skip.
+        #   base commit missing     could not run (exit 1), nothing executed.
+        #
+        # On a pull_request from a fork GitHub passes no secret, so the script
+        # has nothing to check. That must not read as a pass a maintainer can
+        # merge on, so on a fork PR the skip FAILS the step. It is not fixed by
+        # pull_request_target: that would hand the secret to the fork's code.
+        # The way through is a maintainer running the check locally with the
+        # private list, or pushing the branch to this repository so the PR runs
+        # with the secret. Same-repo PRs and pushes keep the announced skip
+        # (exit 0 with a notice) when no secret is configured at all.
+        # A deleted fork leaves head.repo null, which compares unequal: fails closed.
+        env:
+          LEAKS_LIST: ${{ secrets.LEAKS_LIST }}
+          EVENT: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          FORK_PR: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+        run: |
+          # Three outcomes, kept apart: 0 clean or announced skip, 1 a match,
+          # 2 could not run. The script never prints the listed term, because
+          # this log is public. `rc=0; cmd || rc=$?` so bash -e does not end
+          # the step before the skip notice below is written.
+          script=bin/check-leaks.py
+          if [ "$EVENT" = "pull_request" ]; then
+            git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null || {
+              echo "::error::base commit '$BASE_SHA' is not in this checkout - the leak check could not run"; exit 1; }
+            if git cat-file -e "$BASE_SHA:bin/check-leaks.py" 2>/dev/null; then
+              script="$RUNNER_TEMP/check-leaks-base.py"
+              git show "$BASE_SHA:bin/check-leaks.py" > "$script"
+              echo "running the base branch's bin/check-leaks.py ($BASE_SHA) over this pull request's tree"
+            elif [ -n "${LEAKS_LIST//[[:space:]]/}" ]; then
+              echo "::error title=Leak check not run::the base branch has no bin/check-leaks.py, so there is no trusted copy to run with the LEAKS_LIST secret, and this pull request's own copy is not handed it. Before merging, run 'python bin/check-leaks.py --require' locally with the private list; after merge the push to main runs it in CI."
+              exit 1
+            else
+              unset LEAKS_LIST
+              echo "the base branch has no bin/check-leaks.py and no list is configured: running this pull request's copy, which is handed nothing"
+            fi
+          fi
+          rc=0
+          out=$(python -I "$script") || rc=$?
+          printf '%s\n' "$out"
+          case "$out" in
+            *"skipped: no list"*)
+              if [ "$FORK_PR" = "true" ]; then
+                echo "::error title=Leak check not run::this pull request comes from a fork, so GitHub withheld the LEAKS_LIST secret and nothing was checked. Before merging, a maintainer must run 'python bin/check-leaks.py --require' locally with the private list, or push the branch to this repository so CI runs the check."
+                exit 1
+              fi
+              echo "::notice title=Leak check skipped::no LEAKS_LIST secret and no tools/leaks.local.txt, so nothing was checked" ;;
+          esac
+          exit $rc
+
   windows:
     runs-on: windows-latest
     permissions:
@@ -1482,3 +1580,7 @@ jobs:
         # No gitleaks binary on this runner: the real-scanner case skips, and
         # says so. The Linux job installs a pinned binary and requires it to run.
         run: python -m unittest discover -s bin/tests -p test_gitleaks_config.py -v
+      - name: Suite - leak-check job and history scan steps on Git for Windows
+        # Runs the leak-check step's script under Git for Windows bash. The
+        # history-scan cases need gitleaks and skip here; Linux requires them.
+        run: python -m unittest discover -s bin/tests -p test_leak_check_workflow.py -v

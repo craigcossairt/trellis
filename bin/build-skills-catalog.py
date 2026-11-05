@@ -35,6 +35,7 @@ END = "<!-- skills-catalog:end -->"
 TRIGGER = re.compile(r"\s*\bUse when\b.*$", re.DOTALL)
 KEY = re.compile(r"^([A-Za-z0-9_-]+):[ \t]*(.*)$")
 INLINE_COMMENT = re.compile(r"[ \t]#")
+TRAILING_COMMENT = re.compile(r"[ \t]+#")
 
 
 class FrontMatterError(ValueError):
@@ -51,11 +52,40 @@ DOUBLE_ESCAPES = {"\\": "\\", '"': '"', "/": "/", "n": "\n", "t": "\t", " ": " "
 DOUBLE_ESCAPE = re.compile(r"\\(.)")
 
 
+def _closing_quote(value):
+    """Index of the quote that closes value[0]'s quoted scalar, or None if it never closes.
+
+    In single quotes '' is an escaped quote; in double quotes a backslash escapes
+    the next character. A `#` inside the quotes is text, so the close is found
+    before any comment is looked for.
+    """
+    quote, i = value[0], 1
+    while i < len(value):
+        char = value[i]
+        if quote == '"' and char == "\\":
+            i += 2
+            continue
+        if char == quote:
+            if quote == "'" and value[i + 1:i + 2] == "'":
+                i += 2
+                continue
+            return i
+        i += 1
+    return None
+
+
 def _unquote(value, number):
     """Decode a one-line quoted scalar: '' is a quote inside single quotes, and
-    double quotes take backslash escapes. An escape this parser does not know is an
-    error rather than a guess."""
-    body = value[1:-1]
+    double quotes take backslash escapes. After the closing quote only a comment
+    (` # ...`) may follow. An escape this parser does not know, a quote that does not
+    close on its line, or other text after it is an error rather than a guess."""
+    close = _closing_quote(value)
+    if close is None:
+        raise FrontMatterError(f"line {number} has a quoted value that does not close on its line")
+    rest = value[close + 1:]
+    if rest.strip() and not TRAILING_COMMENT.match(rest):
+        raise FrontMatterError(f"line {number} has text after the closing quote that is not a comment")
+    body = value[1:close]
     if value[0] == "'":
         return body.replace("''", "'")
 
@@ -98,7 +128,7 @@ def parse_front_matter(text):
             key, value, block, style = match.group(1), match.group(2).strip(), [], None
             if value[:1] in (">", "|"):
                 style = value[0]
-            elif len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            elif value[:1] in ("'", '"'):
                 meta[key], key = _unquote(value, number), None
             else:
                 block = [_strip_comment(value)]  # a plain scalar may wrap onto indented lines

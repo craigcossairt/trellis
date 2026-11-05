@@ -100,6 +100,19 @@ class CheckLeaksTests(unittest.TestCase):
         self.assertIn("Nothing was checked", result.stdout)
         self.assertNotIn("check-leaks: ok", result.stdout)
 
+    def test_a_list_file_saved_with_a_bom_still_matches_its_first_entry(self):
+        # Some Windows editors save UTF-8 with a byte order mark. Read as plain UTF-8,
+        # the mark becomes part of entry 1, which then never matches: a silent pass.
+        self.track("a.md", TERM + "\n")
+        for name, flag in (("tools/leaks.local.txt", ()), ("given.txt", ("--list",))):
+            path = self.root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"\xef\xbb\xbf" + TERM.encode("utf-8") + b"\n")
+            with self.subTest(source=name):
+                result = self.run_check(*(flag + (str(path),) if flag else ()))
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn("a.md: line 1 matches list entry 1", result.stdout)
+
     def test_require_turns_a_missing_list_into_could_not_run(self):
         self.track("a.md", "clean\n")
         result = self.run_check("--require")
@@ -181,6 +194,17 @@ class CheckLeaksTests(unittest.TestCase):
         self.assertIn("matches list entry 2", result.stdout)
         self.assertNotIn(TERM.lower(), (result.stdout + result.stderr).lower())
         self.assertNotIn("internal", (result.stdout + result.stderr).lower())
+
+    def test_a_zero_length_match_masks_the_whole_path(self):
+        # A lookahead matches with zero length, so it has no span to mask; the path
+        # would print in full. Any zero-length match in a path masks all of it.
+        self.track("docs/" + TERM + "/notes.txt", "clean\n")
+        self.write_list("(?=" + TERM + ")\n")
+        result = self.run_check()
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("***: path matches list entry 1", result.stdout)
+        self.assertNotIn(TERM.lower(), (result.stdout + result.stderr).lower())
+        self.assertIn(TERM, self.run_check("--show").stdout)
 
     def test_overlapping_matches_are_masked_once(self):
         self.track("x-" + TERM + "-y.txt", "clean\n")
