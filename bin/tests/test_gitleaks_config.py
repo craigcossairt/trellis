@@ -61,6 +61,30 @@ FIXTURES = {
 }
 
 
+# rule id -> further key shapes the rule must also match (a vendor's other formats).
+MORE_POSITIVES = {
+    # The dashboard issues versioned tokens (sbp_v0_...) and OAuth ones; the Supabase
+    # CLI accepts ^sbp_(oauth_|v0_)?[a-f0-9]{40}$.
+    "trellis-supabase-access-token": [
+        "sb" + "p_" + "v0_" + "0123456789abcdef" * 2 + "01234567",
+        "sb" + "p_" + "oauth_" + "0123456789abcdef" * 2 + "01234567",
+    ],
+}
+MORE_NEGATIVES = {
+    "trellis-supabase-access-token": [
+        "sb" + "p_" + "v0_" + "0123456789abcdef",
+        "sb" + "p_" + "vx_" + "0123456789abcdef" * 2 + "01234567",
+    ],
+}
+
+
+def positives():
+    for rule_id, (positive, _) in FIXTURES.items():
+        yield rule_id, positive
+        for extra in MORE_POSITIVES.get(rule_id, []):
+            yield rule_id, extra
+
+
 class GitleaksConfigTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -80,30 +104,33 @@ class GitleaksConfigTests(unittest.TestCase):
             self.assertTrue(rule_id.startswith("trellis-"), rule_id)
 
     def test_each_rule_matches_its_key_shape(self):
-        for rule_id, (positive, _) in FIXTURES.items():
-            with self.subTest(rule=rule_id):
+        for rule_id, positive in positives():
+            with self.subTest(rule=rule_id, key=positive[:10]):
                 self.assertRegex(positive, re.compile(self.rules[rule_id]["regex"]))
+
+    def test_extra_fixtures_name_real_rules(self):
+        self.assertLessEqual(set(MORE_POSITIVES) | set(MORE_NEGATIVES), set(FIXTURES))
 
     def test_each_rule_ignores_variable_names_and_near_misses(self):
         for rule_id, (_, negatives) in FIXTURES.items():
-            for text in negatives:
+            for text in negatives + MORE_NEGATIVES.get(rule_id, []):
                 with self.subTest(rule=rule_id, text=text[:24]):
                     self.assertIsNone(re.search(self.rules[rule_id]["regex"], text))
 
     def test_each_rules_keyword_appears_in_its_key_or_gitleaks_never_runs_it(self):
         # gitleaks evaluates a rule only on text containing one of its keywords
         # (case-insensitive), so a keyword the key does not contain disables the rule.
-        for rule_id, (positive, _) in FIXTURES.items():
+        for rule_id, positive in positives():
             keywords = self.rules[rule_id].get("keywords") or []
-            with self.subTest(rule=rule_id):
+            with self.subTest(rule=rule_id, key=positive[:10]):
                 self.assertTrue(keywords, "rule has no keywords")
                 self.assertTrue(any(k.lower() in positive.lower() for k in keywords))
 
     @unittest.skipUnless(shutil.which("gitleaks"), "skipped: gitleaks binary not on PATH")
     def test_the_real_scanner_flags_each_fixture_and_passes_a_clean_file(self):
         with tempfile.TemporaryDirectory(prefix="gitleaks fixture ") as tmp:
-            for rule_id, (positive, _) in FIXTURES.items():
-                (Path(tmp) / f"{rule_id}.txt").write_text(f"value = {positive}\n", encoding="utf-8")
+            for n, (rule_id, positive) in enumerate(positives()):
+                (Path(tmp) / f"{rule_id}-{n}.txt").write_text(f"value = {positive}\n", encoding="utf-8")
             report = Path(tmp).parent / "gitleaks-report.json"
             proc = subprocess.run(
                 ["gitleaks", "detect", "--no-git", "--source", tmp, "--config", str(CONFIG),

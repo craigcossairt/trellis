@@ -26,6 +26,12 @@ on:
     branches: [main]
   pull_request:
 
+# Workflow-wide default, so a job added later without its own block starts
+# read-only rather than inheriting the repository default. Each job below also
+# states its own; nothing here needs to write.
+permissions:
+  contents: read
+
 jobs:
   lint:
     runs-on: ubuntu-latest
@@ -53,6 +59,11 @@ jobs:
           # repos with `git init --bare` and never reach a remote, so dropping
           # it costs nothing here.
           persist-credentials: false
+          # Full history, for the gitleaks history scan below: it reads every
+          # commit in the pushed or pull-request range, and a shallow clone has
+          # none of them but the tip. Fetched here because, with the token
+          # dropped above, a later `git fetch` would fail on a private copy.
+          fetch-depth: 0
 
       - name: Every suite is wired
         run: |
@@ -411,13 +422,22 @@ jobs:
 
       - name: Leak check (private names in tracked files)
         if: hashFiles('bin/check-leaks.py') != ''
-        # Only this step sees the secret. On a pull_request from a fork GitHub
-        # passes none, and the script then says so and exits 0: a skip that
-        # announces itself, never a silent pass. The same-repo case runs code
-        # from the PR beside the secret, which is the price of a CI-side list;
-        # keep the list to names, never credentials.
+        # Only this step sees the secret. The same-repo case runs code from the
+        # PR beside the secret, which is the price of a CI-side list; keep the
+        # list to names, never credentials.
+        #
+        # On a pull_request from a fork GitHub passes no secret, so the script
+        # has nothing to check. That must not read as a pass a maintainer can
+        # merge on, so on a fork PR the skip FAILS the step. It is not fixed by
+        # pull_request_target: that would hand the secret to the fork's code.
+        # The way through is a maintainer running the check locally with the
+        # private list, or pushing the branch to this repository so the PR runs
+        # with the secret. Same-repo PRs and pushes keep the announced skip
+        # (exit 0 with a notice) when no secret is configured at all.
+        # A deleted fork leaves head.repo null, which compares unequal: fails closed.
         env:
           LEAKS_LIST: ${{ secrets.LEAKS_LIST }}
+          FORK_PR: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
         run: |
           # Three outcomes, kept apart: 0 clean or announced skip, 1 a match,
           # 2 could not run. The script never prints the listed term, because
@@ -428,6 +448,10 @@ jobs:
           printf '%s\n' "$out"
           case "$out" in
             *"skipped: no list"*)
+              if [ "$FORK_PR" = "true" ]; then
+                echo "::error title=Leak check not run::this pull request comes from a fork, so GitHub withheld the LEAKS_LIST secret and nothing was checked. Before merging, a maintainer must run 'python bin/check-leaks.py --require' locally with the private list, or push the branch to this repository so CI runs the check."
+                exit 1
+              fi
               echo "::notice title=Leak check skipped::no LEAKS_LIST secret and no tools/leaks.local.txt, so nothing was checked" ;;
           esac
           exit $rc
@@ -449,6 +473,13 @@ jobs:
           #   whitespace-only env counts as a list -> empty env falls through, 1
           #   the "skipped: no list" words dropped -> loud skip, 1
           #   path shown unmasked                  -> path match leaks no term, 1
+          # Added after review, measured 2026-11-05 over 25 cases, same method:
+          #   entries masked one after another     -> 2 (lookbehind entry,
+          #     overlapping matches)
+          #   re.error detail printed without --show -> bad pattern by number, 1
+          #   symlink mode not special-cased       -> 3 (index symlink, clean
+          #     symlink, real filesystem symlink; the last skips where the
+          #     platform cannot make a link and runs here on Linux)
           python -m unittest discover -s bin/tests -p test_check_leaks.py -v
 
       - name: Skills catalog is current
@@ -486,6 +517,13 @@ jobs:
           #   always LF                                   -> CRLF README, 1
           #   errors do not stop the write                -> 6 (every bad-skill
           #     case, including the README left untouched)
+          # Added after review, measured 2026-11-05 over 26 cases, same method:
+          #   summary keeps line breaks                   -> literal block row, 1
+          #   comment lines kept as content               -> comment line, 1
+          #   unindented non-key line ignored             -> malformed line, 1
+          #   indented line with no key ignored           -> orphan line, 1
+          #   whole README line endings normalised        -> mixed endings, 1
+          #   '' in a single-quoted scalar not decoded    -> quoted escapes, 1
           python -m unittest discover -s bin/tests -p test_build_skills_catalog.py -v
 
       - name: Install gitleaks (pinned, checksum verified)
@@ -514,6 +552,8 @@ jobs:
           #   a rule id loses its prefix            -> 5 (coverage, prefix,
           #     shape, near misses, keyword)
           #   a rule takes another's id             -> the same 5
+          #   supabase rule drops sbp_v0_/oauth_    -> key shape, 1 (8 cases,
+          #     added after review)
           # Run WITH the binary, as here, each rule mutation above also turns
           # the real-scanner case red (+1), and these are its own:
           #   a wrong keyword on a rule             -> keyword case + real
@@ -544,6 +584,46 @@ jobs:
           case $rc in
             0) echo "no secrets found" ;;
             3) echo "::error::gitleaks found a secret; the finding above is redacted"; exit 1 ;;
+            *) echo "::error::gitleaks could not run (exit $rc)"; exit 1 ;;
+          esac
+
+      - name: Secret scan (gitleaks, commits in this push or pull request)
+        if: hashFiles('.gitleaks.toml') != ''
+        # The tree scan above sees only the final files, so a key added in one
+        # commit and deleted in the next passes it while staying in the history
+        # that merges. This scans every commit in the range: the PR's base to
+        # its head, or the push's before to after. Measured locally with 8.30.1
+        # on a scratch repo (add a key, delete it): tree scan 0, this scan 3.
+        # The SHAs come in through env, never spliced into the script.
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          PUSH_AFTER: ${{ github.sha }}
+        run: |
+          if [ "$EVENT" = "pull_request" ]; then
+            base=$PR_BASE; head=$PR_HEAD
+          else
+            base=$PUSH_BEFORE; head=$PUSH_AFTER
+          fi
+          git cat-file -e "$head^{commit}" 2>/dev/null || {
+            echo "::error::head commit $head is not in this checkout - the history scan could not run"; exit 1; }
+          # A new branch pushes before=000..0, and a force push can leave
+          # `before` unreachable. Then there is no range to name: scan the head
+          # commit alone and say so, rather than pass on an empty range.
+          if [ -n "$base" ] && git cat-file -e "$base^{commit}" 2>/dev/null; then
+            range="$base..$head"
+          else
+            echo "::warning title=History scan narrowed::no usable base commit ('$base'), so only $head itself was scanned"
+            range="-1 $head"
+          fi
+          echo "scanning commits: $range"
+          rc=0
+          gitleaks git --log-opts="$range" --config .gitleaks.toml --redact --exit-code 3 . || rc=$?
+          case $rc in
+            0) echo "no secrets found in the commit range" ;;
+            3) echo "::error::gitleaks found a secret in a commit in this range (it may be gone from the final tree, but it is still in history); the finding above is redacted"; exit 1 ;;
             *) echo "::error::gitleaks could not run (exit $rc)"; exit 1 ;;
           esac
 

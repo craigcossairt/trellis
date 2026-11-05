@@ -39,7 +39,7 @@ that prevents that - before the chaos starts.
 | `docs/writing-your-own-skills.md` | The 10-minute guide to teaching your AI a repeatable procedure, plus a six-question hardening checklist for making skills that survive contact with reality. |
 | `CREDITS.md` | Whose ideas these are. This template is an extraction, not an invention - every borrowed rule and every recommended tool is named with its source, and CI fails if a recommendation has no credit line. |
 | Hooks CI | A tiny GitHub Actions workflow that lint-gates the guardrail scripts themselves (line endings, syntax, shellcheck, exec bits) - because a hook that breaks silently is worse than no hook. |
-| Leak check and secret scan | `bin/check-leaks.py` fails CI when a tracked file names something on your private list. `.gitleaks.toml` adds rules for the key formats this template's docs mention, and CI scans the working tree with it. Both say so when they have nothing to check. |
+| Leak check and secret scan | `bin/check-leaks.py` fails CI when a tracked file names something on your private list. `.gitleaks.toml` adds rules for the key formats this template's docs mention, and CI scans the working tree and the pushed commits with it. Both say so when they have nothing to check. |
 
 ## Skills
 
@@ -74,13 +74,19 @@ comment. To catch that:
 1. Copy `tools/leaks.local.txt.example` to `tools/leaks.local.txt` (git ignores it) and list the
    names, one regular expression per line.
 2. Run `python bin/check-leaks.py --require`. It prints the file, the line and the list entry
-   number for each match, never the matched text; add `--show` on your own machine to see it.
+   number for each match, never the matched text (a matching path is printed masked, and an
+   entry that is not a valid pattern is named by number only); add `--show` on your own machine
+   to see the text. A tracked symlink is checked by the target path git stores for it, and the
+   link is never followed.
 3. For CI, put the same text in a repository secret named `LEAKS_LIST`. Without one, CI prints
-   `skipped: no list` and a notice, so a skipped check never looks like a pass.
+   `skipped: no list` and a notice, so a skipped check never looks like a pass. GitHub gives no
+   secrets to a pull request from a fork, so there the step fails instead: before merging, run
+   the check locally with the list, or push the branch to your repository so CI runs it.
 
 Never commit the list: a public repo that carried it would publish the names. For credentials,
 `.gitleaks.toml` extends gitleaks' default rules; run `gitleaks detect --no-git --source . --redact`
-to scan your working tree.
+to scan your working tree. CI scans the working tree and every commit in the push or pull
+request, so a key added and then deleted still fails.
 
 ## Quick start
 

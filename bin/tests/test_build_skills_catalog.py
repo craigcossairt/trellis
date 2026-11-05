@@ -66,6 +66,64 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual(self.run_builder().returncode, 0)
         self.assertIn("| First half second half. |", self.read())
 
+    def test_quoted_scalars_decode_their_escapes(self):
+        # YAML: in single quotes '' is one quote; in double quotes \" and \\ are escapes.
+        self.skill("single", "---\nname: single\ndescription: 'It''s ready.'\n---\n")
+        self.skill("double", "---\nname: double\ndescription: \"Say \\\"hi\\\" to a\\\\b.\"\n---\n")
+        self.assertEqual(self.run_builder().returncode, 0)
+        text = self.read()
+        self.assertIn("| It's ready. |", text)
+        self.assertIn("| Say \"hi\" to a\\b. |", text)
+
+    def test_a_multi_line_literal_block_renders_as_one_table_row(self):
+        self.skill("lit", "---\nname: lit\ndescription: |\n  Line one.\n  Line two | piped.\nother: x\n---\n")
+        self.assertEqual(self.run_builder().returncode, 0)
+        rows = [l for l in self.read().splitlines() if "`lit`" in l]
+        self.assertEqual(rows, ["| [`lit`](.claude/skills/lit/SKILL.md) | Line one. Line two \\| piped. |"])
+        inside = self.read().split(START, 1)[1].split(END, 1)[0]
+        self.assertEqual([l for l in inside.splitlines() if l and not l.startswith("|")], [])
+
+    def test_a_comment_line_after_the_description_is_not_part_of_it(self):
+        self.skill("cmt", "---\nname: cmt\ndescription: First.\n# Owner note\n  # indented note\nother: x\n---\n")
+        self.skill("inline", "---\nname: inline\ndescription: Second. # trailing note\n---\n")
+        self.assertEqual(self.run_builder().returncode, 0)
+        text = self.read()
+        self.assertIn("| [`cmt`](.claude/skills/cmt/SKILL.md) | First. |", text)
+        self.assertIn("| [`inline`](.claude/skills/inline/SKILL.md) | Second. |", text)
+        self.assertNotIn("note", text)
+
+    def test_a_hash_with_no_space_before_it_or_inside_quotes_is_kept(self):
+        # YAML starts a comment only at a `#` after whitespace in a plain scalar.
+        self.skill("hash", "---\nname: hash\ndescription: Uses C# and a#tag.\n---\n")
+        self.skill("quoted", "---\nname: quoted\ndescription: 'Quoted # kept.'\n---\n")
+        self.assertEqual(self.run_builder().returncode, 0)
+        self.assertIn("| Uses C# and a#tag. |", self.read())
+        self.assertIn("| Quoted # kept. |", self.read())
+
+    def test_an_unindented_line_that_is_not_a_key_is_a_malformed_skill(self):
+        self.skill("bad", "---\nname: bad\ndescription: First.\nnot a key line\n---\n")
+        result = self.run_builder()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("bad/SKILL.md", result.stderr)
+        self.assertIn("not a key", result.stderr)
+
+    def test_an_indented_line_with_no_key_to_continue_is_a_malformed_skill(self):
+        self.skill("orphan", "---\nname: orphan\ndescription: 'Quoted.'\n  stray continuation\n---\n")
+        result = self.run_builder()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("orphan/SKILL.md", result.stderr)
+
+    def test_text_outside_the_markers_keeps_its_bytes_in_a_mixed_line_ending_readme(self):
+        head = "# T\r\n\r\nintro with LF\n\r\n"
+        tail = "\r\noutro LF\nlast CRLF\r\n"
+        self.readme(head + START + "\r\n" + END + tail)
+        self.skill("alpha", "---\nname: alpha\ndescription: First.\n---\n")
+        self.assertEqual(self.run_builder().returncode, 0)
+        text = self.read()
+        self.assertTrue(text.startswith(head + START), repr(text[:60]))
+        self.assertTrue(text.endswith(END + tail), repr(text[-60:]))
+        self.assertEqual(self.run_builder("--check").returncode, 0)
+
     def test_check_passes_after_a_write_and_fails_when_a_skill_changes(self):
         self.skill("alpha", "---\nname: alpha\ndescription: First.\n---\n")
         self.run_builder()

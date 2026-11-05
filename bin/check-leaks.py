@@ -22,8 +22,14 @@ With no list the check says so on stdout and exits 0. Pass --require to make a
 missing list exit 2, which is what a local run before publishing should use.
 
 The output names the file, the line and the list entry NUMBER, never the matched
-text or the pattern, because CI logs on a public repo are public. Use --show on
-your own machine to print the matched text.
+text or the pattern, because CI logs on a public repo are public. A matching path
+is printed with every listed match masked (each entry matched against the
+original path, so one mask cannot hide another entry's match). An entry that does
+not compile is reported by number only, since Python's error text can quote part
+of it. Use --show on your own machine to print the matched text and the detail.
+
+A tracked symlink is scanned by its target text, read from git's object store
+(where git keeps it), never by following the link.
 
 Pattern adapted from the leak check in phuryn/product-engineering
 (tools/validate.py, MIT, Copyright (c) 2026 Pawel Huryn); this file is a fresh
@@ -39,6 +45,14 @@ from pathlib import Path
 DEFAULT_LIST = Path("tools") / "leaks.local.txt"
 ENV_LIST = "LEAKS_LIST"
 BINARY_PROBE = 8192
+
+
+class PatternError(ValueError):
+    """A list entry that does not compile. str() names only the entry number."""
+
+    def __init__(self, number, detail):
+        super().__init__(f"entry {number} is not a valid regular expression")
+        self.detail = detail
 
 
 def parse_list(text):
@@ -57,7 +71,9 @@ def parse_list(text):
         try:
             pattern = re.compile(line, re.IGNORECASE)
         except re.error as exc:
-            raise ValueError(f"entry {number} is not a valid regular expression: {exc}") from None
+            # re.error's text can quote part of the pattern (a group name, say), and
+            # a public CI log is public: the detail prints only under --show.
+            raise PatternError(number, str(exc)) from None
         if pattern.search(""):
             raise ValueError(f"entry {number} matches the empty string, so it would flag every file")
         entries.append((number, pattern))
@@ -78,18 +94,42 @@ def load_entries(list_arg, root):
     return None, None
 
 
+SYMLINK_MODE = "120000"
+
+
 def tracked_files(root):
-    proc = subprocess.run(["git", "-C", str(root), "ls-files", "-z"], capture_output=True, check=False)
+    """Return [(mode, blob_id, path)] for every path in the index."""
+    proc = subprocess.run(["git", "-C", str(root), "ls-files", "-z", "--stage"], capture_output=True, check=False)
     if proc.returncode != 0:
         raise RuntimeError("git ls-files failed: " + proc.stderr.decode("utf-8", "replace").strip())
-    return [p for p in proc.stdout.decode("utf-8", "surrogateescape").split("\0") if p]
+    files = []
+    for record in proc.stdout.decode("utf-8", "surrogateescape").split("\0"):
+        if not record:
+            continue
+        meta, _, rel = record.partition("\t")
+        mode, blob, _stage = meta.split(" ")
+        files.append((mode, blob, rel))
+    return files
+
+
+def symlink_target(root, blob):
+    """The tracked text of a symlink: git stores the target path as the blob.
+
+    Read from the object store, never through the link, so a link to a file
+    outside the tree is not followed, and a checkout without symlink support
+    (where git writes a plain file) reads the same text.
+    """
+    proc = subprocess.run(["git", "-C", str(root), "cat-file", "blob", blob], capture_output=True, check=False)
+    if proc.returncode != 0:
+        raise RuntimeError("git cat-file failed: " + proc.stderr.decode("utf-8", "replace").strip())
+    return proc.stdout
 
 
 def scan(root, entries, show):
-    """Return (findings, scanned, skipped_binary, skipped_missing)."""
+    """Return (findings, scanned, symlinks, skipped_binary, skipped_missing)."""
     findings = []
-    scanned = skipped_binary = skipped_missing = 0
-    for rel in tracked_files(root):
+    scanned = symlinks = skipped_binary = skipped_missing = 0
+    for mode, blob, rel in tracked_files(root):
         path = root / rel
         # The path itself may hold the term, so a public log gets it masked.
         shown = rel if show else _mask(rel, entries)
@@ -97,12 +137,17 @@ def scan(root, entries, show):
             match = pattern.search(rel)
             if match:
                 findings.append(_finding(shown, "path", number, match, show))
-        if path.is_symlink() or not path.is_file():
-            # A tracked path that is deleted or a symlink in the working tree has no
-            # text of its own to read; counted and reported, never silently dropped.
+        if mode == SYMLINK_MODE:
+            data = symlink_target(root, blob)
+            symlinks += 1
+        elif path.is_symlink() or not path.is_file():
+            # A tracked path deleted from the working tree (or a submodule, or a
+            # file replaced on disk by a link) has no text of its own to read;
+            # counted and reported, never silently dropped.
             skipped_missing += 1
             continue
-        data = path.read_bytes()
+        else:
+            data = path.read_bytes()
         if b"\0" in data[:BINARY_PROBE]:
             skipped_binary += 1
             continue
@@ -112,13 +157,30 @@ def scan(root, entries, show):
                 match = pattern.search(line)
                 if match:
                     findings.append(_finding(shown, line_no, number, match, show))
-    return findings, scanned, skipped_binary, skipped_missing
+    return findings, scanned, symlinks, skipped_binary, skipped_missing
 
 
 def _mask(text, entries):
-    for _, pattern in entries:
-        text = pattern.sub("***", text)
-    return text
+    """Replace every listed match with ***, each one found in the ORIGINAL text.
+
+    Masking one entry at a time would let an earlier mask remove the context a
+    later entry needs (a lookbehind, say), leaving that later match in plain
+    view. So every entry's spans are collected first, overlaps merged, then the
+    text is masked once.
+    """
+    spans = sorted((m.start(), m.end()) for _, pattern in entries
+                   for m in pattern.finditer(text) if m.end() > m.start())
+    merged = []
+    for start, end in spans:
+        if merged and start <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], end)
+        else:
+            merged.append([start, end])
+    out, last = [], 0
+    for start, end in merged:
+        out.append(text[last:start] + "***")
+        last = end
+    return "".join(out) + text[last:]
 
 
 def _finding(rel, where, number, match, show):
@@ -149,15 +211,20 @@ def main(argv=None):
         if not entries:
             print(f"check-leaks: could not run: {source} has no entries.", file=sys.stderr)
             return 2
-        findings, scanned, skipped_binary, skipped_missing = scan(root, entries, args.show)
+        findings, scanned, symlinks, skipped_binary, skipped_missing = scan(root, entries, args.show)
+    except PatternError as exc:
+        detail = f": {exc.detail}" if args.show else " (rerun with --show on your own machine for the detail)"
+        print(f"check-leaks: could not run: {exc}{detail}", file=sys.stderr)
+        return 2
     except (OSError, ValueError, RuntimeError, UnicodeError) as exc:
         print(f"check-leaks: could not run: {exc}", file=sys.stderr)
         return 2
 
     for finding in findings:
         print(finding)
-    print(f"check-leaks: {len(entries)} entries from {source}; {scanned} files scanned, "
-          f"{skipped_binary} binary and {skipped_missing} deleted, symlinked or non-file skipped.")
+    print(f"check-leaks: {len(entries)} entries from {source}; {scanned} files scanned "
+          f"({symlinks} of them symlink targets), "
+          f"{skipped_binary} binary and {skipped_missing} deleted or non-file skipped.")
     if findings:
         print(f"check-leaks: FAILED with {len(findings)} match(es).")
         return 1

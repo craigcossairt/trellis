@@ -11,7 +11,10 @@ The README table between the two markers is generated, never hand-edited:
 
 Every .claude/skills/<name>/SKILL.md must open with a front matter block holding
 `name` (equal to its folder) and `description`. The catalog shows the description
-up to its "Use when" trigger sentence, which stays in the skill for the agent.
+up to its "Use when" trigger sentence, which stays in the skill for the agent, on one
+line (a `|` block's line breaks become spaces). Comment lines in the front matter are
+skipped; any other line that is not a key or an indented continuation makes the skill
+malformed. Text outside the markers is kept byte for byte, line endings included.
 
 Exit codes (a check that could not run must never read as a pass):
   0  the catalog is current (--check) or was written
@@ -31,6 +34,37 @@ START = "<!-- skills-catalog:start -->"
 END = "<!-- skills-catalog:end -->"
 TRIGGER = re.compile(r"\s*\bUse when\b.*$", re.DOTALL)
 KEY = re.compile(r"^([A-Za-z0-9_-]+):[ \t]*(.*)$")
+INLINE_COMMENT = re.compile(r"[ \t]#")
+
+
+class FrontMatterError(ValueError):
+    """A front matter line this parser cannot place: the skill is malformed."""
+
+
+def _strip_comment(plain):
+    """A plain scalar ends at ` #` (YAML comment); `#` with no space before it is text."""
+    cut = INLINE_COMMENT.search(plain)
+    return plain[:cut.start()] if cut else plain
+
+
+DOUBLE_ESCAPES = {"\\": "\\", '"': '"', "/": "/", "n": "\n", "t": "\t", " ": " "}
+DOUBLE_ESCAPE = re.compile(r"\\(.)")
+
+
+def _unquote(value, number):
+    """Decode a one-line quoted scalar: '' is a quote inside single quotes, and
+    double quotes take backslash escapes. An escape this parser does not know is an
+    error rather than a guess."""
+    body = value[1:-1]
+    if value[0] == "'":
+        return body.replace("''", "'")
+
+    def escape(match):
+        char = match.group(1)
+        if char not in DOUBLE_ESCAPES:
+            raise FrontMatterError(f"line {number} has an escape this parser does not support")
+        return DOUBLE_ESCAPES[char]
+    return DOUBLE_ESCAPE.sub(escape, body)
 
 
 def parse_front_matter(text):
@@ -38,6 +72,8 @@ def parse_front_matter(text):
 
     Handles plain, quoted and block (`>` / `|`) scalars, which is all a skill uses.
     A block that never closes is None: the whole file would otherwise read as front matter.
+    Comment lines are skipped. A line that is neither a key, a comment, a blank, nor an
+    indented continuation of the key above raises FrontMatterError.
     """
     lines = text.replace("\r\n", "\n").split("\n")
     if not lines or lines[0].strip() != "---":
@@ -53,27 +89,43 @@ def parse_front_matter(text):
             joiner = "\n" if style == "|" else " "
             meta[key] = joiner.join(s.strip() for s in block).strip()
 
-    for line in lines[1:end]:
-        match = KEY.match(line) if not line.startswith((" ", "\t")) else None
+    for number, line in enumerate(lines[1:end], 2):
+        indented = line.startswith((" ", "\t"))
+        stripped = line.strip()
+        match = KEY.match(line) if not indented else None
         if match:
             flush()
             key, value, block, style = match.group(1), match.group(2).strip(), [], None
             if value[:1] in (">", "|"):
                 style = value[0]
             elif len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
-                meta[key], key = value[1:-1], None
+                meta[key], key = _unquote(value, number), None
             else:
-                block = [value]  # a plain scalar may wrap onto indented lines
-        elif key is not None:
-            block.append(line)
+                block = [_strip_comment(value)]  # a plain scalar may wrap onto indented lines
+        elif not stripped:
+            if key is not None:
+                block.append("")
+        elif stripped.startswith("#") and (not indented or style is None):
+            # A comment. Inside an indented `|` / `>` block a `#` line is content.
+            continue
+        elif indented and key is not None:
+            block.append(line if style else _strip_comment(line))
+        elif indented:
+            raise FrontMatterError(f"line {number} is indented but continues no key")
+        else:
+            raise FrontMatterError(f"line {number} is not a key, a comment or an indented continuation")
     flush()
     return meta
 
 
 def summary(description):
-    """The catalog's one-line summary: the description without its trigger sentence."""
-    short = TRIGGER.sub("", description).strip()
-    return (short or description).replace("|", "\\|")
+    """The catalog's one-line summary: the description without its trigger sentence.
+
+    Whitespace, line breaks included, collapses to single spaces (a `|` block keeps
+    its breaks, and a break inside a table row would end the row), and `|` is escaped.
+    """
+    short = TRIGGER.sub("", description).strip() or description
+    return " ".join(short.split()).replace("|", "\\|")
 
 
 def load_skills(skills_dir):
@@ -87,7 +139,11 @@ def load_skills(skills_dir):
         if not skill.is_file():
             errors.append(f"{folder.as_posix()}: no SKILL.md")
             continue
-        meta = parse_front_matter(skill.read_text(encoding="utf-8"))
+        try:
+            meta = parse_front_matter(skill.read_text(encoding="utf-8"))
+        except FrontMatterError as exc:
+            errors.append(f"{where}: front matter {exc}")
+            continue
         if meta is None:
             errors.append(f"{where}: must open with a front matter block between --- lines")
             continue
@@ -110,14 +166,20 @@ def render(rows):
 
 
 def splice(readme_text, catalog):
-    """Replace the text between the markers. Raises ValueError when they are not exactly one pair."""
+    """Replace the text between the markers. Raises ValueError when they are not exactly one pair.
+
+    Everything outside the markers is kept byte for byte. The generated section takes
+    CRLF when the README holds any CRLF (a Windows checkout), otherwise LF.
+    """
     if readme_text.count(START) != 1 or readme_text.count(END) != 1:
         raise ValueError(f"README needs exactly one {START} and one {END}")
     if readme_text.index(START) > readme_text.index(END):
         raise ValueError("the markers are out of order")
+    newline = "\r\n" if "\r\n" in readme_text else "\n"
     head, rest = readme_text.split(START, 1)
     _, tail = rest.split(END, 1)
-    return f"{head}{START}\n{catalog}{END}{tail}"
+    section = f"\n{catalog}".replace("\n", newline)
+    return f"{head}{START}{section}{END}{tail}"
 
 
 def main(argv=None):
@@ -135,8 +197,7 @@ def main(argv=None):
             print(f"error: {error}", file=sys.stderr)
         if errors:
             return 1
-        newline = "\r\n" if "\r\n" in original else "\n"
-        updated = splice(original.replace("\r\n", "\n"), render(rows)).replace("\n", newline)
+        updated = splice(original, render(rows))
     except (OSError, ValueError, UnicodeError) as exc:
         print(f"build-skills-catalog: could not run: {exc}", file=sys.stderr)
         return 2

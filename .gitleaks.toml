@@ -3,7 +3,9 @@
 # Run it from the repository root:
 #   gitleaks detect --source . --redact     # scans git history
 #   gitleaks detect --no-git --source .     # scans the working tree
-# CI runs the working-tree form on every pull request (.github/workflows/hooks-ci.yml).
+# CI runs the working-tree form, then `gitleaks git --log-opts="<base>..<head>"` over the
+# commits of the pull request or push, so a key added and then deleted inside a PR still
+# fails it (.github/workflows/hooks-ci.yml).
 #
 # Pattern (extend gitleaks' default rules with a small set of rules for the vendors this
 # template's docs mention) after the .gitleaks.toml in xai-org/xai-cookbook, which is
@@ -62,8 +64,8 @@ tags = ["api-key", "linear"]
 
 [[rules]]
 id = "trellis-supabase-access-token"
-description = "Supabase personal access token"
-regex = '''\bsbp_[a-f0-9]{40}\b'''
+description = "Supabase personal access token (classic, versioned sbp_v0_ and OAuth forms)"
+regex = '''\bsbp_(?:oauth_|v[0-9]+_)?[a-f0-9]{40}\b'''
 keywords = ["sbp_"]
 tags = ["access-token", "supabase"]
 
