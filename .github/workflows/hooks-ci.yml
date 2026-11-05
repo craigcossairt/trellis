@@ -578,10 +578,11 @@ jobs:
       - name: Secret scan (gitleaks, working tree)
         if: hashFiles('.gitleaks.toml') != ''
         run: |
-          # 0 clean, 3 a finding, anything else could not run. --redact keeps
-          # a found value out of this public log.
+          # 0 clean, 3 a finding, anything else could not run. --verbose prints
+          # each finding's file and line; --redact keeps its value out of this
+          # public log. bin/tests/test_leak_check_workflow.py pins both.
           rc=0
-          gitleaks detect --no-git --source . --config .gitleaks.toml --redact --exit-code 3 || rc=$?
+          gitleaks detect --no-git --source . --config .gitleaks.toml --verbose --redact --exit-code 3 || rc=$?
           case $rc in
             0) echo "no secrets found" ;;
             3) echo "::error::gitleaks found a secret; the finding above is redacted"; exit 1 ;;
@@ -623,7 +624,7 @@ jobs:
           fi
           echo "scanning commits: $range"
           rc=0
-          gitleaks git --log-opts="$range" --config .gitleaks.toml --redact --exit-code 3 . || rc=$?
+          gitleaks git --log-opts="$range" --config .gitleaks.toml --verbose --redact --exit-code 3 . || rc=$?
           case $rc in
             0) echo "no secrets found in the commit range" ;;
             3) echo "::error::gitleaks found a secret in a commit in this range (it may be gone from the final tree, but it is still in history); the finding above is redacted"; exit 1 ;;

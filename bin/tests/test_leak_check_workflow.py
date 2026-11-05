@@ -13,6 +13,7 @@ Nothing here reads a real secret or reaches a remote.
 
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -227,6 +228,18 @@ def find_named_step(name):
     raise AssertionError(f"no step named {name!r} in {WORKFLOW}")
 
 
+class ScanReportingTests(unittest.TestCase):
+    """Both scan steps print where a finding is, with its value masked. Needs no binary."""
+
+    def test_every_gitleaks_scan_prints_findings_redacted(self):
+        lines = [line for line in WORKFLOW.read_text(encoding="utf-8").splitlines()
+                 if re.match(r"\s*gitleaks (detect|git)\b", line)]
+        self.assertEqual(len(lines), 2, lines)
+        for line in lines:
+            self.assertIn("--verbose", line)
+            self.assertIn("--redact", line)
+
+
 @unittest.skipUnless(shutil.which("gitleaks"), "skipped: gitleaks binary not on PATH")
 class HistoryScanStepTests(unittest.TestCase):
     """The commit-range secret scan. Runs where gitleaks is installed (hooks CI)."""
@@ -273,6 +286,16 @@ class HistoryScanStepTests(unittest.TestCase):
         result = self.run_step(base, head)
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("found a secret", result.stdout)
+
+    def test_a_finding_names_its_file_but_never_its_value(self):
+        # The error says "the finding above is redacted", so there must be a finding
+        # above: --verbose prints it, --redact masks the value (CodeRabbit, trellis#36).
+        base, head = self.key_added_then_removed()
+        result = self.run_step(base, head)
+        out = result.stdout + result.stderr
+        self.assertEqual(result.returncode, 1, out)
+        self.assertIn("s.txt", out)
+        self.assertNotIn(FAKE_KEY, out)
 
     def test_with_no_usable_base_a_key_removed_before_head_still_fails(self):
         # The fallback must cover every commit reachable from head: scanning head
