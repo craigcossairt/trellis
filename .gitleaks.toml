@@ -1,0 +1,82 @@
+# Secret scanning rules for gitleaks (https://github.com/gitleaks/gitleaks).
+#
+# Run it from the repository root:
+#   gitleaks detect --source . --redact     # scans git history
+#   gitleaks detect --no-git --source .     # scans the working tree
+# CI runs the working-tree form on every pull request (.github/workflows/hooks-ci.yml).
+#
+# Pattern (extend gitleaks' default rules with a small set of rules for the vendors this
+# template's docs mention) after the .gitleaks.toml in xai-org/xai-cookbook, which is
+# under the X.AI Beta Testing License; the rules below are written fresh and none of that
+# file's text is copied. See CREDITS.md.
+#
+# Each rule matches a key's documented prefix and length, so a variable NAME such as
+# ANTHROPIC_API_KEY never trips one. Rule ids start with "trellis-" so they never replace
+# a default rule of the same name. A vendor can change its key format: if a rule goes quiet
+# on a real key, fix the rule and its fixture in bin/tests/test_gitleaks_config.py together.
+
+[extend]
+useDefault = true
+
+# Compiled Python is not source: the interpreter folds "sk-" + "ant-" into one constant, so
+# a test fixture that is assembled from pieces in source shows up whole in the .pyc beside it.
+# The source is scanned directly, so the bytecode adds nothing but noise.
+[[allowlists]]
+description = "compiled Python bytecode"
+paths = ['''(^|/)__pycache__/''']
+
+[[rules]]
+id = "trellis-anthropic-api-key"
+description = "Anthropic API key"
+regex = '''\bsk-ant-[a-z]{3,5}[0-9]{2}-[A-Za-z0-9_-]{60,}'''
+keywords = ["sk-ant-"]
+tags = ["api-key", "anthropic"]
+
+[[rules]]
+id = "trellis-openai-api-key"
+description = "OpenAI API key"
+regex = '''\bsk-(?:proj-|svcacct-|admin-)?[A-Za-z0-9_-]{20,}T3BlbkFJ[A-Za-z0-9_-]{20,}'''
+keywords = ["t3blbkfj"]
+tags = ["api-key", "openai"]
+
+[[rules]]
+id = "trellis-xai-api-key"
+description = "xAI API key"
+regex = '''\bxai-[A-Za-z0-9]{60,100}\b'''
+keywords = ["xai-"]
+tags = ["api-key", "xai"]
+
+[[rules]]
+id = "trellis-firecrawl-api-key"
+description = "Firecrawl API key"
+regex = '''\bfc-[a-f0-9]{32}\b'''
+keywords = ["fc-"]
+tags = ["api-key", "firecrawl"]
+
+[[rules]]
+id = "trellis-linear-api-key"
+description = "Linear personal API key"
+regex = '''\blin_api_[A-Za-z0-9]{40}\b'''
+keywords = ["lin_api_"]
+tags = ["api-key", "linear"]
+
+[[rules]]
+id = "trellis-supabase-access-token"
+description = "Supabase personal access token"
+regex = '''\bsbp_[a-f0-9]{40}\b'''
+keywords = ["sbp_"]
+tags = ["access-token", "supabase"]
+
+[[rules]]
+id = "trellis-supabase-secret-key"
+description = "Supabase secret API key"
+regex = '''\bsb_secret_[A-Za-z0-9_-]{20,}'''
+keywords = ["sb_secret_"]
+tags = ["api-key", "supabase"]
+
+[[rules]]
+id = "trellis-posthog-personal-api-key"
+description = "PostHog personal API key"
+regex = '''\bphx_[A-Za-z0-9]{40,}\b'''
+keywords = ["phx_"]
+tags = ["api-key", "posthog"]

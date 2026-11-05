@@ -402,6 +402,149 @@ jobs:
           echo "checked $n recommended source(s)"
           exit $fail
 
+      # ---- leak check, skills catalog, secret scan -------------------------
+      # Python 3.11+ for tomllib. Not conditional like the Codex setup above:
+      # these suites do not depend on the Codex adapter being kept.
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+
+      - name: Leak check (private names in tracked files)
+        if: hashFiles('bin/check-leaks.py') != ''
+        # Only this step sees the secret. On a pull_request from a fork GitHub
+        # passes none, and the script then says so and exits 0: a skip that
+        # announces itself, never a silent pass. The same-repo case runs code
+        # from the PR beside the secret, which is the price of a CI-side list;
+        # keep the list to names, never credentials.
+        env:
+          LEAKS_LIST: ${{ secrets.LEAKS_LIST }}
+        run: |
+          # Three outcomes, kept apart: 0 clean or announced skip, 1 a match,
+          # 2 could not run. The script never prints the listed term, because
+          # this log is public. `rc=0; cmd || rc=$?` so bash -e does not end
+          # the step before the skip notice below is written.
+          rc=0
+          out=$(python bin/check-leaks.py) || rc=$?
+          printf '%s\n' "$out"
+          case "$out" in
+            *"skipped: no list"*)
+              echo "::notice title=Leak check skipped::no LEAKS_LIST secret and no tools/leaks.local.txt, so nothing was checked" ;;
+          esac
+          exit $rc
+
+      - name: Suite - leak check
+        run: |
+          # Mutation ledger, measured 2026-11-05 over 19 cases; each mutation
+          # ran in a scratch copy, its diff read, and the named case alone went
+          # red (predicted = actual for every row):
+          #   drop IGNORECASE                      -> case-insensitive match, 1
+          #   skip the path scan                   -> path-only match, 1
+          #   --require ignored                    -> require-without-list, 1
+          #   empty-string guard removed           -> empty-match pattern, 1
+          #   git ls-files failure swallowed       -> not-a-git-repo, 1
+          #   a list with no entries returns 0     -> comments-only list, 1
+          #   matched text always printed          -> never-prints-the-term, 1
+          #   binary files scanned                 -> binary skipped and counted, 1
+          #   file list read before the env list   -> env-wins-over-file, 1
+          #   whitespace-only env counts as a list -> empty env falls through, 1
+          #   the "skipped: no list" words dropped -> loud skip, 1
+          python -m unittest discover -s bin/tests -p test_check_leaks.py -v
+
+      - name: Skills catalog is current
+        run: |
+          # The catalog between the README markers is generated. In the template
+          # the markers must exist (their loss is exit 2, never a pass). A copy
+          # that rewrote its README and dropped the markers has opted out, and
+          # says so here rather than failing every push.
+          if [ "$GITHUB_REPOSITORY" != "craigcossairt/trellis" ]; then
+            [ -f README.md ] || { echo "::error::README.md is missing - this check examined nothing"; exit 1; }
+            rc=0
+            grep -qF '<!-- skills-catalog:start -->' README.md || rc=$?
+            case $rc in
+              0) ;;
+              1) echo "skipped: README.md has no skills-catalog markers, so this copy keeps no generated catalog"; exit 0 ;;
+              *) echo "::error::could not scan README.md (grep exit $rc)"; exit 1 ;;
+            esac
+          fi
+          python bin/build-skills-catalog.py --check
+
+      - name: Suite - skills catalog
+        run: |
+          # Mutation ledger, measured 2026-11-05 over 18 cases (predicted =
+          # actual; diffs read):
+          #   summary keeps the "Use when" trigger        -> trigger cut, 1
+          #   pipes not escaped                           -> trigger cut, 1
+          #   name == folder check removed                -> name mismatch, 1
+          #   description check removed                   -> no description, 1
+          #   unclosed front matter accepted              -> never closes, 1
+          #   --check writes instead of failing           -> 4 (stale, no-write,
+          #     new skill, hand edit)
+          #   marker count relaxed to >= 1                -> duplicate markers, 1
+          #   marker order check removed                  -> reversed markers, 1
+          #   always LF                                   -> CRLF README, 1
+          #   errors do not stop the write                -> 6 (every bad-skill
+          #     case, including the README left untouched)
+          python -m unittest discover -s bin/tests -p test_build_skills_catalog.py -v
+
+      - name: Install gitleaks (pinned, checksum verified)
+        if: hashFiles('.gitleaks.toml') != ''
+        run: |
+          # Version and checksum move together; the checksum is from the
+          # release's own gitleaks_<version>_checksums.txt.
+          VERSION=8.30.1
+          SHA256=551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+          mkdir -p "$RUNNER_TEMP/gitleaks"
+          curl -fsSL -o "$RUNNER_TEMP/gitleaks.tgz" "https://github.com/gitleaks/gitleaks/releases/download/v${VERSION}/gitleaks_${VERSION}_linux_x64.tar.gz"
+          echo "$SHA256  $RUNNER_TEMP/gitleaks.tgz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/gitleaks.tgz" -C "$RUNNER_TEMP/gitleaks" gitleaks
+          echo "$RUNNER_TEMP/gitleaks" >> "$GITHUB_PATH"
+
+      - name: Suite - gitleaks config
+        if: hashFiles('.gitleaks.toml') != ''
+        run: |
+          # Mutation ledger, measured 2026-11-05 over 7 cases (predicted =
+          # actual, diffs read). Run WITHOUT the binary, where the real-scanner
+          # case skips:
+          #   firecrawl length 32 -> 31             -> key shape, 1
+          #   firecrawl trailing \b dropped         -> near misses, 1
+          #   firecrawl keyword wrong               -> keyword reaches key, 1
+          #   useDefault = false                    -> extends defaults, 1
+          #   a rule id loses its prefix            -> 5 (coverage, prefix,
+          #     shape, near misses, keyword)
+          #   a rule takes another's id             -> the same 5
+          # Run WITH the binary, as here, each rule mutation above also turns
+          # the real-scanner case red (+1), and these are its own:
+          #   a wrong keyword on a rule             -> keyword case + real
+          #     scanner, 2 (gitleaks skips a rule whose keyword is absent)
+          #   the __pycache__ allowlist stops matching -> real scanner, 1
+          #     (the interpreter folds an assembled fixture into the .pyc, and
+          #     the suites above write one before the scan below runs)
+          # The real-scanner case skips, loudly, when no binary is on PATH;
+          # the install step above puts it there, so here it must run.
+          # Captured to a file, not piped to tee: this step runs under plain
+          # `bash -e`, where a pipeline reports only its last command's status.
+          rc=0
+          python -m unittest discover -s bin/tests -p test_gitleaks_config.py -v > "$RUNNER_TEMP/gitleaks-suite.log" 2>&1 || rc=$?
+          cat "$RUNNER_TEMP/gitleaks-suite.log"
+          [ "$rc" -eq 0 ] || exit "$rc"
+          if grep -q "skipped" "$RUNNER_TEMP/gitleaks-suite.log"; then
+            echo "::error::the real-scanner case was skipped although gitleaks was installed above"
+            exit 1
+          fi
+
+      - name: Secret scan (gitleaks, working tree)
+        if: hashFiles('.gitleaks.toml') != ''
+        run: |
+          # 0 clean, 3 a finding, anything else could not run. --redact keeps
+          # a found value out of this public log.
+          rc=0
+          gitleaks detect --no-git --source . --config .gitleaks.toml --redact --exit-code 3 || rc=$?
+          case $rc in
+            0) echo "no secrets found" ;;
+            3) echo "::error::gitleaks found a secret; the finding above is redacted"; exit 1 ;;
+            *) echo "::error::gitleaks could not run (exit $rc)"; exit 1 ;;
+          esac
+
       - name: Suite - claim-branch (author signal)
         run: |
           # Mutation ledger, measured 2026-09-08 over 18 cases. Format is
@@ -1242,3 +1385,18 @@ jobs:
       - name: Suite - session-start main-checkout section on Git for Windows
         if: hashFiles('bin/check-main-checkouts.sh') != ''
         run: bash bin/tests/test-session-start-main-checkout.sh
+      # Python suites for the tools above. The CRLF case matters most here: a
+      # Windows checkout writes README.md with CRLF, which the catalog check
+      # must read as the same text.
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+      - name: Suite - leak check on Git for Windows
+        run: python -m unittest discover -s bin/tests -p test_check_leaks.py -v
+      - name: Suite - skills catalog on Git for Windows
+        run: python -m unittest discover -s bin/tests -p test_build_skills_catalog.py -v
+      - name: Suite - gitleaks config on Git for Windows
+        if: hashFiles('.gitleaks.toml') != ''
+        # No gitleaks binary on this runner: the real-scanner case skips, and
+        # says so. The Linux job installs a pinned binary and requires it to run.
+        run: python -m unittest discover -s bin/tests -p test_gitleaks_config.py -v

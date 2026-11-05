@@ -26,3 +26,6 @@ brain/bin/qmd text eol=lf
 .trellis/manifest text eol=lf
 .trellis/baseline text eol=lf
 .trellis/source   text eol=lf
+
+# Vendored skill: scripts and schema must check out with LF everywhere.
+.claude/skills/security-audit/** text eol=lf

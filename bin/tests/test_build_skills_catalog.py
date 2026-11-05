@@ -1,0 +1,157 @@
+#!/usr/bin/env python3
+"""Hermetic CLI checks for bin/build-skills-catalog.py."""
+
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import unittest
+
+
+BUILDER = Path(__file__).resolve().parents[1] / "build-skills-catalog.py"
+START = "<!-- skills-catalog:start -->"
+END = "<!-- skills-catalog:end -->"
+
+
+class CatalogTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix="skills catalog ")
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.readme("# Title\n\nintro\n\n" + START + "\n" + END + "\n\noutro\n")
+
+    def readme(self, text):
+        (self.root / "README.md").write_bytes(text.encode("utf-8"))
+
+    def read(self):
+        return (self.root / "README.md").read_bytes().decode("utf-8")
+
+    def skill(self, name, front, folder=None):
+        path = self.root / ".claude" / "skills" / (folder or name) / "SKILL.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(front.encode("utf-8"))
+
+    def run_builder(self, *args):
+        return subprocess.run([sys.executable, str(BUILDER), "--root", str(self.root), *args],
+                              capture_output=True, text=True, check=False)
+
+    def test_writes_a_row_per_skill_sorted_and_keeps_text_outside_the_markers(self):
+        self.skill("zeta", "---\nname: zeta\ndescription: Last one.\n---\nbody\n")
+        self.skill("alpha", "---\nname: alpha\ndescription: First one.\n---\nbody\n")
+        self.assertEqual(self.run_builder().returncode, 0)
+        text = self.read()
+        self.assertTrue(text.startswith("# Title\n\nintro\n\n" + START + "\n"))
+        self.assertTrue(text.endswith(END + "\n\noutro\n"))
+        self.assertLess(text.index("`alpha`"), text.index("`zeta`"))
+        self.assertIn("| [`alpha`](.claude/skills/alpha/SKILL.md) | First one. |", text)
+
+    def test_description_is_cut_before_its_use_when_trigger_and_pipes_are_escaped(self):
+        self.skill("alpha", "---\nname: alpha\ndescription: Does a | b. Use when asked to 'go'.\n---\n")
+        self.run_builder()
+        row = [l for l in self.read().splitlines() if "`alpha`" in l][0]
+        self.assertTrue(row.endswith("| Does a \\| b. |"), row)
+
+    def test_plain_quoted_and_block_scalars_all_parse(self):
+        self.skill("plain", "---\nname: plain\ndescription: Plain text here.\n---\n")
+        self.skill("quoted", "---\nname: \"quoted\"\ndescription: 'Quoted: with a colon.'\n---\n")
+        self.skill("block", "---\nname: block\ndescription: >\n  Folded line one\n  and line two.\nother: x\n---\n")
+        self.assertEqual(self.run_builder().returncode, 0)
+        text = self.read()
+        self.assertIn("| Plain text here. |", text)
+        self.assertIn("| Quoted: with a colon. |", text)
+        self.assertIn("| Folded line one and line two. |", text)
+
+    def test_check_passes_after_a_write_and_fails_when_a_skill_changes(self):
+        self.skill("alpha", "---\nname: alpha\ndescription: First.\n---\n")
+        self.run_builder()
+        self.assertEqual(self.run_builder("--check").returncode, 0)
+        self.skill("alpha", "---\nname: alpha\ndescription: Changed.\n---\n")
+        result = self.run_builder("--check")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("stale", result.stderr)
+
+    def test_check_writes_nothing(self):
+        self.skill("alpha", "---\nname: alpha\ndescription: First.\n---\n")
+        before = self.read()
+        self.assertEqual(self.run_builder("--check").returncode, 1)
+        self.assertEqual(self.read(), before)
+
+    def test_a_new_skill_with_no_catalog_row_is_stale(self):
+        self.skill("alpha", "---\nname: alpha\ndescription: First.\n---\n")
+        self.run_builder()
+        self.skill("beta", "---\nname: beta\ndescription: Second.\n---\n")
+        self.assertEqual(self.run_builder("--check").returncode, 1)
+
+    def test_a_hand_edit_inside_the_markers_is_stale(self):
+        self.skill("alpha", "---\nname: alpha\ndescription: First.\n---\n")
+        self.run_builder()
+        self.readme(self.read().replace("First.", "Edited by hand."))
+        self.assertEqual(self.run_builder("--check").returncode, 1)
+
+    def test_a_name_that_differs_from_the_folder_fails(self):
+        self.skill("alpha", "---\nname: other\ndescription: First.\n---\n", folder="alpha")
+        result = self.run_builder()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("does not match the folder", result.stderr)
+
+    def test_missing_description_fails(self):
+        self.skill("alpha", "---\nname: alpha\n---\n")
+        result = self.run_builder()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("no description", result.stderr)
+
+    def test_no_front_matter_fails(self):
+        self.skill("alpha", "# just a body\n")
+        self.assertEqual(self.run_builder().returncode, 1)
+
+    def test_front_matter_that_never_closes_fails(self):
+        self.skill("alpha", "---\nname: alpha\ndescription: First.\n\nbody text with no closing fence\n")
+        self.assertEqual(self.run_builder().returncode, 1)
+
+    def test_a_skill_folder_without_a_skill_file_fails(self):
+        (self.root / ".claude" / "skills" / "empty").mkdir(parents=True)
+        result = self.run_builder()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("no SKILL.md", result.stderr)
+
+    def test_a_bad_skill_does_not_rewrite_the_readme(self):
+        self.skill("alpha", "---\nname: alpha\ndescription: First.\n---\n")
+        self.run_builder()
+        before = self.read()
+        self.skill("beta", "# no front matter\n")
+        self.assertEqual(self.run_builder().returncode, 1)
+        self.assertEqual(self.read(), before)
+
+    def test_missing_markers_are_could_not_run(self):
+        self.readme("# no markers here\n")
+        result = self.run_builder("--check")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("could not run", result.stderr)
+
+    def test_duplicate_or_reversed_markers_are_could_not_run(self):
+        self.readme(START + "\n" + END + "\n" + START + "\n" + END + "\n")
+        self.assertEqual(self.run_builder("--check").returncode, 2)
+        self.readme(END + "\n" + START + "\n")
+        result = self.run_builder("--check")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("out of order", result.stderr)
+
+    def test_missing_readme_is_could_not_run(self):
+        (self.root / "README.md").unlink()
+        self.assertEqual(self.run_builder("--check").returncode, 2)
+
+    def test_no_skills_directory_renders_an_explicit_empty_state(self):
+        self.assertEqual(self.run_builder().returncode, 0)
+        self.assertIn("No skills are installed.", self.read())
+
+    def test_a_crlf_readme_stays_crlf_and_checks_clean(self):
+        self.readme("# T\r\n\r\n" + START + "\r\n" + END + "\r\n")
+        self.skill("alpha", "---\nname: alpha\ndescription: First.\n---\n")
+        self.assertEqual(self.run_builder().returncode, 0)
+        text = self.read()
+        self.assertNotIn("\n", text.replace("\r\n", ""))
+        self.assertEqual(self.run_builder("--check").returncode, 0)
+
+
+if __name__ == "__main__":
+    unittest.main()

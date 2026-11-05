@@ -30,3 +30,6 @@ brain/hooks/debug.log
 # OS noise
 .DS_Store
 Thumbs.db
+
+# Leak check: the list of private names that must not reach a tracked file
+tools/leaks.local.txt
