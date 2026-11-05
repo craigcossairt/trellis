@@ -434,7 +434,7 @@ jobs:
 
       - name: Suite - leak check
         run: |
-          # Mutation ledger, measured 2026-11-05 over 19 cases; each mutation
+          # Mutation ledger, measured 2026-11-05 over 19 cases (path masking row added after review); each mutation
           # ran in a scratch copy, its diff read, and the named case alone went
           # red (predicted = actual for every row):
           #   drop IGNORECASE                      -> case-insensitive match, 1
@@ -448,6 +448,7 @@ jobs:
           #   file list read before the env list   -> env-wins-over-file, 1
           #   whitespace-only env counts as a list -> empty env falls through, 1
           #   the "skipped: no list" words dropped -> loud skip, 1
+          #   path shown unmasked                  -> path match leaks no term, 1
           python -m unittest discover -s bin/tests -p test_check_leaks.py -v
 
       - name: Skills catalog is current
@@ -470,7 +471,7 @@ jobs:
 
       - name: Suite - skills catalog
         run: |
-          # Mutation ledger, measured 2026-11-05 over 18 cases (predicted =
+          # Mutation ledger, measured 2026-11-05 over 19 cases (predicted =
           # actual; diffs read):
           #   summary keeps the "Use when" trigger        -> trigger cut, 1
           #   pipes not escaped                           -> trigger cut, 1
@@ -481,6 +482,7 @@ jobs:
           #     new skill, hand edit)
           #   marker count relaxed to >= 1                -> duplicate markers, 1
           #   marker order check removed                  -> reversed markers, 1
+          #   plain scalar continuation dropped           -> wrapped description, 1
           #   always LF                                   -> CRLF README, 1
           #   errors do not stop the write                -> 6 (every bad-skill
           #     case, including the README left untouched)

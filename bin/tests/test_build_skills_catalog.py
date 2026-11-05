@@ -61,6 +61,11 @@ class CatalogTests(unittest.TestCase):
         self.assertIn("| Quoted: with a colon. |", text)
         self.assertIn("| Folded line one and line two. |", text)
 
+    def test_a_plain_description_wrapped_onto_indented_lines_is_kept_whole(self):
+        self.skill("wrap", "---\nname: wrap\ndescription: First half\n  second half.\nother: x\n---\n")
+        self.assertEqual(self.run_builder().returncode, 0)
+        self.assertIn("| First half second half. |", self.read())
+
     def test_check_passes_after_a_write_and_fails_when_a_skill_changes(self):
         self.skill("alpha", "---\nname: alpha\ndescription: First.\n---\n")
         self.run_builder()

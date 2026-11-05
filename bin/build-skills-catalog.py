@@ -63,7 +63,7 @@ def parse_front_matter(text):
             elif len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
                 meta[key], key = value[1:-1], None
             else:
-                meta[key], key = value, None
+                block = [value]  # a plain scalar may wrap onto indented lines
         elif key is not None:
             block.append(line)
     flush()

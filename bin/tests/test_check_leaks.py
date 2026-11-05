@@ -75,6 +75,8 @@ class CheckLeaksTests(unittest.TestCase):
         result = self.run_check()
         self.assertEqual(result.returncode, 1)
         self.assertIn("path matches list entry 1", result.stdout)
+        self.assertNotIn(TERM.lower(), (result.stdout + result.stderr).lower())
+        self.assertIn(TERM, self.run_check("--show").stdout)
 
     def test_an_untracked_file_is_not_scanned(self):
         self.track("a.md", "clean\n")

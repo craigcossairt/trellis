@@ -91,10 +91,12 @@ def scan(root, entries, show):
     scanned = skipped_binary = skipped_missing = 0
     for rel in tracked_files(root):
         path = root / rel
+        # The path itself may hold the term, so a public log gets it masked.
+        shown = rel if show else _mask(rel, entries)
         for number, pattern in entries:
             match = pattern.search(rel)
             if match:
-                findings.append(_finding(rel, "path", number, match, show))
+                findings.append(_finding(shown, "path", number, match, show))
         if path.is_symlink() or not path.is_file():
             # A tracked path that is deleted or a symlink in the working tree has no
             # text of its own to read; counted and reported, never silently dropped.
@@ -109,8 +111,14 @@ def scan(root, entries, show):
             for number, pattern in entries:
                 match = pattern.search(line)
                 if match:
-                    findings.append(_finding(rel, line_no, number, match, show))
+                    findings.append(_finding(shown, line_no, number, match, show))
     return findings, scanned, skipped_binary, skipped_missing
+
+
+def _mask(text, entries):
+    for _, pattern in entries:
+        text = pattern.sub("***", text)
+    return text
 
 
 def _finding(rel, where, number, match, show):
