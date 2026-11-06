@@ -39,6 +39,58 @@ that prevents that - before the chaos starts.
 | `docs/writing-your-own-skills.md` | The 10-minute guide to teaching your AI a repeatable procedure, plus a six-question hardening checklist for making skills that survive contact with reality. |
 | `CREDITS.md` | Whose ideas these are. This template is an extraction, not an invention - every borrowed rule and every recommended tool is named with its source, and CI fails if a recommendation has no credit line. |
 | Hooks CI | A tiny GitHub Actions workflow that lint-gates the guardrail scripts themselves (line endings, syntax, shellcheck, exec bits) - because a hook that breaks silently is worse than no hook. |
+| Leak check and secret scan | `bin/check-leaks.py` fails CI when a tracked file names something on your private list. `.gitleaks.toml` adds rules for the key formats this template's docs mention, and CI scans the working tree and the pushed commits with it. Both say so when they have nothing to check. |
+
+## Skills
+
+A skill is a repeatable procedure your agent loads when it needs it. These ship in
+`.claude/skills/`; the other tools reach them through the routers described in
+`docs/harness-support.md`. This table is generated from each skill's front matter by
+`python bin/build-skills-catalog.py`, and CI fails when it is stale, so do not edit it by hand.
+
+<!-- skills-catalog:start -->
+| Skill | What it does |
+| --- | --- |
+| [`build-verification-skill`](.claude/skills/build-verification-skill/SKILL.md) | Build this project's verification skill - a small CLI that drives the running app and captures evidence, plus a feature map of what exists and how to reach it - and the CI check that keeps the map current. |
+| [`daily-brief`](.claude/skills/daily-brief/SKILL.md) | Start-of-day ranked brief - open issues, recent commits, work in progress, and anything waiting on a human decision. |
+| [`grill-design`](.claude/skills/grill-design/SKILL.md) | Decide a UI design by building several genuinely different working prototypes and comparing them side by side, in rounds, until the choice is locked. |
+| [`launch-check`](.claude/skills/launch-check/SKILL.md) | Run a pre-demo/pre-launch audit of the app - test data, broken screens, missing error states, brand consistency. |
+| [`learn`](.claude/skills/learn/SKILL.md) | Review the current conversation and update project knowledge artifacts - common-gotchas.md (bug patterns), conventions at the highest rung that holds them (code, check, reviewer standard, skill, then AGENTS.md), navigation pointers, agent memory (cross-session). |
+| [`pin-guardrail`](.claude/skills/pin-guardrail/SKILL.md) | Pin a shell guardrail (a hook, a git hook, a checker script) with a behavioral test suite, prove the suite is real by mutating the code, and wire it into CI with its mutation ledger. |
+| [`prd-to-issues`](.claude/skills/prd-to-issues/SKILL.md) | Break a PRD into independently-grabbable tracker issues using tracer-bullet vertical slices. |
+| [`review-dependency-updates`](.claude/skills/review-dependency-updates/SKILL.md) | Review outdated dependencies, security-scan each candidate bump against OSV.dev, then apply only the safe updates and PR them. |
+| [`security-audit`](.claude/skills/security-audit/SKILL.md) | Security guidance and vulnerability review for codebases, APIs, services, CLI tools, libraries, and daemons. Use for security questions, focused reviews, vulnerability research, security audits, or pen tests. Run the complete workflow only for explicit codebase audit or pen-test requests, full/comprehensive/end-to-end reviews, or requested report artifacts. |
+| [`setup`](.claude/skills/setup/SKILL.md) | Walk a new project through setting up this template - interview the owner, fill in the context files, wire the safety rails, and verify it worked. |
+| [`trellis-survey`](.claude/skills/trellis-survey/SKILL.md) | Check this template's static wiring and setup - missing hooks, unreachable skills, unfinished context files. Runtime activation and trust require separate checks. Read-only. |
+| [`trellis-sync`](.claude/skills/trellis-sync/SKILL.md) | Check this project against the template it was made from, show what changed upstream, and apply only what the user picks. |
+| [`write-a-prd`](.claude/skills/write-a-prd/SKILL.md) | Create a PRD through user interview, codebase exploration, and module design, then submit to the issue tracker. |
+<!-- skills-catalog:end -->
+
+## Keeping private names and secrets out
+
+A public repo built from a private project tends to keep the project's names in an example or a
+comment. To catch that:
+
+1. Copy `tools/leaks.local.txt.example` to `tools/leaks.local.txt` (git ignores it) and list the
+   names, one regular expression per line.
+2. Run `python bin/check-leaks.py --require`. It prints the file, the line and the list entry
+   number for each match, never the matched text (a matching path is printed masked, and an
+   entry that is not a valid pattern is named by number only); add `--show` on your own machine
+   to see the text. A tracked symlink is checked by the target path git stores for it, and the
+   link is never followed.
+3. For CI, put the same text in a repository secret named `LEAKS_LIST`. Without one, CI prints
+   `skipped: no list` and a notice, so a skipped check never looks like a pass. GitHub gives no
+   secrets to a pull request from a fork, so there the step fails instead: before merging, run
+   the check locally with the list, or push the branch to your repository so CI runs it. On a
+   pull request CI runs the base branch's copy of `bin/check-leaks.py`, in a job of its own, so
+   a pull request that edits the script never gets its own copy handed the list. The pull
+   request that first adds the script has no base copy, so with a list configured its check
+   fails until you run it locally; the push to the default branch after merge runs it in CI.
+
+Never commit the list: a public repo that carried it would publish the names. For credentials,
+`.gitleaks.toml` extends gitleaks' default rules; run `gitleaks detect --no-git --source . --redact`
+to scan your working tree. CI scans the working tree and every commit in the push or pull
+request, so a key added and then deleted still fails.
 
 ## Quick start
 

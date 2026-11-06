@@ -26,6 +26,12 @@ on:
     branches: [main]
   pull_request:
 
+# Workflow-wide default, so a job added later without its own block starts
+# read-only rather than inheriting the repository default. Each job below also
+# states its own; nothing here needs to write.
+permissions:
+  contents: read
+
 jobs:
   lint:
     runs-on: ubuntu-latest
@@ -53,6 +59,11 @@ jobs:
           # repos with `git init --bare` and never reach a remote, so dropping
           # it costs nothing here.
           persist-credentials: false
+          # Full history, for the gitleaks history scan below: it reads every
+          # commit in the pushed or pull-request range, and a shallow clone has
+          # none of them but the tip. Fetched here because, with the token
+          # dropped above, a later `git fetch` would fail on a private copy.
+          fetch-depth: 0
 
       - name: Every suite is wired
         run: |
@@ -401,6 +412,225 @@ jobs:
           done <<< "$urls"
           echo "checked $n recommended source(s)"
           exit $fail
+
+      # ---- leak check, skills catalog, secret scan -------------------------
+      # Python 3.11+ for tomllib. Not conditional like the Codex setup above:
+      # these suites do not depend on the Codex adapter being kept.
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+
+      # The leak check itself, which needs the LEAKS_LIST secret, runs in its
+      # own job (leak-check, below), never here: this job runs PR code.
+
+      - name: Suite - leak check
+        run: |
+          # Mutation ledger, measured 2026-11-05 over 19 cases (path masking row added after review); each mutation
+          # ran in a scratch copy, its diff read, and the named case alone went
+          # red (predicted = actual for every row):
+          #   drop IGNORECASE                      -> case-insensitive match, 1
+          #   skip the path scan                   -> path-only match, 1
+          #   --require ignored                    -> require-without-list, 1
+          #   empty-string guard removed           -> empty-match pattern, 1
+          #   git ls-files failure swallowed       -> not-a-git-repo, 1
+          #   a list with no entries returns 0     -> comments-only list, 1
+          #   matched text always printed          -> never-prints-the-term, 1
+          #   binary files scanned                 -> binary skipped and counted, 1
+          #   file list read before the env list   -> env-wins-over-file, 1
+          #   whitespace-only env counts as a list -> empty env falls through, 1
+          #   the "skipped: no list" words dropped -> loud skip, 1
+          #   path shown unmasked                  -> path match leaks no term, 1
+          # Added after review, measured 2026-11-05 over 25 cases, same method:
+          #   entries masked one after another     -> 2 (lookbehind entry,
+          #     overlapping matches)
+          #   re.error detail printed without --show -> bad pattern by number, 1
+          #   symlink mode not special-cased       -> 3 (index symlink, clean
+          #     symlink, real filesystem symlink; the last skips where the
+          #     platform cannot make a link and runs here on Linux)
+          # Second review round, 27 cases:
+          #   list read as plain utf-8 (BOM kept)  -> BOM list, 1
+          #   zero-length match not masking all    -> lookahead entry, 1
+          python -m unittest discover -s bin/tests -p test_check_leaks.py -v
+
+      - name: Skills catalog is current
+        run: |
+          # The catalog between the README markers is generated. In the template
+          # the markers must exist (their loss is exit 2, never a pass). A copy
+          # that rewrote its README and dropped the markers has opted out, and
+          # says so here rather than failing every push.
+          if [ "$GITHUB_REPOSITORY" != "craigcossairt/trellis" ]; then
+            [ -f README.md ] || { echo "::error::README.md is missing - this check examined nothing"; exit 1; }
+            rc=0
+            grep -qF '<!-- skills-catalog:start -->' README.md || rc=$?
+            case $rc in
+              0) ;;
+              1) echo "skipped: README.md has no skills-catalog markers, so this copy keeps no generated catalog"; exit 0 ;;
+              *) echo "::error::could not scan README.md (grep exit $rc)"; exit 1 ;;
+            esac
+          fi
+          python bin/build-skills-catalog.py --check
+
+      - name: Suite - skills catalog
+        run: |
+          # Mutation ledger, measured 2026-11-05 over 19 cases (predicted =
+          # actual; diffs read):
+          #   summary keeps the "Use when" trigger        -> trigger cut, 1
+          #   pipes not escaped                           -> trigger cut, 1
+          #   name == folder check removed                -> name mismatch, 1
+          #   description check removed                   -> no description, 1
+          #   unclosed front matter accepted              -> never closes, 1
+          #   --check writes instead of failing           -> 4 (stale, no-write,
+          #     new skill, hand edit)
+          #   marker count relaxed to >= 1                -> duplicate markers, 1
+          #   marker order check removed                  -> reversed markers, 1
+          #   plain scalar continuation dropped           -> wrapped description, 1
+          #   always LF                                   -> CRLF README, 1
+          #   errors do not stop the write                -> 6 (every bad-skill
+          #     case, including the README left untouched)
+          # Added after review, measured 2026-11-05 over 26 cases, same method:
+          #   summary keeps line breaks                   -> literal block row, 1
+          #   comment lines kept as content               -> comment line, 1
+          #   unindented non-key line ignored             -> malformed line, 1
+          #   indented line with no key ignored           -> orphan line, 1
+          #   whole README line endings normalised        -> mixed endings, 1
+          #   '' in a single-quoted scalar not decoded    -> quoted escapes, 1
+          # Second review round, 28 cases:
+          #   quoted value must end the line (old rule)   -> 2 (quote then
+          #     comment, junk after the quote)
+          #   text after the closing quote accepted       -> junk after quote, 1
+          python -m unittest discover -s bin/tests -p test_build_skills_catalog.py -v
+
+      - name: Install gitleaks (pinned, checksum verified)
+        if: hashFiles('.gitleaks.toml') != ''
+        run: |
+          # Version and checksum move together; the checksum is from the
+          # release's own gitleaks_<version>_checksums.txt.
+          VERSION=8.30.1
+          SHA256=551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+          mkdir -p "$RUNNER_TEMP/gitleaks"
+          curl -fsSL -o "$RUNNER_TEMP/gitleaks.tgz" "https://github.com/gitleaks/gitleaks/releases/download/v${VERSION}/gitleaks_${VERSION}_linux_x64.tar.gz"
+          echo "$SHA256  $RUNNER_TEMP/gitleaks.tgz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/gitleaks.tgz" -C "$RUNNER_TEMP/gitleaks" gitleaks
+          echo "$RUNNER_TEMP/gitleaks" >> "$GITHUB_PATH"
+
+      - name: Suite - gitleaks config
+        if: hashFiles('.gitleaks.toml') != ''
+        run: |
+          # Mutation ledger, measured 2026-11-05 over 7 cases (predicted =
+          # actual, diffs read). Run WITHOUT the binary, where the real-scanner
+          # case skips:
+          #   firecrawl length 32 -> 31             -> key shape, 1
+          #   firecrawl trailing \b dropped         -> near misses, 1
+          #   firecrawl keyword wrong               -> keyword reaches key, 1
+          #   useDefault = false                    -> extends defaults, 1
+          #   a rule id loses its prefix            -> 5 (coverage, prefix,
+          #     shape, near misses, keyword)
+          #   a rule takes another's id             -> the same 5
+          #   supabase rule drops sbp_v0_/oauth_    -> key shape, 1 (8 cases,
+          #     added after review)
+          # Run WITH the binary, as here, each rule mutation above also turns
+          # the real-scanner case red (+1), and these are its own:
+          #   a wrong keyword on a rule             -> keyword case + real
+          #     scanner, 2 (gitleaks skips a rule whose keyword is absent)
+          #   the __pycache__ allowlist stops matching -> real scanner, 1
+          #     (the interpreter folds an assembled fixture into the .pyc, and
+          #     the suites above write one before the scan below runs)
+          # The real-scanner case skips, loudly, when no binary is on PATH;
+          # the install step above puts it there, so here it must run.
+          # Captured to a file, not piped to tee: this step runs under plain
+          # `bash -e`, where a pipeline reports only its last command's status.
+          rc=0
+          python -m unittest discover -s bin/tests -p test_gitleaks_config.py -v > "$RUNNER_TEMP/gitleaks-suite.log" 2>&1 || rc=$?
+          cat "$RUNNER_TEMP/gitleaks-suite.log"
+          [ "$rc" -eq 0 ] || exit "$rc"
+          if grep -q "skipped" "$RUNNER_TEMP/gitleaks-suite.log"; then
+            echo "::error::the real-scanner case was skipped although gitleaks was installed above"
+            exit 1
+          fi
+
+      - name: Suite - leak-check job and history scan steps
+        run: |
+          # Runs the `run:` scripts of the leak-check step (leak-check job) and
+          # the commit-range secret scan step below, taken out of this file, in
+          # throwaway repos. Mutation ledger, measured 2026-11-05 over 12 cases
+          # (predicted = actual, diffs read):
+          #   PR runs its own checked-out copy          -> 3 (base copy, fork
+          #     fails, same-repo skip notice)
+          #   base without the script + secret falls through -> base missing, 1
+          #   LEAKS_LIST not unset before the PR copy   -> no-secret PR copy, 1
+          #   base-commit existence check removed       -> missing base, 1
+          #   a `run:` step before the secret step      -> isolation, 1
+          #   fork skip passes                          -> fork fails, 1
+          #   secret also on a lint step                -> only-the-leak-step, 1
+          #   history fallback scans head alone         -> key removed before
+          #     head, 1
+          # The history cases need the gitleaks binary, installed above; a skip
+          # here means they did not run, so it fails the step. A copy that pruned
+          # .gitleaks.toml never installs gitleaks, so there the skip is by design.
+          rc=0
+          python -m unittest discover -s bin/tests -p test_leak_check_workflow.py -v > "$RUNNER_TEMP/leak-step-suite.log" 2>&1 || rc=$?
+          cat "$RUNNER_TEMP/leak-step-suite.log"
+          [ "$rc" -eq 0 ] || exit "$rc"
+          if [ -f .gitleaks.toml ] && grep -q "skipped" "$RUNNER_TEMP/leak-step-suite.log"; then
+            echo "::error::a case was skipped although gitleaks and bash are on this runner"
+            exit 1
+          fi
+
+      - name: Secret scan (gitleaks, working tree)
+        if: hashFiles('.gitleaks.toml') != ''
+        run: |
+          # 0 clean, 3 a finding, anything else could not run. --verbose prints
+          # each finding's file and line; --redact keeps its value out of this
+          # public log. bin/tests/test_leak_check_workflow.py pins both.
+          rc=0
+          gitleaks detect --no-git --source . --config .gitleaks.toml --verbose --redact --exit-code 3 || rc=$?
+          case $rc in
+            0) echo "no secrets found" ;;
+            3) echo "::error::gitleaks found a secret; the finding above is redacted"; exit 1 ;;
+            *) echo "::error::gitleaks could not run (exit $rc)"; exit 1 ;;
+          esac
+
+      - name: Secret scan (gitleaks, commits in this push or pull request)
+        if: hashFiles('.gitleaks.toml') != ''
+        # The tree scan above sees only the final files, so a key added in one
+        # commit and deleted in the next passes it while staying in the history
+        # that merges. This scans every commit in the range: the PR's base to
+        # its head, or the push's before to after. Measured locally with 8.30.1
+        # on a scratch repo (add a key, delete it): tree scan 0, this scan 3.
+        # The SHAs come in through env, never spliced into the script.
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          PUSH_AFTER: ${{ github.sha }}
+        run: |
+          if [ "$EVENT" = "pull_request" ]; then
+            base=$PR_BASE; head=$PR_HEAD
+          else
+            base=$PUSH_BEFORE; head=$PUSH_AFTER
+          fi
+          git cat-file -e "$head^{commit}" 2>/dev/null || {
+            echo "::error::head commit $head is not in this checkout - the history scan could not run"; exit 1; }
+          # A new branch pushes before=000..0, and a force push can leave
+          # `before` unreachable. Then there is no range to name, so scan every
+          # commit reachable from head, and say so. Never head alone: that would
+          # miss a key added and then removed before it, and report a partial
+          # scan as clean. bin/tests/test_leak_check_workflow.py pins this.
+          if [ -n "$base" ] && git cat-file -e "$base^{commit}" 2>/dev/null; then
+            range="$base..$head"
+          else
+            echo "::warning title=History scan widened::no usable base commit ('$base'), so every commit reachable from $head is scanned"
+            range="$head"
+          fi
+          echo "scanning commits: $range"
+          rc=0
+          gitleaks git --log-opts="$range" --config .gitleaks.toml --verbose --redact --exit-code 3 . || rc=$?
+          case $rc in
+            0) echo "no secrets found in the commit range" ;;
+            3) echo "::error::gitleaks found a secret in a commit in this range (it may be gone from the final tree, but it is still in history); the finding above is redacted"; exit 1 ;;
+            *) echo "::error::gitleaks could not run (exit $rc)"; exit 1 ;;
+          esac
 
       - name: Suite - claim-branch (author signal)
         run: |
@@ -1184,6 +1414,101 @@ jobs:
           echo "template logs checked"
           exit $fail
 
+  # The one job that holds the LEAKS_LIST secret, kept apart from `lint` because
+  # lint runs PR-author code (the suites execute scripts out of the checkout),
+  # and anything that ran earlier in a job can leave files, PATH entries or
+  # GITHUB_ENV values that a later step inherits. Here nothing from the PR tree
+  # runs before or beside the secret: on a pull_request the step runs the BASE
+  # branch's copy of bin/check-leaks.py (read from git, isolated mode) over the
+  # PR tree as data. A same-repo PR that edits the script therefore cannot have
+  # its own copy handed the list. bin/tests/test_leak_check_workflow.py pins
+  # this: it runs this step's script, and fails if any step before it in this
+  # job runs a command.
+  #
+  # What this does NOT cover: on a pull_request GitHub reads the workflow file
+  # itself from the PR, so anyone who can push a branch here can still edit
+  # this job. The boundary for the secret is who has write access; this keeps
+  # the script from being a second, quieter way in.
+  leak-check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          # The base commit must be in the clone to read its copy of the script.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+
+      - name: Leak check (private names in tracked files)
+        if: hashFiles('bin/check-leaks.py') != ''
+        # Only this step sees the secret. Keep the list to names, never credentials.
+        #
+        # Which copy of the script runs:
+        #   push (main only)        the checked-out copy: main is already merged.
+        #   pull_request            the base branch's copy, from `git show`.
+        #   pull_request, the base has no copy (the PR that first adds the check)
+        #     with a secret         FAIL, and the PR's copy never runs: there is
+        #                           no trusted copy to hand the list to. Run the
+        #                           check locally with the list before merging;
+        #                           the push to main after merge runs it in CI.
+        #     with no secret        the PR's copy runs with LEAKS_LIST unset, so
+        #                           there is nothing to leak, and it announces its
+        #                           skip.
+        #   base commit missing     could not run (exit 1), nothing executed.
+        #
+        # On a pull_request from a fork GitHub passes no secret, so the script
+        # has nothing to check. That must not read as a pass a maintainer can
+        # merge on, so on a fork PR the skip FAILS the step. It is not fixed by
+        # pull_request_target: that would hand the secret to the fork's code.
+        # The way through is a maintainer running the check locally with the
+        # private list, or pushing the branch to this repository so the PR runs
+        # with the secret. Same-repo PRs and pushes keep the announced skip
+        # (exit 0 with a notice) when no secret is configured at all.
+        # A deleted fork leaves head.repo null, which compares unequal: fails closed.
+        env:
+          LEAKS_LIST: ${{ secrets.LEAKS_LIST }}
+          EVENT: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          FORK_PR: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+        run: |
+          # Three outcomes, kept apart: 0 clean or announced skip, 1 a match,
+          # 2 could not run. The script never prints the listed term, because
+          # this log is public. `rc=0; cmd || rc=$?` so bash -e does not end
+          # the step before the skip notice below is written.
+          script=bin/check-leaks.py
+          if [ "$EVENT" = "pull_request" ]; then
+            git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null || {
+              echo "::error::base commit '$BASE_SHA' is not in this checkout - the leak check could not run"; exit 1; }
+            if git cat-file -e "$BASE_SHA:bin/check-leaks.py" 2>/dev/null; then
+              script="$RUNNER_TEMP/check-leaks-base.py"
+              git show "$BASE_SHA:bin/check-leaks.py" > "$script"
+              echo "running the base branch's bin/check-leaks.py ($BASE_SHA) over this pull request's tree"
+            elif [ -n "${LEAKS_LIST//[[:space:]]/}" ]; then
+              echo "::error title=Leak check not run::the base branch has no bin/check-leaks.py, so there is no trusted copy to run with the LEAKS_LIST secret, and this pull request's own copy is not handed it. Before merging, run 'python bin/check-leaks.py --require' locally with the private list; after merge the push to main runs it in CI."
+              exit 1
+            else
+              unset LEAKS_LIST
+              echo "the base branch has no bin/check-leaks.py and no list is configured: running this pull request's copy, which is handed nothing"
+            fi
+          fi
+          rc=0
+          out=$(python -I "$script") || rc=$?
+          printf '%s\n' "$out"
+          case "$out" in
+            *"skipped: no list"*)
+              if [ "$FORK_PR" = "true" ]; then
+                echo "::error title=Leak check not run::this pull request comes from a fork, so GitHub withheld the LEAKS_LIST secret and nothing was checked. Before merging, a maintainer must run 'python bin/check-leaks.py --require' locally with the private list, or push the branch to this repository so CI runs the check."
+                exit 1
+              fi
+              echo "::notice title=Leak check skipped::no LEAKS_LIST secret and no tools/leaks.local.txt, so nothing was checked" ;;
+          esac
+          exit $rc
+
   windows:
     runs-on: windows-latest
     permissions:
@@ -1242,3 +1567,22 @@ jobs:
       - name: Suite - session-start main-checkout section on Git for Windows
         if: hashFiles('bin/check-main-checkouts.sh') != ''
         run: bash bin/tests/test-session-start-main-checkout.sh
+      # Python suites for the tools above. The CRLF case matters most here: a
+      # Windows checkout writes README.md with CRLF, which the catalog check
+      # must read as the same text.
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+      - name: Suite - leak check on Git for Windows
+        run: python -m unittest discover -s bin/tests -p test_check_leaks.py -v
+      - name: Suite - skills catalog on Git for Windows
+        run: python -m unittest discover -s bin/tests -p test_build_skills_catalog.py -v
+      - name: Suite - gitleaks config on Git for Windows
+        if: hashFiles('.gitleaks.toml') != ''
+        # No gitleaks binary on this runner: the real-scanner case skips, and
+        # says so. The Linux job installs a pinned binary and requires it to run.
+        run: python -m unittest discover -s bin/tests -p test_gitleaks_config.py -v
+      - name: Suite - leak-check job and history scan steps on Git for Windows
+        # Runs the leak-check step's script under Git for Windows bash. The
+        # history-scan cases need gitleaks and skip here; Linux requires them.
+        run: python -m unittest discover -s bin/tests -p test_leak_check_workflow.py -v

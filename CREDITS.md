@@ -32,6 +32,17 @@ setup this template was extracted from, and were written there before they were
 written here. Several were rewritten on the way in rather than copied: a rule
 with its original example stripped out usually stops saying why it exists.
 
+## Patterns and files taken from other repositories
+
+Two of these are patterns, with code written fresh here. One is a vendored copy.
+
+| What | From | Terms | Where it shows up here |
+|---|---|---|---|
+| The leak check - a list of private names kept out of the repository, read at run time, failing on any match in a tracked file, and saying so when no list exists | `tools/validate.py` in [phuryn/product-engineering](https://github.com/phuryn/product-engineering) (Pawel Huryn) | MIT, Copyright (c) 2026 Pawel Huryn. The pattern was adapted; `bin/check-leaks.py` is a new implementation | `bin/check-leaks.py`, `tools/leaks.local.txt.example` |
+| The generated skills catalog - a README section built from each skill's front matter, with a `--check` mode that fails CI when it is stale | `catalog/build.py` in [xai-org/xai-cookbook](https://github.com/xai-org/xai-cookbook) (xAI) | X.AI Beta Testing License, so the pattern only: none of its code or text is used | `bin/build-skills-catalog.py`, the README `## Skills` section |
+| The secret-scanning config - gitleaks' default rules extended by vendor key rules | `.gitleaks.toml` in [xai-org/xai-cookbook](https://github.com/xai-org/xai-cookbook) (xAI) | X.AI Beta Testing License, so the pattern only: the rules here are written fresh | `.gitleaks.toml` |
+| The `security-audit` skill, vendored unmodified with its `LICENSE` | `skills/security-audit/` in [cloudflare/security-audit-skill](https://github.com/cloudflare/security-audit-skill) (Cloudflare) | MIT, Copyright (c) 2025-2026 Cloudflare, Inc. Copied at the commit recorded in its `UPSTREAM.md` | `.claude/skills/security-audit/`, with routers in `.cursor/skills/` and `.agents/skills/` |
+
 ## Software this template depends on or recommends
 
 Recommending is not borrowing, but a reader deserves to know whose work they are
@@ -54,6 +65,8 @@ that will tread on this template if you install them, are in
 
 ## Licence
 
-This template is MIT (see [`LICENSE`](LICENSE)). Everything above is referenced
-rather than vendored - no third-party code is copied into this repository - so
-each project's own licence governs it, wherever you install it from.
+This template is MIT (see [`LICENSE`](LICENSE)). With one exception, everything
+above is referenced rather than vendored, so each project's own licence governs it,
+wherever you install it from. The exception is `.claude/skills/security-audit/`,
+a copy of Cloudflare's skill that keeps its own MIT `LICENSE` in that folder; keep
+that file if you keep the skill.

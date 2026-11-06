@@ -1,0 +1,13 @@
+# Copy this file to tools/leaks.local.txt (which git ignores) and list what must never
+# appear in a tracked file of this public repository.
+#
+# One regular expression per line, matched case-insensitively against every tracked
+# file's path and text. Blank lines and lines starting with # are skipped.
+#
+# Do not commit the real list: a public repo that carried it would publish the names.
+# In CI, put the same text in a repository secret named LEAKS_LIST; see
+# the README section on the leak check.
+#
+# Examples (replace with your own):
+\bExampleCorp\b
+internal\.example\.test
