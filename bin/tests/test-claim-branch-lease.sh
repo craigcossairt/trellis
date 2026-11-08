@@ -1333,6 +1333,70 @@ want 0 "ids: an id from the allowed set (RELEASED is not the token RELEASE) acqu
 run Q feat7 --me "$OTHER" --now "$NOW"
 want 1 "ids: and that lease reads HELD to another session, not could-not-tell"
 
+# --- A release that finds nothing must not look like success ---------------
+# A lease lives on the origin of the checkout that ran --acquire. In a
+# workspace with two repos, agents leased a branch from one repo's worktree and
+# released it from a directory in the other. Release read the wrong origin,
+# found no ref, printed "no lease" and exited 0, and the real lease sat there
+# until its TTL ran out. Exit 3 now: the read worked, nothing was released.
+ORIGIN2="$TMP/other-origin.git"
+must git init -q --bare "$ORIGIN2"
+seed_repo "$TMP/w"
+# seed_repo wires every clone to $ORIGIN; W stands for the OTHER repo.
+must git -C "$TMP/w" remote set-url origin "$ORIGIN2"
+W() { ( cd "$TMP/w" && bash "$SCRIPT" "$@" ); }
+# Compare against what git stored, not $ORIGIN: on Windows git records the
+# remote as a C:/ path while the shell variable is a /tmp one.
+URL_A="$(git -C "$TMP/a" remote get-url origin)"
+URL_W="$(git -C "$TMP/w" remote get-url origin)"
+
+run A --acquire feat/xrepo --me "$ME" --harness claude-code --now "$NOW"
+want 0 "xrepo fixture: A leases feat/xrepo on its own origin"
+case "$OUT" in
+  *"$URL_A"*) ok "xrepo: acquire names the origin it wrote the lease to" ;;
+  *) bad "xrepo: acquire names the origin it wrote the lease to" "out: $OUT" ;;
+esac
+
+run W --release feat/xrepo --me "$ME" --now "$NOW"
+want 3 "xrepo: release from another repo's checkout finds nothing and says so"
+case "$OUT" in
+  *"no lease"*"$URL_W"*"checkout that ran --acquire"*) ok "xrepo: that release names the origin it read and where to run it instead" ;;
+  *) bad "xrepo: that release names the origin it read and where to run it instead" "out: $OUT" ;;
+esac
+XREPO_SHA="$(git -C "$TMP/a" ls-remote origin refs/heads/claims/feat/xrepo | awk '{print $1}')"
+if [ -n "$XREPO_SHA" ] && git -C "$TMP/a" fetch -q origin "refs/heads/claims/feat/xrepo" 2>/dev/null \
+   && git -C "$TMP/a" log -1 --format=%B FETCH_HEAD | grep -q "^CLAIM"; then
+  ok "xrepo: the real lease is untouched by the misdirected release"
+else
+  bad "xrepo: the real lease is untouched by the misdirected release" "ref sha '$XREPO_SHA'"
+fi
+
+# Run from a SUBDIRECTORY. Under Git for Windows this is also the case that
+# catches a /dev/null-path empty-tree hash (git opens sub/dir/nul and fails).
+mkdir -p "$TMP/a/sub/dir"
+OUT="$( ( cd "$TMP/a/sub/dir" && bash "$SCRIPT" --release feat/xrepo --me "$ME" --now "$NOW" ) 2>&1 )"; ACTUAL=$?
+want 0 "xrepo: release from a subdirectory of the acquiring repo releases"
+case "$OUT" in
+  *"released the lease"*"$URL_A"*) ok "xrepo: release names the origin it released on" ;;
+  *) bad "xrepo: release names the origin it released on" "out: $OUT" ;;
+esac
+
+run A --release feat/xrepo --me "$ME" --now "$NOW"
+want 0 "xrepo: releasing my own already-released lease is idempotent"
+case "$OUT" in
+  # The success line's own wording: the exit-3 miss text also contains
+  # "already released" ("Or your lease was already released and then swept"),
+  # so a bare substring passed even when the release took the miss path.
+  *"the lease on 'feat/xrepo' was already released"*) ok "xrepo: the repeat release says it was already released" ;;
+  *) bad "xrepo: the repeat release says it was already released" "out: $OUT" ;;
+esac
+
+run B --release feat/xrepo --me "$OTHER" --now "$NOW"
+want 3 "xrepo: another session's RELEASED marker is not a lease of mine to release"
+
+run A --release feat/never-leased --me "$ME" --now "$NOW"
+want 3 "xrepo: release of a branch that was never leased is exit 3, not a quiet 0"
+
 echo
 echo "passed $PASS, failed $FAIL"
 [ "$FAIL" -eq 0 ]

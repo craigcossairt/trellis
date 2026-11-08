@@ -71,6 +71,22 @@ The optional brain may be deleted. If you remove a required canonical hook,
 remove the corresponding configuration too and update your adapter deliberately.
 Delete `.codex/` to remove this entire optional hook adapter.
 
+## Instruction size: Codex cuts AGENTS.md at a byte limit
+
+Codex reads `AGENTS.md` only up to `project_doc_max_bytes` (32768 bytes by
+default) and drops the rest without a warning. The agent never sees the rules
+past the cut, and nothing in the session says so. This template's `AGENTS.md`
+ships close to that default, and filling in its slots grows it.
+
+`bin/check-instruction-budgets.sh` fails CI when a rule file passes its budget in
+`bin/instruction-budgets.txt`. When it does, either move rationale out of
+`AGENTS.md` into `docs/` (the usual fix), or raise the limit: set
+`project_doc_max_bytes` in `~/.codex/config.toml` on every machine that runs
+Codex, and raise `limit` in the budgets file to the same value in the same
+change. A nested `AGENTS.md` is appended to the root one when Codex starts in
+its directory, so budget that pair with a `sum` line. A project that never runs
+Codex can delete the budgets file; CI then prints a skip.
+
 ## Verification
 
 `python3 bin/tests/test_codex_hooks.py` drives the adapter with Codex-shaped

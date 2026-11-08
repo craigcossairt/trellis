@@ -84,3 +84,12 @@ Expect a mix, and say which is which when you report back:
 
 Reporting "the reviewer found five things" without having checked them is the same failure as
 shipping unverified code, one level up.
+
+## Decide in advance what blocks, or the rounds never end
+
+On hand-written parsers and validators, every review round can find one more byte-level oddity,
+so "merge when every reviewer is satisfied" does not converge: in the source project five rounds
+on one small checker each found a new edge. Write the stop rule before the first round. A finding
+blocks only when it is a false "ok" on input a real edit could produce, or a regression against
+the previous head. Exotic inputs nobody writes go to a follow-up ticket with the reproduction
+attached, and the review moves on.

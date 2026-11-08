@@ -39,3 +39,13 @@ without its reason stops being followed the first time it is inconvenient. -->
   (a tautological test) passes by construction and can never disagree with the code.
 - Test at a module's interface, not its internals. A test that reads the source file, or mocks
   the very thing under test, breaks on every refactor and catches nothing.
+
+### Secrets
+
+- A secret never goes on a command line, including a script's own arguments. Argv is readable by
+  other processes on the machine, lands in shell history, and is echoed into agent transcripts
+  and CI logs. Pass it through an environment variable of the child process, a file with tight
+  permissions, or stdin. In the source project two QA helpers took a password as an argument and
+  had to be rewritten to read it from the environment.
+- A printed remote URL has its userinfo stripped first (`https://user:token@host` becomes
+  `https://host`), so a token in a git remote never reaches a log.

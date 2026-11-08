@@ -109,6 +109,10 @@
 #                        pushed commits
 #   2  could not tell  - no network, bad args, not a git repo, unreadable lease,
 #                        or a lease left in the old refs/claims/ namespace
+#   3  --release only  - no lease of yours on that branch at this checkout's
+#                        origin, so nothing was released. Usually the release
+#                        ran from a different repo's checkout than the acquire.
+#                        Never read it as "released".
 #
 # 2 is deliberately NOT folded into either 0 or 1. "I could not reach the
 # remote" is not "nobody is there" - the same mistake as `|| true` on a grep, or
@@ -384,6 +388,12 @@ session_id_clear() {
 # raw empty TREE peels to itself and has no ^@ output, so it would have passed),
 # and if hash-object itself failed BOTH sides were empty, compared equal, and
 # the bypass was set - unknown resolving to the permissive answer.
+#
+# The empty tree is hashed from STDIN, never from a /dev/null path. Under Git
+# for Windows, MSYS hands native git `/dev/null` as `nul`, and git resolves
+# that relative to the current subdirectory: run from <repo>/sub it opens
+# sub/nul, fails, and every lease read there came back "not a lease" (exit 2).
+# Linux resolves the path, so a Linux-only CI cannot see it.
 lease_object_is_inert() {
   local ty tree empty parents
   ty="$(git cat-file -t "$1" 2>/dev/null)" || return 1
@@ -392,7 +402,7 @@ lease_object_is_inert() {
   tree="$(git rev-parse --verify --quiet "$1^{tree}" 2>/dev/null)" || return 1
   [ -n "$tree" ] || return 1
 
-  empty="$(git hash-object -t tree /dev/null 2>/dev/null)" || return 1
+  empty="$(git hash-object -t tree --stdin </dev/null 2>/dev/null)" || return 1
   [ -n "$empty" ] || return 1
   [ "$tree" = "$empty" ] || return 1
 
@@ -604,7 +614,7 @@ lease_read_ref() {
 # would reintroduce the very coupling the lease exists to remove.
 lease_object() {
   local empty_tree
-  empty_tree="$(git hash-object -t tree /dev/null 2>/dev/null)" || return 1
+  empty_tree="$(git hash-object -t tree --stdin </dev/null 2>/dev/null)" || return 1
   GIT_AUTHOR_NAME='claim-branch' GIT_AUTHOR_EMAIL='claim-branch@local' \
   GIT_COMMITTER_NAME='claim-branch' GIT_COMMITTER_EMAIL='claim-branch@local' \
   GIT_AUTHOR_DATE="$NOW" GIT_COMMITTER_DATE="$NOW" \
@@ -615,7 +625,7 @@ lease_object() {
 # Same shape as lease_object: parentless, empty tree, fixed identity.
 release_object() {
   local empty_tree
-  empty_tree="$(git hash-object -t tree /dev/null 2>/dev/null)" || return 1
+  empty_tree="$(git hash-object -t tree --stdin </dev/null 2>/dev/null)" || return 1
   GIT_AUTHOR_NAME='claim-branch' GIT_AUTHOR_EMAIL='claim-branch@local' \
   GIT_COMMITTER_NAME='claim-branch' GIT_COMMITTER_EMAIL='claim-branch@local' \
   GIT_AUTHOR_DATE="$NOW" GIT_COMMITTER_DATE="$NOW" \
@@ -831,8 +841,29 @@ fi
 
 # --- acquire / release ------------------------------------------------------
 
+# release_miss -> exit 3. The read worked, so it is not 2, and nothing was
+# released, so it is not 0. This used to print "no lease" and exit 0, and a
+# release run from ANOTHER repo's checkout read that repo's origin, found
+# nothing, and left the real lease standing for its whole TTL while reporting
+# success. Seen in a two-repo workspace where agents acquired from one repo's
+# worktree and released from a directory in the other.
+release_miss() {
+  echo "release: no lease of yours on '$BRANCH' at $ORIGIN_URL; nothing was released." >&2
+  echo "A lease lives on the origin of the checkout that ran --acquire. Either this ran from another" >&2
+  echo "repo's checkout: run --release from the checkout that ran --acquire." >&2
+  echo "Or your lease was already released and then swept or deleted: nothing is held, nothing to do." >&2
+  exit 3
+}
+
 if [ "$MODE" != "check" ]; then
   [ -n "$ME" ] || { echo "--$MODE needs --me <session-id>: the whole point is an identity git config cannot supply" >&2; exit 2; }
+
+  # Named in acquire and release output. A lease lives on the origin of the
+  # checkout that ran --acquire, so in a workspace with several repos a lease
+  # taken in one and released from another is visible in the text. Userinfo is
+  # stripped first: a token in an https remote must not reach a transcript.
+  ORIGIN_URL="$(git remote get-url origin 2>/dev/null)" || ORIGIN_URL="origin"
+  ORIGIN_URL="$(printf '%s' "$ORIGIN_URL" | sed -E 's#://[^/@]*@#://#')"
 
   state_line="$(lease_read_ref "$LEASE_REF")" || exit 2
   split_state "$state_line"
@@ -840,7 +871,15 @@ if [ "$MODE" != "check" ]; then
 
   if [ "$MODE" = "release" ]; then
     case "$STATE" in
-      NONE|RELEASED) sayf "release: no lease on '$BRANCH'"; exit 0 ;;
+      RELEASED)
+        if [ "$HOLDER" = "$ME" ]; then
+          # Your own RELEASED marker: a repeat release is done already, not a miss.
+          session_id_clear
+          sayf "release: the lease on '$BRANCH' was already released ($ORIGIN_URL)"
+          exit 0
+        fi
+        release_miss ;;
+      NONE) release_miss ;;
       MINE|EXPIRED)
         if [ "$STATE" = "EXPIRED" ] && [ "$HOLDER" != "$ME" ]; then
           say "refusing to release: '$BRANCH' is held by $HOLDER, not you"
@@ -848,7 +887,7 @@ if [ "$MODE" != "check" ]; then
         fi
         if release_ref "$OLD_SHA"; then
           session_id_clear
-          sayf "released the lease on '$BRANCH'"
+          sayf "released the lease on '$BRANCH' ($ORIGIN_URL)"
           exit 0
         fi
         echo "could not release the lease on '$BRANCH' (it may have changed underneath)" >&2
@@ -905,7 +944,7 @@ if [ "$MODE" != "check" ]; then
       echo "         your own pushes may be refused until you re-run --acquire" >&2
     fi
     warn_if_not_on_branch "$BRANCH"
-    sayf "acquired the lease on '$BRANCH' (session $ME, ttl ${TTL_H}h)"
+    sayf "acquired the lease on '$BRANCH' at $ORIGIN_URL (session $ME, ttl ${TTL_H}h)"
     exit 0
   fi
 
