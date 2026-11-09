@@ -160,6 +160,8 @@ eq "a non-integer budget exits 2" "2" "$(run_code "$T")"
 
 T="$TMP/bad_sum"; tree "$T" 100 100 "${STD[@]}" "sum root website"
 eq "a sum naming an undeclared file exits 2" "2" "$(run_code "$T")"
+# shellcheck disable=SC2016 # the backticks are literal text in the message
+has "the undeclared-sum message names the file" "$(run_out "$T")" 'sum names undeclared file `website`'
 
 T="$TMP/no_limit"; tree "$T" 100 100 "share 50" "file root AGENTS.md 300"
 eq "a budgets file with no limit exits 2" "2" "$(run_code "$T")"
@@ -191,6 +193,8 @@ eq "a budgeted path that is a directory exits 2" "2" "$(run_code "$T")"
 T="$TMP/badarg"; tree "$T" 100 100 "${STD[@]}"
 eq "an unknown argument exits 2" "2" "$(run_code "$T" --frobnicate)"
 eq "a malformed --today exits 2" "2" "$(run_code "$T" --today 2026-13)"
+# shellcheck disable=SC2016 # the backticks are literal text in the message
+has "the --today message quotes the bad value" "$(run_out "$T" --today 2026-13)" 'bad --today `2026-13`'
 
 if [ "$(id -u)" = "0" ]; then
   SKIP=$((SKIP + 1)); printf '  SKIPPED an unreadable required file exits 2 (running as root: chmod 000 stays readable)\n'
