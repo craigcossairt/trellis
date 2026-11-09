@@ -863,7 +863,9 @@ if [ "$MODE" != "check" ]; then
   # taken in one and released from another is visible in the text. Userinfo is
   # stripped first: a token in an https remote must not reach a transcript.
   ORIGIN_URL="$(git remote get-url origin 2>/dev/null)" || ORIGIN_URL="origin"
-  ORIGIN_URL="$(printf '%s' "$ORIGIN_URL" | sed -E 's#://[^/@]*@#://#')"
+  # Everything from the scheme to the LAST @ before the path goes, so a
+  # password holding a literal @ is stripped whole too.
+  ORIGIN_URL="$(printf '%s' "$ORIGIN_URL" | sed -E 's|^([A-Za-z][A-Za-z0-9+.-]*://)[^/?#]*@|\1|')"
 
   state_line="$(lease_read_ref "$LEASE_REF")" || exit 2
   split_state "$state_line"
@@ -874,7 +876,9 @@ if [ "$MODE" != "check" ]; then
       RELEASED)
         if [ "$HOLDER" = "$ME" ]; then
           # Your own RELEASED marker: a repeat release is done already, not a miss.
-          session_id_clear
+          # The id file is left alone: nothing was released this time, and since
+          # the first release this checkout may have leased another branch under
+          # a new session, whose identity the file now holds.
           sayf "release: the lease on '$BRANCH' was already released ($ORIGIN_URL)"
           exit 0
         fi

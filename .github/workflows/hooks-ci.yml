@@ -515,6 +515,7 @@ jobs:
           bash bin/check-instruction-budgets.sh
 
       - name: Suite - instruction-file budgets
+        if: hashFiles('bin/instruction-budgets.txt') != ''
         run: |
           # The dangerous failure is an "under budget" about a file that was
           # never measured, so a third of the cases must exit 2, and a missing
@@ -533,6 +534,14 @@ jobs:
           #   cap is the whole limit, share ignored      ->  5 (sum over, its
           #     OVER line, separator, CRLF budgets file, present optional)
           #   step skip no longer limited to copies      ->  1 (wiring case)
+          #
+          # Review fixes, measured 2026-11-08 over 50 cases (predicted =
+          # actual, by name):
+          #   one suite step loses its hashFiles guard   ->  1 (guard count)
+          #   root file budget no longer equals limit    ->  1 (budget = limit)
+          #   unknown-directive message drops the name   ->  1 (message text)
+          #   live call commented out in the step        ->  1 (live tree)
+          #   budgets file deleted (the opt-out)         ->  0, and 2 skipped
           bash bin/tests/test-check-instruction-budgets.sh
 
       - name: Install gitleaks (pinned, checksum verified)
@@ -870,6 +879,13 @@ jobs:
           #   empty tree hashed from the /dev/null path      3 -> 3 red
           #     Windows only: MSYS passes `nul`, which git resolves against
           #     the subdirectory. Expected 0 red on the Linux job.
+          # Review fix, measured 2026-11-08 over 209 cases:
+          #   repeat release clears the session id again    1 -> 1 red
+          #     (the id file may now hold another branch's session)
+          # Not pinned: the userinfo strip on the printed origin. `git remote
+          # get-url` returns the URL as configured, and a fixture remote that
+          # carries userinfo cannot be fetched from, so no case can drive it;
+          # the regex was checked by hand against sample URLs.
           bash bin/tests/test-claim-branch-lease.sh
 
       - name: Suite - push gate (pre-push hook + verify-green)
@@ -1603,6 +1619,7 @@ jobs:
       # case for that. The unreadable-file case skips here (chmod 000 is
       # ignored) and runs on Linux.
       - name: Suite - instruction-file budgets on Git for Windows
+        if: hashFiles('bin/instruction-budgets.txt') != ''
         run: bash bin/tests/test-check-instruction-budgets.sh
       # These three were missing here with no reason recorded. All three pass
       # on Git for Windows (measured 2026-09-30: 18, 80 and 87 cases), so the

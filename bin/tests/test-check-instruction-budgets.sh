@@ -175,6 +175,12 @@ eq "a budgets file that budgets nothing exits 2" "2" "$(run_code "$T")"
 
 T="$TMP/dup"; tree "$T" 100 100 "${STD[@]}" "file repo sub/AGENTS.md 400"
 eq "a name declared twice exits 2" "2" "$(run_code "$T")"
+has "the duplicate message names the name" "$(run_out "$T")" 'name `repo` declared twice'
+
+T="$TMP/unknown_kw"; tree "$T" 100 100 "${STD[@]}" "bogus x"
+eq "an unknown directive exits 2" "2" "$(run_code "$T")"
+has "the unknown-directive message names the directive" "$(run_out "$T")" 'unknown directive `bogus`'
+has "a budgets file that budgets nothing says so" "$(run_out "$TMP/no_files")" "declares no file or optional entry"
 
 # A directory passes -e and, on Linux, opens and reads as 0 bytes.
 T="$TMP/dirpath"; tree "$T" 100 100 "${STD[@]}"; rm "$T/sub/AGENTS.md"; mkdir "$T/sub/AGENTS.md"
@@ -212,14 +218,27 @@ echo "the shipped budgets file and its wiring"
 
 if [ -f "$SHIPPED" ]; then
   CFG="$(sed 's/#.*//' "$SHIPPED")"
-  has "the shipped limit is Codex's default project_doc_max_bytes" "$CFG" "limit 32768"
-  if printf '%s\n' "$CFG" | grep -Eq '^file[[:space:]]+[a-z]+[[:space:]]+AGENTS\.md[[:space:]]'; then
+  # Not the literal 32768: a project that raises project_doc_max_bytes raises
+  # `limit` with it, and that is a supported configuration. What must hold is
+  # that the root file's budget moved with the limit, the step people forget.
+  LIM="$(printf '%s\n' "$CFG" | awk '$1 == "limit" {print $2}')"
+  ROOTB="$(printf '%s\n' "$CFG" | awk '$1 == "file" && $3 == "AGENTS.md" {print $4}')"
+  case "$LIM" in
+    ''|*[!0-9]*) bad "the shipped budgets file sets a numeric limit" "limit <bytes>" "${LIM:-(none)}" ;;
+    *) ok "the shipped budgets file sets a numeric limit" ;;
+  esac
+  if [ -n "$ROOTB" ]; then
     ok "the shipped file budgets the root AGENTS.md"
+    eq "the root AGENTS.md budget equals the limit" "$LIM" "$ROOTB"
   else
     bad "the shipped file budgets the root AGENTS.md" "a 'file <name> AGENTS.md <bytes>' line" "$CFG"
   fi
 else
-  bad "the shipped budgets file exists" "$SHIPPED" "missing"
+  # A copy that never runs Codex deletes the budgets file (the documented
+  # opt-out), and hooks-ci then skips this suite. Run by hand there, say so
+  # rather than fail. The template cannot lose the file unnoticed: its live
+  # step does not skip and exits 2.
+  SKIP=$((SKIP + 1)); echo "  skip no budgets file: this copy opted out of the budget check"
 fi
 
 # No `|| true` on the greps below: this script does not run under set -e, and
@@ -228,11 +247,13 @@ fi
 if [ -f "$HOOKS" ]; then
   # The live step must call the script on the real tree, not only this suite,
   # and must not swallow its exit code.
-  LIVE="$(grep -n 'bash bin/check-instruction-budgets.sh' "$HOOKS")"
-  if [ -n "$LIVE" ]; then ok "hooks-ci runs the check on the live tree"; else bad "hooks-ci runs the check on the live tree" "a step calling bin/check-instruction-budgets.sh" "none"; fi
   # The whole step, not just the calling line: a `|| true` on the next line
   # or continue-on-error on the step would swallow the exit code too.
   STEP="$(awk '/^      - name: Instruction-file byte budgets$/ {on=1; print; next} on && /^      - name:/ {exit} on' "$HOOKS")"
+  # Read from the step itself, as a command line: a commented-out call
+  # anywhere in the file would satisfy a whole-file grep.
+  LIVE="$(printf '%s\n' "$STEP" | grep -E '^[[:space:]]*bash bin/check-instruction-budgets\.sh[[:space:]]*$')"
+  if [ -n "$LIVE" ]; then ok "hooks-ci runs the check on the live tree"; else bad "hooks-ci runs the check on the live tree" "a step calling bin/check-instruction-budgets.sh" "none"; fi
   if [ -n "$STEP" ]; then ok "the live budget step is found by name"; else bad "the live budget step is found by name" "the step block" "none"; fi
   lacks "the live budget step has no || true" "$STEP" "|| true"
   lacks "the live budget step has no continue-on-error" "$STEP" "continue-on-error"
@@ -247,6 +268,10 @@ if [ -f "$HOOKS" ]; then
   fi
   SUITE="$(grep -c 'bash bin/tests/test-check-instruction-budgets.sh' "$HOOKS")"
   eq "hooks-ci runs this suite on Linux and on Windows" "2" "$SUITE"
+  # Both suite steps skip in a copy that deleted the budgets file (the opt-out);
+  # without the guard that copy's CI fails on every push.
+  GUARD="$(grep -c "if: hashFiles('bin/instruction-budgets.txt') != ''" "$HOOKS")"
+  eq "both suite steps skip when the budgets file is gone" "2" "$GUARD"
 else
   bad "hooks-ci.yml exists" "$HOOKS" "missing"
 fi

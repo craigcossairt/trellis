@@ -17,8 +17,8 @@
 # when that happens; this does.
 #
 # If you raise project_doc_max_bytes (in ~/.codex/config.toml on each machine
-# that runs Codex), raise `limit` in bin/instruction-budgets.txt to match, in
-# the same change. If your project never runs Codex, delete the budgets file:
+# that runs Codex), raise `limit` in bin/instruction-budgets.txt to match, and
+# the root AGENTS.md `file` budget with it, in the same change. If your project never runs Codex, delete the budgets file:
 # CI then prints a skip instead of failing.
 #
 # WHAT CODEX CONCATENATES. It walks up from the working directory to the
@@ -85,7 +85,7 @@ $SIG{__DIE__} = sub { print STDERR "check-instruction-budgets: $_[0]"; exit 2; }
 sub fatal { print STDERR "check-instruction-budgets: $_[0]\n"; exit 2; }
 
 my $today = $ENV{TODAY};
-fatal("bad --today q($today), expected YYYY-MM")
+fatal("bad --today `$today`, expected YYYY-MM")
   unless $today =~ /\A\d{4}-(0[1-9]|1[0-2])\z/;
 
 my $cfg = $ARGV[0];
@@ -114,24 +114,24 @@ while (my $line = <$fh>) {
     fatal("$cfg:$n: $kw takes <name> <path> <bytes>")
       unless @w == 3 && $w[2] =~ /\A[1-9]\d*\z/;
     my ($name, $path, $budget) = @w;
-    fatal("$cfg:$n: name q($name) declared twice") if exists $file{$name};
+    fatal("$cfg:$n: name `$name` declared twice") if exists $file{$name};
     $file{$name} = { path => $path, budget => $budget, optional => ($kw eq "optional") };
     push @order, $name;
   } elsif ($kw eq "sum") {
     fatal("$cfg:$n: sum takes two or more names") unless @w >= 2;
     push @sums, [$n, @w];
   } else {
-    fatal("$cfg:$n: unknown directive q($kw)");
+    fatal("$cfg:$n: unknown directive `$kw`");
   }
 }
 close $fh;
 fatal("$cfg: no limit") unless defined $limit;
 fatal("$cfg: no share") unless defined $share;
-fatal("$cfg: budgets no file") unless @order;
+fatal("$cfg: declares no file or optional entry") unless @order;
 for my $s (@sums) {
   my ($ln, @names) = @$s;
   for my $nm (@names) {
-    fatal("$cfg:$ln: sum names undeclared file q($nm)") unless exists $file{$nm};
+    fatal("$cfg:$ln: sum names undeclared file `$nm`") unless exists $file{$nm};
   }
 }
 

@@ -4,8 +4,9 @@
 # Raise a budget in a change that says what the new text is for. Moving
 # rationale out of AGENTS.md into docs/ is the usual fix, not a bigger number.
 # If you raise project_doc_max_bytes in ~/.codex/config.toml, raise `limit` to
-# the same value here. If this project never runs Codex, delete this file and
-# CI prints a skip instead.
+# the same value here, and the root `file agents` budget below with it: that
+# number is separate and is not derived from `limit`. If this project never
+# runs Codex, delete this file and CI prints a skip instead.
 
 # Codex's default project_doc_max_bytes.
 limit 32768

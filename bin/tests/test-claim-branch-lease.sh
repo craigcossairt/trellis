@@ -1381,8 +1381,17 @@ case "$OUT" in
   *) bad "xrepo: release names the origin it released on" "out: $OUT" ;;
 esac
 
+# Since the first release, this checkout may have leased another branch under a
+# new session. The repeat release changes no lease, so it must not delete that
+# session's id file (review finding: the pre-push check then refused its pushes).
+printf 'task-b-session\n' > "$A_ID_FILE"
 run A --release feat/xrepo --me "$ME" --now "$NOW"
 want 0 "xrepo: releasing my own already-released lease is idempotent"
+if [ "$(head -1 "$A_ID_FILE" 2>/dev/null)" = "task-b-session" ]; then
+  ok "xrepo: the repeat release leaves the checkout's current session id alone"
+else
+  bad "xrepo: the repeat release leaves the checkout's current session id alone" "id file: $(cat "$A_ID_FILE" 2>&1)"
+fi
 case "$OUT" in
   # The success line's own wording: the exit-3 miss text also contains
   # "already released" ("Or your lease was already released and then swept"),

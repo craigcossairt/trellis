@@ -82,8 +82,8 @@ ships close to that default, and filling in its slots grows it.
 `bin/instruction-budgets.txt`. When it does, either move rationale out of
 `AGENTS.md` into `docs/` (the usual fix), or raise the limit: set
 `project_doc_max_bytes` in `~/.codex/config.toml` on every machine that runs
-Codex, and raise `limit` in the budgets file to the same value in the same
-change. A nested `AGENTS.md` is appended to the root one when Codex starts in
+Codex, and raise `limit` and the root file's `file` budget in the budgets file
+to the same value in the same change. A nested `AGENTS.md` is appended to the root one when Codex starts in
 its directory, so budget that pair with a `sum` line. A project that never runs
 Codex can delete the budgets file; CI then prints a skip.
 
