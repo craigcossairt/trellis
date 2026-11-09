@@ -89,6 +89,12 @@ the worktree directory, and work there.
 
 ## Cleanup After Merge
 
+`--release` exits **3** when it finds no lease of yours at this checkout's
+origin. That is never "released": a lease lives on the origin of the checkout
+that ran `--acquire`, so in a workspace with several repos, re-run the release
+from that checkout. (Exit 3 is also what an already-released-and-swept lease
+gives; then nothing is held.)
+
 ```bash
 # Release FIRST - a lease you keep blocks the branch for every other session
 # until its TTL expires (4h by default), and that cost lands on someone else.

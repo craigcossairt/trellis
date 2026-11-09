@@ -27,6 +27,19 @@ cut **18.6%** by a different move.
 - **Re-check what the cut removed.** In the same trim, one row lost the words "two independent
   checks with independent bypasses", and an agent given the trimmed file then claimed one bypass
   skipped both checks. A short phrase can be the only thing ruling a wrong reading out.
+- **A passing "nothing was deleted" check is not that re-check.** A script can prove every moved
+  line still exists somewhere; it cannot prove a rule an implementing session needs is still in
+  the file that session loads. Get a fresh-context review of the trimmed file against the old
+  one, asking only "which rule did a session lose?". In the source project the first draft of a
+  rationale move cut 13% with such a checker green, and the review found several live rules that
+  had moved out with the history; they went back, and the final cut was 8%.
+- **Mind the harness byte limits.** Some harnesses stop reading a rule file at a fixed size and
+  say nothing (Codex: `project_doc_max_bytes`, see `.codex/README.md`). A file that grew past the
+  limit has already lost its tail in every session that loads it. `bin/check-instruction-budgets.sh`
+  fails CI before that happens on the Linux checkout, for the files and sums listed in
+  `bin/instruction-budgets.txt` only. The shipped list names the root `AGENTS.md`; add each nested
+  `AGENTS.md` with its `sum` line, or the check never measures it. A Windows checkout with CRLF line endings
+  is a byte per line larger, so leave headroom.
 
 ## Prove an agent-rule edit with a blinded A/B
 

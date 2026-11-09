@@ -500,6 +500,50 @@ jobs:
           #   text after the closing quote accepted       -> junk after quote, 1
           python -m unittest discover -s bin/tests -p test_build_skills_catalog.py -v
 
+      - name: Instruction-file byte budgets
+        run: |
+          # Codex reads AGENTS.md only up to project_doc_max_bytes (32768 by
+          # default) and drops the rest without a word. This fails the change
+          # that grows a rule file past its budget in bin/instruction-budgets.txt.
+          # Exit 1 = over, 2 = could not run; both fail the step. In the template
+          # the budgets file must exist. A copy that never runs Codex opts out
+          # by deleting it, and says so here rather than failing every push.
+          if [ "$GITHUB_REPOSITORY" != "craigcossairt/trellis" ] && [ ! -e bin/instruction-budgets.txt ]; then
+            echo "skipped: bin/instruction-budgets.txt is absent, so this copy keeps no AGENTS.md byte budget"
+            exit 0
+          fi
+          bash bin/check-instruction-budgets.sh
+
+      - name: Suite - instruction-file budgets
+        if: hashFiles('bin/instruction-budgets.txt') != ''
+        run: |
+          # The dangerous failure is an "under budget" about a file that was
+          # never measured, so a third of the cases must exit 2, and a missing
+          # optional file must say NOT CHECKED, never ok. Fixture trees only,
+          # plus the shipped limit and this workflow's wiring.
+          #
+          # Mutation ledger, measured 2026-11-08 on Git for Windows over 44
+          # cases (predicted set written first, each mutation's diff read,
+          # every red matched by name):
+          #   per-file `>` becomes `>=`                  ->  1 (exactly-at-budget)
+          #   blank-line separator dropped from sums     ->  1 (separator case)
+          #   missing optional file read as 0 bytes      ->  3 (NOT CHECKED file,
+          #     NOT CHECKED sum, sum never printed ok)
+          #   could-not-run (2) collapsed into over (1)  -> 11 (every perl-side
+          #     exit-2 case; 12 here, where the unreadable case also runs)
+          #   cap is the whole limit, share ignored      ->  5 (sum over, its
+          #     OVER line, separator, CRLF budgets file, present optional)
+          #   step skip no longer limited to copies      ->  1 (wiring case)
+          #
+          # Review fixes, measured 2026-11-08 over 50 cases (predicted =
+          # actual, by name):
+          #   one suite step loses its hashFiles guard   ->  1 (guard count)
+          #   root file budget no longer equals limit    ->  1 (budget = limit)
+          #   unknown-directive message drops the name   ->  1 (message text)
+          #   live call commented out in the step        ->  1 (live tree)
+          #   budgets file deleted (the opt-out)         ->  0, and 2 skipped
+          bash bin/tests/test-check-instruction-budgets.sh
+
       - name: Install gitleaks (pinned, checksum verified)
         if: hashFiles('.gitleaks.toml') != ''
         run: |
@@ -820,6 +864,28 @@ jobs:
           #   holder-equality test dropped                   1 -> 1 red
           #     (a stranger's file would be told the holder's id)
           #   off-branch id read even when --me is given     1 -> 1 red
+          #
+          # Release that finds nothing (exit 3) and the stdin empty-tree hash,
+          # measured 2026-11-08 over 208 cases on Git for Windows, each mutant
+          # in its own detached worktree, diff read before running:
+          #   release_miss exits 0 instead of 3              3 -> 3 red
+          #   own RELEASED marker sent to release_miss       2 -> 1 red, then 2 -> 2
+          #     The "says it was already released" case stayed green: it
+          #     matched the bare words "already released", which the exit-3
+          #     miss text also prints. It now matches the success line's own
+          #     wording, and the re-run went 2 -> 2.
+          #   origin dropped from the acquire message        1 -> 1 red
+          #   origin dropped from the release message        1 -> 1 red
+          #   empty tree hashed from the /dev/null path      3 -> 3 red
+          #     Windows only: MSYS passes `nul`, which git resolves against
+          #     the subdirectory. Expected 0 red on the Linux job.
+          # Review fix, measured 2026-11-08 over 209 cases:
+          #   repeat release clears the session id again    1 -> 1 red
+          #     (the id file may now hold another branch's session)
+          # Not pinned: the userinfo strip on the printed origin. `git remote
+          # get-url` returns the URL as configured, and a fixture remote that
+          # carries userinfo cannot be fetched from, so no case can drive it;
+          # the regex was checked by hand against sample URLs.
           bash bin/tests/test-claim-branch-lease.sh
 
       - name: Suite - push gate (pre-push hook + verify-green)
@@ -1549,6 +1615,12 @@ jobs:
         run: bash bin/tests/test-check-cdpath-cd.sh
       - name: Suite - trellis-survey on Git for Windows
         run: bash bin/tests/test-trellis-survey.sh
+      # A Windows checkout can give the budgets file CRLF ends; the suite has a
+      # case for that. The unreadable-file case skips here (chmod 000 is
+      # ignored) and runs on Linux.
+      - name: Suite - instruction-file budgets on Git for Windows
+        if: hashFiles('bin/instruction-budgets.txt') != ''
+        run: bash bin/tests/test-check-instruction-budgets.sh
       # These three were missing here with no reason recorded. All three pass
       # on Git for Windows (measured 2026-09-30: 18, 80 and 87 cases), so the
       # gap was an unargued skip, not a platform limit.

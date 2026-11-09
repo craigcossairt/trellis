@@ -25,7 +25,9 @@ decide what the findings mean. A parent adjudicating its own subagents is still
 a model grading a model.
 
 Neither applies to read-only work, or to ordinary code changes - those are
-covered by `tdd.md` and the push gate.
+covered by `tdd.md` and the push gate. One exception: confirming a change a
+person reports making (rule 7 below) is read-only for you, and it still
+follows rule 7.
 
 ## Gate A - did the write land?
 
@@ -45,6 +47,11 @@ covered by `tdd.md` and the push gate.
    change to a delete. Deletes destroy the record of what was there.
 6. **Mark what the agent wrote**, however your system allows, so that agent
    writes can be told from yours afterwards.
+7. **A change a person reports making, in a console you cannot read, is a claim
+   at the lowest certainty level until it is read back.** "I attached the
+   policy" is not a receipt. Read the resulting state from the API or CLI before
+   closing the task. In the source project a cloud policy reported as attached
+   read back with no targets and an empty effective policy.
 
 ## Gate B - what is allowed to reach the conclusion?
 
