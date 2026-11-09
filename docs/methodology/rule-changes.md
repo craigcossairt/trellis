@@ -36,7 +36,9 @@ cut **18.6%** by a different move.
 - **Mind the harness byte limits.** Some harnesses stop reading a rule file at a fixed size and
   say nothing (Codex: `project_doc_max_bytes`, see `.codex/README.md`). A file that grew past the
   limit has already lost its tail in every session that loads it. `bin/check-instruction-budgets.sh`
-  fails CI before that happens on the Linux checkout; a Windows checkout with CRLF line endings
+  fails CI before that happens on the Linux checkout, for the files and sums listed in
+  `bin/instruction-budgets.txt` only. The shipped list names the root `AGENTS.md`; add each nested
+  `AGENTS.md` with its `sum` line, or the check never measures it. A Windows checkout with CRLF line endings
   is a byte per line larger, so leave headroom.
 
 ## Prove an agent-rule edit with a blinded A/B

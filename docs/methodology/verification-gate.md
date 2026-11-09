@@ -25,7 +25,9 @@ decide what the findings mean. A parent adjudicating its own subagents is still
 a model grading a model.
 
 Neither applies to read-only work, or to ordinary code changes - those are
-covered by `tdd.md` and the push gate.
+covered by `tdd.md` and the push gate. One exception: confirming a change a
+person reports making (rule 7 below) is read-only for you, and it still
+follows rule 7.
 
 ## Gate A - did the write land?
 

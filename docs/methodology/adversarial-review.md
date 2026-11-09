@@ -90,6 +90,7 @@ shipping unverified code, one level up.
 On hand-written parsers and validators, every review round can find one more byte-level oddity,
 so "merge when every reviewer is satisfied" does not converge: in the source project five rounds
 on one small checker each found a new edge. Write the stop rule before the first round. A finding
-blocks only when it is a false "ok" on input a real edit could produce, or a regression against
-the previous head. Exotic inputs nobody writes go to a follow-up ticket with the reproduction
+blocks only when it gives a wrong verdict on input a real edit could produce (a false "ok", or a
+refusal of a supported input such as the documented default configuration), or a regression
+against the previous head. Exotic inputs nobody writes go to a follow-up ticket with the reproduction
 attached, and the review moves on.

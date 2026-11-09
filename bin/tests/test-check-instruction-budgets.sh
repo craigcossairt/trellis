@@ -268,11 +268,13 @@ if [ -f "$HOOKS" ]; then
   else
     bad "the live step skips only in a copy with no budgets file" "one condition naming GITHUB_REPOSITORY and the absent budgets file" "$STEP"
   fi
-  SUITE="$(grep -c 'bash bin/tests/test-check-instruction-budgets.sh' "$HOOKS")"
+  # Executable lines only: a commented-out call or guard must not count.
+  LIVE_LINES="$(grep -v '^[[:space:]]*#' "$HOOKS")"
+  SUITE="$(printf '%s\n' "$LIVE_LINES" | grep -c 'bash bin/tests/test-check-instruction-budgets.sh')"
   eq "hooks-ci runs this suite on Linux and on Windows" "2" "$SUITE"
   # Both suite steps skip in a copy that deleted the budgets file (the opt-out);
   # without the guard that copy's CI fails on every push.
-  GUARD="$(grep -c "if: hashFiles('bin/instruction-budgets.txt') != ''" "$HOOKS")"
+  GUARD="$(printf '%s\n' "$LIVE_LINES" | grep -c "if: hashFiles('bin/instruction-budgets.txt') != ''")"
   eq "both suite steps skip when the budgets file is gone" "2" "$GUARD"
 else
   bad "hooks-ci.yml exists" "$HOOKS" "missing"
