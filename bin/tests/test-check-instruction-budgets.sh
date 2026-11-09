@@ -175,10 +175,12 @@ eq "a budgets file that budgets nothing exits 2" "2" "$(run_code "$T")"
 
 T="$TMP/dup"; tree "$T" 100 100 "${STD[@]}" "file repo sub/AGENTS.md 400"
 eq "a name declared twice exits 2" "2" "$(run_code "$T")"
+# shellcheck disable=SC2016 # the backticks are literal text in the message
 has "the duplicate message names the name" "$(run_out "$T")" 'name `repo` declared twice'
 
 T="$TMP/unknown_kw"; tree "$T" 100 100 "${STD[@]}" "bogus x"
 eq "an unknown directive exits 2" "2" "$(run_code "$T")"
+# shellcheck disable=SC2016 # the backticks are literal text in the message
 has "the unknown-directive message names the directive" "$(run_out "$T")" 'unknown directive `bogus`'
 has "a budgets file that budgets nothing says so" "$(run_out "$TMP/no_files")" "declares no file or optional entry"
 
