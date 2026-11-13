@@ -239,7 +239,8 @@ folder, so copying the template did not bring it with you. One command reads tho
 tells you which are off. It only reads. It changes nothing.
 
 - [ ] Run `bash bin/check-repo-settings.sh`. It needs the GitHub command-line tool (`gh`),
-      signed in as someone who can administer the repository. What it looks at:
+      signed in as someone who can administer the repository. It checks the repository this
+      folder pushes to: its `origin` remote, which has to be on github.com. What it looks at:
       - **Dependabot alerts and security updates.** GitHub tells you when something your
         project depends on has a known security hole, and opens the fix for you. GitHub pauses
         those fixes when its pull requests sit untouched for 90 days, and the script reports
@@ -247,9 +248,9 @@ tells you which are off. It only reads. It changes nothing.
       - **Secret scanning and push protection.** GitHub refuses a push that contains something
         shaped like a real key. This is the net under step 3.
       - **Protection on your main branch.** A rule that stops anyone, an AI included, from
-        force-pushing over it or deleting it. People on the rule's bypass list can still do
-        both, so leave that list empty. The script counts a rule with anyone on that list as
-        off.
+        force-pushing over it or deleting it. Anyone on the rule's bypass list can still do
+        both, unless their entry is limited to pull requests, so leave that list empty. The
+        script does not count a rule that somebody can push past.
       - **Smaller ones:** merged branches delete themselves, automated workflows start with
         read-only access, and (public repositories) people can report a security problem to
         you privately.
@@ -268,7 +269,9 @@ tells you which are off. It only reads. It changes nothing.
 - [ ] Open `.github/dependabot.yml` and add an entry for the language your project is written
       in. As shipped it watches only the GitHub Actions this template's own checks use, and it
       knows nothing about your app's packages until you tell it. The comments at the top of the
-      file show how. Two things come with keeping the file. GitHub opens a pull request, at
+      file show how. Copy the whole shipped entry: GitHub requires a `directory` and a
+      `schedule` on each one, and the script reports the file as off when an entry is
+      missing either. Two things come with keeping the file. GitHub opens a pull request, at
       most weekly, when one of those actions has a newer release. And that pull request edits
       `.github/workflows/hooks-ci.yml`, a file the template also updates, so a later
       `/trellis-sync` shows it as changed on both sides and asks which version to keep. Delete

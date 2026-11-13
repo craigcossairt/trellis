@@ -19,9 +19,19 @@
 #      a time, and a first page with no blocking rule says nothing about the
 #      second.
 #   4. It changes something. The script is read-only: every `gh api` call it
-#      makes is a GET. The fake `gh` below answers only the two read shapes
-#      the script uses and records anything else, and the last case fails if
-#      one was ever made.
+#      makes is a GET. The fake `gh` below allows only the one read shape the
+#      script uses and records anything else, and the last case fails if one
+#      was ever made.
+#   5. It reports on another repository. Asked which repository a checkout is,
+#      gh answers for a remote named `upstream` when there is one. So the
+#      script reads the `origin` remote itself, takes only a github.com
+#      address, and uses the name GitHub gives back for it.
+#
+# Two more that are not about GitHub's API. A dependabot.yml that names an
+# ecosystem and leaves out a key GitHub requires opens no pull request, so it
+# is not ON. And rulesets layer: somebody gets past a rule only by being on
+# the bypass list of every ruleset that holds it, so two lists are compared
+# entry by entry, and lists with nothing in common are UNKNOWN, not OFF.
 #
 # The fake `gh` answers by API path from a JSON body and runs the script's own
 # `--jq` expression over it with the real `jq`, so the expressions are
@@ -62,31 +72,31 @@ trap 'rm -rf "$TMP"' EXIT
 
 # --- the fake gh --------------------------------------------------------------
 # Fixture layout, under $GH_FIX:
-#   repo-view            body for `gh repo view` (absent -> exit 1)
 #   api/<path>           one file per API path, `/` written as `__`
 #                        line 1: HTTP status (200, 204, 403, 404, 500)
 #                        rest:   for a 2xx, the JSON body; `--jq EXPR` is run
 #                                over it with jq -r, as gh does
 #                                for anything else, the message gh would print
-#   DISALLOWED           appended to on any call that is not one of the two
-#                        read shapes the script may send (see the fake)
-#   REPO_VIEW_CWD        the directory `gh repo view` was run from
+#   DISALLOWED           appended to on any call that is not the one read
+#                        shape the script may send (see the fake)
 #   CALLS                every invocation, one line each
 # jq on Windows writes CRLF; gh does not, so the fake strips the CR.
 mkdir -p "$TMP/bin"
 cat > "$TMP/bin/gh" <<'FAKE'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$GH_FIX/CALLS"
-# An allow-list, not a list of write flags. The script may send two shapes:
-#   gh repo view --json nameWithOwner --jq .nameWithOwner
+# An allow-list, not a list of write flags. The script may send one shape:
 #   gh api <path> [--jq <expr>]
-# Anything else is recorded, whatever it is. A list of flags to refuse misses
-# every spelling it did not think of: `--method=PUT`, `-XPUT`, `--raw-field`,
-# and any other subcommand (`gh repo edit ...`) all walked past the first
-# version of this fake with every case green.
+# which gh sends as a GET. Anything else is recorded, whatever it is. A list
+# of flags to refuse misses every spelling it did not think of:
+# `--method=PUT`, `-XPUT`, `--raw-field`, and any other subcommand
+# (`gh repo edit ...`) all walked past the first version of this fake with
+# every case green.
+# `gh repo view` is answered, and recorded as not allowed: the script must
+# not ask gh which repository this is. The answer is the one a real gh gives
+# in a checkout that also has a remote named `upstream`: that remote's
+# repository, not the one the checkout pushes to (seen with gh 2.89.0).
 allowed=0
-if [ $# -eq 6 ] && [ "$1" = repo ] && [ "$2" = view ] && [ "$3" = --json ] \
-   && [ "$4" = nameWithOwner ] && [ "$5" = --jq ] && [ "$6" = .nameWithOwner ]; then allowed=1; fi
 if [ "${1:-}" = api ]; then
   case $# in
     2) allowed=1 ;;
@@ -95,11 +105,7 @@ if [ "${1:-}" = api ]; then
   case "${2:-}" in ''|-*) allowed=0 ;; esac
 fi
 [ "$allowed" -eq 1 ] || printf '%s\n' "$*" >> "$GH_FIX/DISALLOWED"
-if [ "${1:-}" = repo ] && [ "${2:-}" = view ]; then
-  pwd > "$GH_FIX/REPO_VIEW_CWD"
-  [ -f "$GH_FIX/repo-view" ] || { echo "gh: no git remotes found" >&2; exit 1; }
-  cat "$GH_FIX/repo-view"; exit 0
-fi
+if [ "${1:-}" = repo ] && [ "${2:-}" = view ]; then echo 'parent/proj'; exit 0; fi
 if [ "${1:-}" = api ]; then
   path="${2:-}"; expr=""
   shift 2
@@ -140,6 +146,19 @@ echo "fake gh: unhandled: $*" >&2; exit 64
 FAKE
 chmod +x "$TMP/bin/gh"
 
+# --- a checkout ---------------------------------------------------------------
+# The script asks git where the checkout pushes to, so each case gets a real,
+# empty repository whose `origin` is me/proj. One is made and then copied:
+# `git init` a hundred times over is slow on Windows.
+command -v git >/dev/null 2>&1 || { echo "this suite needs git on PATH" >&2; exit 1; }
+unset GH_HOST
+if ! git init -q "$TMP/seed" >/dev/null 2>&1 \
+   || ! git -C "$TMP/seed" remote add origin https://github.com/me/proj; then
+  echo "could not make the seed repository" >&2; exit 1
+fi
+rm -rf "$TMP/seed/.git/hooks"
+origin() { git -C "$PROJ" remote set-url origin "$1"; }
+
 # --- fixtures -------------------------------------------------------------------
 N=0
 FIX=""; PROJ=""
@@ -157,8 +176,11 @@ unapi() { local key; key=$(printf '%s' "$1" | sed 's|/|__|g'); rm -f "$FIX/api/$
 # null security block, which is what a real private repository on a plan
 # without secret scanning returned (read 2026-11-13).
 repo() { # private default_branch admin delete_branch_on_merge ss pp
-  jq -cn --arg p "$1" --arg b "$2" --arg a "$3" --arg d "$4" --arg ss "$5" --arg pp "$6" '
+  # FULL is the name GitHub gives the repository (me/proj unless set); the
+  # word none leaves the field out.
+  jq -cn --arg f "${FULL-me/proj}" --arg p "$1" --arg b "$2" --arg a "$3" --arg d "$4" --arg ss "$5" --arg pp "$6" '
     def st($v): if $v == "none" then null else {status: $v} end;
+    (if $f == "none" then {} else {full_name: $f} end) +
     {private: ($p == "true"), default_branch: $b, permissions: {admin: ($a == "true")},
      delete_branch_on_merge: ($d == "true"),
      security_and_analysis: (if $ss == "none" and $pp == "none" then null
@@ -197,11 +219,20 @@ ruleset() {
   if [ "$2" = absent ]; then api "repos/me/proj/rulesets/$1" 200 "{\"id\":$1,\"enforcement\":\"active\"}"
   else api "repos/me/proj/rulesets/$1" 200 "{\"id\":$1,\"enforcement\":\"active\",\"bypass_actors\":$2}"; fi
 }
+actors() { # pairs of type and id -> a bypass list, each entry able to bypass always
+  local out="[" sep=""
+  while [ $# -ge 2 ]; do
+    out="$out$sep{\"actor_id\":$2,\"actor_type\":\"$1\",\"bypass_mode\":\"always\"}"; sep=","; shift 2
+  done
+  printf '%s]' "$out"
+}
+# The whole dependabot.yml, one line per argument.
+dep() { printf '%s\n' "$@" > "$PROJ/.github/dependabot.yml"; }
 healthy() { # a public repo with everything on; the branch is covered by a ruleset
   N=$((N + 1)); FIX="$TMP/fix$N"; PROJ="$TMP/proj$N"
+  cp -R "$TMP/seed" "$PROJ"
   mkdir -p "$FIX/api" "$PROJ/.github"
-printf 'version: 2\nupdates:\n  - package-ecosystem: "github-actions"\n    directory: "/"\n' > "$PROJ/.github/dependabot.yml"
-  echo 'me/proj' > "$FIX/repo-view"
+  printf 'version: 2\nupdates:\n  - package-ecosystem: "github-actions"\n    directory: "/"\n    schedule:\n      interval: "weekly"\n' > "$PROJ/.github/dependabot.yml"
   api repos/me/proj 200 "$(repo false main true true enabled enabled)"
   api repos/me/proj/vulnerability-alerts 204
   api repos/me/proj/automated-security-fixes 200 '{"enabled":true,"paused":false}'
@@ -300,11 +331,17 @@ case "$(note dependabot-config)" in
   *) bad "the ON line names the one ecosystem the file watches" "$(note dependabot-config)" ;;
 esac
 
-healthy; printf "    - package-ecosystem: 'npm'\n  - package-ecosystem: pip\n# - package-ecosystem: \"cargo\"\n" >> "$PROJ/.github/dependabot.yml"; run --porcelain
+healthy; dep 'version: 2' 'updates:' \
+  '  - package-ecosystem: "github-actions"' '    directory: "/"' '    schedule:' '      interval: "weekly"' \
+  "  - package-ecosystem: 'npm'" '    directory: /web' '    schedule:' '      interval: daily' \
+  '#  - package-ecosystem: "cargo"' '#    directory: "/"' \
+  '  - package-ecosystem: pip   # the api' '    directories:' '      - "/api"' '    schedule: {interval: weekly}'
+run --porcelain
 case "$(note dependabot-config)" in
   "watches: github-actions npm pip") ok "every entry is named, quoted any way, and a commented-out one is not" ;;
   *) bad "every entry is named, quoted any way, and a commented-out one is not" "$(note dependabot-config)" ;;
 esac
+expect "a list of directories and a one-line schedule both count -> ON" 0 dependabot-config ON
 
 healthy; run
 case "$OUT" in
@@ -317,6 +354,107 @@ expect "a dependabot.yml with no package-ecosystem entry watches nothing -> OFF"
 
 healthy; printf 'version: 2\n# - package-ecosystem: "npm"\n' > "$PROJ/.github/dependabot.yml"; run --porcelain
 expect "an entry that is only a comment does not count -> OFF" 1 dependabot-config OFF
+
+echo "== dependabot.yml: an entry without the keys GitHub requires is not ON"
+# GitHub requires a directory and a schedule interval on every entry. A file
+# that names an ecosystem and stops there opens no pull request, and "on"
+# would say it does.
+healthy; dep 'version: 2' 'updates:' '  - package-ecosystem: "npm"' '    directory: "/"'; run --porcelain
+expect "an entry with no schedule -> OFF" 1 dependabot-config OFF
+case "$(note dependabot-config)" in
+  *npm*schedule*) ok "and the note names the entry and says it has no schedule" ;;
+  *) bad "and the note names the entry and says it has no schedule" "$(note dependabot-config)" ;;
+esac
+
+healthy; dep 'version: 2' 'updates:' '  - package-ecosystem: "npm"' '    schedule:' '      interval: weekly'; run --porcelain
+expect "an entry with no directory -> OFF" 1 dependabot-config OFF
+case "$(note dependabot-config)" in
+  *npm*directory*) ok "and the note names the entry and says it has no directory" ;;
+  *) bad "and the note names the entry and says it has no directory" "$(note dependabot-config)" ;;
+esac
+
+healthy; dep 'version: 2' 'updates:' \
+  '  - package-ecosystem: "github-actions"' '    directory: "/"' '    schedule:' '      interval: weekly' \
+  '  - package-ecosystem: "npm"' '    directory: "/"'
+run --porcelain
+expect "the first entry's schedule does not cover the second -> OFF" 1 dependabot-config OFF
+case "$(note dependabot-config)" in
+  *github-actions*) bad "and only the entry that lacks it is named" "$(note dependabot-config)" ;;
+  *"entry for npm"*schedule*) ok "and only the entry that lacks it is named" ;;
+  *) bad "and only the entry that lacks it is named" "$(note dependabot-config)" ;;
+esac
+
+# The section after the list is indented by four, so no line of it sits at the
+# entries' own depth and only the list's end keeps it out of the entry.
+healthy; dep 'version: 2' 'updates:' '  - package-ecosystem: "npm"' '    directory: "/"' \
+  'multi-ecosystem-groups:' '    infra:' '        schedule:' '            interval: weekly'
+run --porcelain
+expect "a schedule further down the file, outside the entry, does not count -> OFF" 1 dependabot-config OFF
+
+healthy; dep 'version: 2' 'updates:' '  - package-ecosystem: "npm"' '    directory: "/"   # interval: weekly' \
+  '    # schedule:' '    #   interval: weekly'
+run --porcelain
+expect "a schedule that is only a comment does not count -> OFF" 1 dependabot-config OFF
+
+healthy; dep 'version: 2' 'updates:' \
+  '  - package-ecosystem: npm' '    directory: "/"' '    schedule:' '      interval: weekly' \
+  '  - directory: "/api"' '    schedule:' '      interval: weekly'
+run --porcelain
+expect "an entry that names no ecosystem, beside one that does -> OFF" 1 dependabot-config OFF
+
+# GitHub's own example: an entry in a multi-ecosystem group has no schedule of
+# its own, and takes the group's.
+healthy; dep 'version: 2' 'multi-ecosystem-groups:' '  infra:' '    schedule:' '      interval: weekly' \
+  'updates:' '  - package-ecosystem: "docker"' '    directory: "/"' '    patterns: ["nginx"]' \
+  '    multi-ecosystem-group: "infra"'
+run --porcelain
+expect "an entry in a multi-ecosystem group takes the group's schedule -> ON" 0 dependabot-config ON
+
+# The script reads the file as text and does not follow a YAML anchor, so an
+# entry that may get its schedule from one is neither on nor off.
+healthy; dep 'version: 2' 'x-defaults: &defaults' '  schedule:' '    interval: weekly' \
+  'updates:' '  - package-ecosystem: "npm"' '    directory: "/"' '    <<: *defaults'
+run --porcelain
+expect "an entry that may get its schedule from a YAML anchor -> UNKNOWN" 2 dependabot-config UNKNOWN
+
+healthy; dep 'version: 2' 'x-defaults: &defaults' '  open-pull-requests-limit: 5' \
+  'updates:' '  - package-ecosystem: "npm"' '    directory: "/"' '    schedule:' '      interval: weekly' \
+  '    <<: *defaults'
+run --porcelain
+expect "a complete entry in a file that uses an anchor -> ON" 0 dependabot-config ON
+
+healthy; dep 'version: 2' 'updates:' '  - directory: "/"' '    package-ecosystem: npm' \
+  '    schedule:' '      interval: weekly'
+run --porcelain
+expect "the ecosystem need not be the entry's first key -> ON" 0 dependabot-config ON
+case "$(note dependabot-config)" in
+  "watches: npm") ok "and it is still named" ;;
+  *) bad "and it is still named" "$(note dependabot-config)" ;;
+esac
+
+healthy; dep 'version: 2' 'updates:' '- package-ecosystem: npm' '  directory: /' '  schedule:' '    interval: daily' \
+  '- package-ecosystem: pip' '  directory: /' '  schedule:' '    interval: daily' \
+  'registries:' '  npm-private:' '    type: npm-registry'
+run --porcelain
+expect "entries written flush with 'updates:', and another section after them -> ON" 0 dependabot-config ON
+case "$(note dependabot-config)" in
+  "watches: npm pip") ok "and both are named" ;;
+  *) bad "and both are named" "$(note dependabot-config)" ;;
+esac
+
+# awk reads the file. If it cannot run, nothing was read, and that is not the
+# same as a file with no entry in it.
+mkdir -p "$TMP/noawk"; printf '#!/bin/sh\nexit 1\n' > "$TMP/noawk/awk"; chmod +x "$TMP/noawk/awk"
+healthy
+RC=0; OUT=$(GH_FIX="$FIX" PATH="$TMP/noawk:$TMP/bin:$PATH" bash "$SCRIPT" --root "$PROJ" --porcelain 2>&1) || RC=$?
+expect "the file could not be read at all -> UNKNOWN, not 'watches nothing'" 2 dependabot-config UNKNOWN
+
+healthy; printf 'version: 2\r\nupdates:\r\n  - package-ecosystem: "npm"\r\n    directory: "/"\r\n    schedule:\r\n      interval: weekly\r\n' > "$PROJ/.github/dependabot.yml"; run --porcelain
+expect "a file with Windows line endings -> ON" 0 dependabot-config ON
+case "$(note dependabot-config)" in
+  "watches: npm") ok "and the name carries no stray character" ;;
+  *) bad "and the name carries no stray character" "$(note dependabot-config | od -c | head -3)" ;;
+esac
 
 echo "== default branch: either route protects it"
 healthy; api repos/me/proj/rules/branches/main 200 '[]'; run --porcelain
@@ -456,6 +594,101 @@ healthy; ruleset 9 "$BYPASS_ADMIN"
 api repos/me/proj/rules/branches/main 200 "$(both "$(RS=9 rules pull_request)" "$(rules non_fast_forward deletion)")"; run --porcelain
 expect "a bypass list on a ruleset that holds neither blocking rule does not matter -> ON" 0 default-branch-protection ON
 
+echo "== default branch: 'Restrict updates' stops a force push too"
+# The `update` rule lets only people with bypass permission push to the branch
+# at all, so a force push is stopped with every other push. It says nothing
+# about deleting the branch.
+healthy; api repos/me/proj/rules/branches/main 200 "$(rules update deletion)"; run --porcelain
+expect "'Restrict updates' and a deletion rule, nobody on the bypass list -> ON" 0 default-branch-protection ON
+
+healthy; api repos/me/proj/rules/branches/main 200 "$(rules update)"; run --porcelain
+expect "'Restrict updates' alone leaves deletion open -> OFF" 1 default-branch-protection OFF
+case "$(note default-branch-protection)" in
+  *"deletion is allowed"*) ok "and the note says deletion is what is open" ;;
+  *) bad "and the note says deletion is what is open" "$OUT" ;;
+esac
+case "$(note default-branch-protection)" in
+  *"force pushes are allowed"*) bad "and it does not claim force pushes are open" "$OUT" ;;
+  *) ok "and it does not claim force pushes are open" ;;
+esac
+
+healthy; ruleset 1 "$BYPASS_ADMIN"; ruleset 2 '[]'
+api repos/me/proj/rules/branches/main 200 "$(both "$(rules update non_fast_forward)" "$(RS=2 rules deletion)")"; run --porcelain
+expect "both force-push rules sit in one ruleset with a bypass list -> OFF" 1 default-branch-protection OFF
+case "$(note default-branch-protection)" in
+  *"ruleset 1 blocks force pushes but has a bypass list"*) ok "and the ruleset is named once, with what it would have blocked" ;;
+  *) bad "and the ruleset is named once, with what it would have blocked" "$OUT" ;;
+esac
+
+echo "== default branch: rulesets layer"
+# Every ruleset that applies is enforced, so somebody gets past a rule only by
+# being on the bypass list of every ruleset that holds it.
+SAME="$(both "$(rules non_fast_forward deletion)" "$(RS=2 rules non_fast_forward deletion)")"
+
+healthy; ruleset 1 "$BYPASS_ADMIN"; ruleset 2 '[]'
+api repos/me/proj/rules/branches/main 200 "$(both "$(rules non_fast_forward)" "$(RS=2 rules update deletion)")"; run --porcelain
+expect "one ruleset has a bypass list, a second stops every push for everyone -> ON" 0 default-branch-protection ON
+
+healthy; ruleset 1 "$(actors Integration 101)"; ruleset 2 "$(actors Integration 102)"
+api repos/me/proj/rules/branches/main 200 "$SAME"; run --porcelain
+expect "two rulesets, a different app on each bypass list -> UNKNOWN, not OFF" 2 default-branch-protection UNKNOWN
+case "$(note default-branch-protection)" in
+  *"rulesets 1 2"*) ok "and the note names both rulesets" ;;
+  *) bad "and the note names both rulesets" "$OUT" ;;
+esac
+
+healthy; ruleset 1 "$BYPASS_ADMIN"; ruleset 2 "$BYPASS_ADMIN"
+api repos/me/proj/rules/branches/main 200 "$SAME"; run --porcelain
+expect "the same role on both bypass lists -> OFF" 1 default-branch-protection OFF
+case "$(note default-branch-protection)" in
+  *"rulesets 1 2 each block"*) ok "and the note says the entry is on every one of them" ;;
+  *) bad "and the note says the entry is on every one of them" "$OUT" ;;
+esac
+
+healthy; ruleset 1 "$(actors RepositoryRole 5 Team 7)"; ruleset 2 "$(actors Team 7 Integration 9)"
+api repos/me/proj/rules/branches/main 200 "$SAME"; run --porcelain
+expect "two lists with one entry in common -> OFF" 1 default-branch-protection OFF
+
+healthy; ruleset 1 "$(actors Team 1 Team 2)"; ruleset 2 "$(actors Team 2 Team 3)"; ruleset 3 "$(actors Team 1 Team 3)"
+api repos/me/proj/rules/branches/main 200 "$(both "$SAME" "$(RS=3 rules non_fast_forward deletion)")"; run --porcelain
+expect "three lists that overlap in pairs, with no entry on all three -> UNKNOWN" 2 default-branch-protection UNKNOWN
+
+healthy; ruleset 1 "$(actors Team 1)"; ruleset 2 "$(actors Team 11)"
+api repos/me/proj/rules/branches/main 200 "$SAME"; run --porcelain
+expect "team 1 and team 11 are not the same entry -> UNKNOWN" 2 default-branch-protection UNKNOWN
+
+# An entry is compared whole. Read as text, the first list here would hold an
+# entry `Y:1`, which is the second list's.
+healthy; ruleset 1 '[{"actor_id":1,"actor_type":"X,Y","bypass_mode":"always"}]'; ruleset 2 "$(actors Y 1)"
+api repos/me/proj/rules/branches/main 200 "$SAME"; run --porcelain
+expect "an entry with a comma in it is still one entry -> UNKNOWN" 2 default-branch-protection UNKNOWN
+
+healthy; ruleset 1 "$BYPASS_ADMIN"; ruleset 2 '[{"actor_id":5,"actor_type":"RepositoryRole","bypass_mode":"pull_request"}]'
+api repos/me/proj/rules/branches/main 200 "$SAME"; run --porcelain
+expect "the second list lets the role past only on a pull request -> ON" 0 default-branch-protection ON
+
+healthy; ruleset 1 '[{"actor_id":null,"actor_type":"DeployKey","bypass_mode":"always"}]'
+ruleset 2 '[{"actor_id":null,"actor_type":"DeployKey","bypass_mode":"always"}]'
+api repos/me/proj/rules/branches/main 200 "$SAME"; run --porcelain
+expect "an entry with no id (deploy keys) on both lists -> OFF" 1 default-branch-protection OFF
+
+healthy; ruleset 1 '["x"]'; run --porcelain
+expect "a bypass list whose entries are not entries -> UNKNOWN" 2 default-branch-protection UNKNOWN
+
+# What is certainly open is reported as open, even with a hole beside it.
+healthy; ruleset 1 absent
+api repos/me/proj/rules/branches/main 200 "$(rules deletion)"; run --porcelain
+expect "no rule on force pushes, and the deletion rule's bypass list unread -> OFF" 1 default-branch-protection OFF
+case "$(note default-branch-protection)" in
+  *"force pushes are allowed"*) ok "and the note says force pushes are open" ;;
+  *) bad "and the note says force pushes are open" "$OUT" ;;
+esac
+case "$(note default-branch-protection)" in
+  *"deletion is allowed"*) bad "and it does not claim deletion is open, only that it could not be read" "$OUT" ;;
+  *"could not read"*) ok "and it does not claim deletion is open, only that it could not be read" ;;
+  *) bad "and it does not claim deletion is open, only that it could not be read" "$OUT" ;;
+esac
+
 echo "== default branch: every page of rules is read"
 healthy; api repos/me/proj/rules/branches/main 200 "$(many 100 non_fast_forward deletion)"; run --porcelain
 expect "the blocking rules are on the second page -> ON" 0 default-branch-protection ON
@@ -573,9 +806,9 @@ healthy; api repos/me/proj 200 "$(repo false main true true enabled 'enabled|sur
 if [ "$RC" = 2 ]; then ok "repository answer with an unexpected field -> exit 2"
 else bad "repository answer with an unexpected field -> exit 2" "rc=$RC :: $OUT"; fi
 
-healthy; rm -f "$FIX/repo-view"; run --porcelain
-if [ "$RC" = 2 ]; then ok "no GitHub remote -> exit 2"
-else bad "no GitHub remote -> exit 2" "rc=$RC :: $OUT"; fi
+healthy; git -C "$PROJ" remote remove origin; run --porcelain
+if [ "$RC" = 2 ] && printf '%s' "$OUT" | grep -q -- '--repo'; then ok "no origin remote -> exit 2, and the message says to name the repository"
+else bad "no origin remote -> exit 2, and the message says to name the repository" "rc=$RC :: $OUT"; fi
 
 healthy
 # PATH holds nothing at all, so this also pins that the gh check comes before
@@ -640,9 +873,82 @@ api repos/me/proj/branches/main/protection 403 "$PLAN"
 api repos/me/proj/rules/branches/main 200 '[]'; run --porcelain
 expect "plan refuses one route, the other is readable and empty -> OFF, not SKIP" 1 default-branch-protection OFF
 
+echo "== which repository: the one this checkout pushes to"
+# A fork has two remotes, and gh picks `upstream` when asked which repository
+# a checkout is. The fake's `gh repo view` answers as a real one does there
+# (parent/proj), and no fixture exists under that name.
+healthy; git -C "$PROJ" remote add upstream https://github.com/parent/proj.git; run --porcelain
+expect "origin and upstream both set: origin's repository is the one read" 0 \
+  dependabot-alerts ON default-branch-protection ON
+if grep -q '^repo view' "$FIX/CALLS"; then bad "gh is never asked which repository this is" "$(grep '^repo view' "$FIX/CALLS")"
+else ok "gh is never asked which repository this is"; fi
+if grep -q 'parent/proj' "$FIX/CALLS"; then bad "nothing is asked about the upstream repository" "$(grep 'parent/proj' "$FIX/CALLS" | head -3)"
+else ok "nothing is asked about the upstream repository"; fi
+
+for u in git@github.com:me/proj.git ssh://git@github.com/me/proj.git https://github.com/me/proj.git \
+         https://github.com/me/proj/ https://someone@github.com/me/proj.git; do
+  healthy; origin "$u"; run --porcelain
+  expect "origin written as $u -> me/proj" 0 dependabot-alerts ON
+done
+
+healthy; origin https://github.com/other/thing.git
+git -C "$PROJ" remote set-url --push origin https://github.com/me/proj.git; run --porcelain
+expect "fetch and push addresses differ: the push address is the one read" 0 dependabot-alerts ON
+
+# Only github.com. Any other host, an SSH alias included, is not guessed at:
+# gh would be asked about a repository of the same name on github.com.
+for u in https://gitlab.com/me/proj.git git@github-work:me/proj.git https://github.com.example.org/me/proj.git \
+         https://notgithub.com/me/proj.git \
+         https://example.org/x@github.com/me/proj ssh://git@example.org/me/proj.git; do
+  healthy; origin "$u"; run --porcelain
+  if [ "$RC" = 2 ] && [ ! -s "$FIX/CALLS" ] && printf '%s' "$OUT" | grep -q -- '--repo'; then ok "origin written as $u is not a github.com address -> exit 2, nothing asked"
+  else bad "origin written as $u is not a github.com address -> exit 2, nothing asked" "rc=$RC calls=$(head -2 "$FIX/CALLS" 2>/dev/null) :: $OUT"; fi
+done
+
+healthy; origin https://github.com/me/proj/extra; run --porcelain
+if [ "$RC" = 2 ] && [ ! -s "$FIX/CALLS" ]; then ok "an origin path that is not OWNER/NAME -> exit 2, nothing asked"
+else bad "an origin path that is not OWNER/NAME -> exit 2, nothing asked" "rc=$RC :: $OUT"; fi
+
+# An https address can carry a token, so the address is never printed.
+healthy; origin 'https://someone:s3cr3t-t0ken@github.com/me/proj.git'; run --porcelain
+expect "an origin address that carries a token still names me/proj" 0 dependabot-alerts ON
+healthy; origin 'https://someone:s3cr3t-t0ken@example.org/me/proj.git'; run --porcelain
+if [ "$RC" = 2 ] && ! printf '%s' "$OUT" | grep -q 's3cr3t'; then ok "an origin on another host -> exit 2, and its address is not printed"
+else bad "an origin on another host -> exit 2, and its address is not printed" "rc=$RC :: $OUT"; fi
+
+# gh sends its requests to $GH_HOST when that is set. The origin is on
+# github.com, so asking another server would be asking about another repository.
+healthy; GH_HOST=ghe.example.org run --porcelain
+if [ "$RC" = 2 ] && [ ! -s "$FIX/CALLS" ] && printf '%s' "$OUT" | grep -q 'GH_HOST'; then ok "GH_HOST points gh at another server -> exit 2, nothing asked"
+else bad "GH_HOST points gh at another server -> exit 2, nothing asked" "rc=$RC calls=$(head -2 "$FIX/CALLS" 2>/dev/null) :: $OUT"; fi
+healthy; GH_HOST=github.com run --porcelain
+expect "GH_HOST set to github.com changes nothing" 0 dependabot-alerts ON
+
+# GitHub answers under a repository's old name after a rename. The name in its
+# answer is the one the remaining calls, and the commands printed for a person
+# to run, must use.
+healthy
+for f in "$FIX"/api/repos__me__proj__*; do
+  mv "$f" "$(printf '%s' "$f" | sed 's|repos__me__proj__|repos__new__name__|')"
+done
+api repos/me/proj 200 "$(FULL=new/name repo false main true true enabled enabled)"
+api repos/new/name/vulnerability-alerts 404 "$ALERTS_OFF"; run
+case "$RC/$OUT" in
+  1/*"gh api -X PUT repos/new/name/vulnerability-alerts"*"Repository: new/name"*) ok "a renamed repository is read, and its fix printed, under the name it has now" ;;
+  *) bad "a renamed repository is read, and its fix printed, under the name it has now" "rc=$RC :: $OUT" ;;
+esac
+
+healthy; api repos/me/proj 200 "$(FULL=none repo false main true true enabled enabled)"; run --porcelain
+if [ "$RC" = 2 ] && ! printf '%s\n' "$OUT" | grep -q "$(printf '\t')ON"; then ok "an answer that does not name the repository -> exit 2, nothing reported ON"
+else bad "an answer that does not name the repository -> exit 2, nothing reported ON" "rc=$RC :: $OUT"; fi
+
+healthy; api repos/me/proj 200 "$(FULL='me/proj;x' repo false main true true enabled enabled)"; run --porcelain
+if [ "$RC" = 2 ] && ! printf '%s\n' "$OUT" | grep -q "$(printf '\t')ON"; then ok "an answer whose name is not OWNER/NAME -> exit 2, nothing reported ON"
+else bad "an answer whose name is not OWNER/NAME -> exit 2, nothing reported ON" "rc=$RC :: $OUT"; fi
+
 echo "== --repo"
-healthy; rm -f "$FIX/repo-view"; run --porcelain --repo me/proj
-expect "--repo skips the remote lookup" 0 dependabot-alerts ON
+healthy; git -C "$PROJ" remote remove origin; run --porcelain --repo me/proj
+expect "--repo needs no remote" 0 dependabot-alerts ON
 healthy; run --porcelain --repo 'me/proj;rm -rf x'
 if [ "$RC" = 2 ] && printf '%s' "$OUT" | grep -q 'not an OWNER/NAME'; then ok "--repo refuses a name that is not owner/name"
 else bad "--repo refuses a name that is not owner/name" "rc=$RC :: $OUT"; fi
@@ -653,16 +959,17 @@ healthy; mkdir -p "$TMP/elsewhere/.github"; echo 'version: 2' > "$TMP/elsewhere/
 RC=0; OUT=$(cd "$TMP/elsewhere" && GH_FIX="$FIX" PATH="$TMP/bin:$PATH" bash "$SCRIPT" --porcelain --repo me/proj 2>&1) || RC=$?
 expect "--repo without --root: the local file check is SKIP" 0 dependabot-config SKIP dependabot-alerts ON
 
-# --root says where the checkout is, so that is where the repository is looked
-# up from. Looked up from wherever the script was started, --root would read
-# one repository's settings and another one's file.
-healthy; run --porcelain
-if [ "$(cat "$FIX/REPO_VIEW_CWD" 2>/dev/null)" = "$(cd "$PROJ" && pwd)" ]; then ok "--root: the repository is looked up from inside that checkout"
-else bad "--root: the repository is looked up from inside that checkout" "looked up from: $(cat "$FIX/REPO_VIEW_CWD" 2>/dev/null)"; fi
+# --root says where the checkout is, so that is the checkout whose remote is
+# read. Read from wherever the script was started, --root would report one
+# repository's settings and another one's file.
+healthy; cp -R "$TMP/seed" "$TMP/other"; git -C "$TMP/other" remote set-url origin https://github.com/other/thing.git
+RC=0; OUT=$(cd "$TMP/other" && GH_FIX="$FIX" PATH="$TMP/bin:$PATH" bash "$SCRIPT" --porcelain --root "$PROJ" 2>&1) || RC=$?
+expect "--root: the repository is the one that checkout pushes to, not the one the script was started in" 0 \
+  dependabot-alerts ON dependabot-config ON
 
 echo "== read-only"
-# Every run above, checked once: nothing left the script except the two read
-# shapes the fake allows. The count of runs guards the check itself: a loop
+# Every run above, checked once: nothing left the script except the one read
+# shape the fake allows. The count of runs guards the check itself: a loop
 # over no fixtures would pass this with nothing looked at.
 disallowed=0; looked=0
 for d in "$TMP"/fix*; do
@@ -670,8 +977,8 @@ for d in "$TMP"/fix*; do
   looked=$((looked + 1))
   [ -f "$d/DISALLOWED" ] && disallowed=$((disallowed + 1))
 done
-if [ "$looked" -ge 70 ] && [ "$disallowed" -eq 0 ]; then ok "no run sent anything but the two read shapes ($looked runs checked)"
-else bad "no run sent anything but the two read shapes" "runs checked: $looked :: $(cat "$TMP"/fix*/DISALLOWED 2>/dev/null)"; fi
+if [ "$looked" -ge 110 ] && [ "$disallowed" -eq 0 ]; then ok "no run sent anything but the one read shape ($looked runs checked)"
+else bad "no run sent anything but the one read shape" "runs checked: $looked :: $(cat "$TMP"/fix*/DISALLOWED 2>/dev/null)"; fi
 
 echo
 echo "passed: $PASS   failed: $FAIL"

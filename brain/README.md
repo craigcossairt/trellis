@@ -65,29 +65,45 @@ way for it to fail. So the job carries your terminal's `PATH` with it:
 job="export PATH='$PATH'; cd '$PWD' && bash brain/scripts/refresh.sh >/dev/null 2>&1"
 
 # 1. Run the job the way the scheduler will: with nothing inherited from this terminal.
-env -i HOME="$HOME" /bin/sh -c "$job"; echo "exit $?"
+env -i HOME="$HOME" /bin/sh -c "$job"; ran=$?
+echo "exit $ran (the job line is ${#job} characters long)"
 
-# 2. Install it, daily at 9:00. An earlier line for this folder is replaced. Every other line
-#    in your crontab is kept.
-( crontab -l 2>/dev/null | grep -vF "cd '$PWD' && bash brain/scripts/refresh.sh"
-  printf '%s\n' "0 9 * * * $job" ) | crontab -
+# 2. Install it, daily at 9:00, but only if step 1 exited 0. An earlier line for this folder
+#    is replaced. Every other line in your crontab is kept. Installing replaces the whole
+#    crontab, so it is read first, and if it cannot be read nothing is written: the jobs
+#    already in it would be lost.
+if [ "$ran" -ne 0 ]; then
+  echo "Step 1 did not exit 0, so nothing was installed. Fix that first."
+elif old="$(crontab -l 2>/dev/null)" || crontab -l 2>&1 | grep -q 'no crontab'; then
+  { [ -z "$old" ] || printf '%s\n' "$old" | grep -vF "cd '$PWD' && bash brain/scripts/refresh.sh"
+    printf '%s\n' "0 9 * * * $job"; } | crontab -
+else
+  echo "Could not read your crontab, so nothing was changed. Run 'crontab -l' to see why."
+fi
 
 # 3. Read it back.
 crontab -l
 ```
 
 Step 1 is the check that counts. `exit 0`, and a new `refresh - ok` line at the end of
-`brain/log.md`, mean the scheduled run will find its programs. Anything else: stop, and fix
-that before installing the line. If you later install bun or node somewhere else, run the three
-steps again so the job carries the new `PATH`. To remove the job, run `crontab -e` and delete
-its line.
+`brain/log.md`, mean the scheduled run will find its programs. On anything else step 2
+installs nothing: fix that, then run the three steps again. If you later install bun or node
+somewhere else, run them again too, so the job carries the new `PATH`. To remove the job, run
+`crontab -e` and delete its line. Cron does not catch up: a computer that is asleep or off at
+9:00 skips that day.
 
 What was run, on 2026-11-13: with cron's usual `PATH` the QMD launcher stopped with exit 127
 ("node: not found"), and with the terminal's `PATH` carried in as above it ran. Step 2 was run
-against a stand-in for `crontab`: it kept the other lines and left one line for the folder
-however often it ran. No real crontab was changed, and none of this was run on macOS. Two
-limits: cron reads `%` as a line break, so a folder or `PATH` entry with a `%` in it needs it
-written `\%`, and a single quote in either breaks the quoting.
+against a stand-in for `crontab`: it kept the other lines, left one line for the folder
+however often it ran, and wrote nothing when step 1 had failed or the stand-in could not be
+read. (An earlier version of this step installed over a crontab it could not read, and the
+other jobs were gone.) No real crontab was changed, and none of this was run on macOS. Four
+limits. Step 2 tells "no crontab yet" from a failure by the words `no crontab` in cron's own
+message, so a cron that says it another way stops with nothing changed. Cron reads `%` as a
+line break, so a folder or `PATH` entry with a `%` in it needs it written `\%`. A single quote
+in either breaks the quoting. And some versions of cron are said to cut a command off near
+1000 characters, which was not checked here: step 1 prints how long the line is, and a long
+`PATH` can be cut down to the folders that hold `bun` or `node`.
 
 ### Windows (Task Scheduler)
 
@@ -98,7 +114,11 @@ $name    = "Brain refresh - $(Split-Path -Leaf (Get-Location))"
 $action  = New-ScheduledTaskAction -Execute 'C:\Program Files\Git\bin\bash.exe' `
              -Argument 'brain/scripts/refresh.sh' -WorkingDirectory (Get-Location).Path
 $trigger = New-ScheduledTaskTrigger -Daily -At 9am
-Register-ScheduledTask -TaskName $name -Action $action -Trigger $trigger
+# Without these settings a laptop on battery, or one that was asleep at 9:00, skips the day.
+$settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatteries `
+              -DontStopIfGoingOnBatteries
+# -Force replaces a task of the same name, so these lines can be run again.
+Register-ScheduledTask -TaskName $name -Action $action -Trigger $trigger -Settings $settings -Force
 
 # Run it once through the scheduler, give it a minute, then read the result back.
 Start-ScheduledTask -TaskName $name
@@ -106,11 +126,12 @@ Get-ScheduledTaskInfo -TaskName $name | Select-Object LastRunTime, LastTaskResul
 ```
 
 `LastTaskResult` is `0` after a run that worked, and `brain/log.md` then ends with a new
-`refresh - ok` line. `267009` means it is still running, so read it again. To remove the task:
+`refresh - ok` line. `267009` means it is still running and `267011` that it has not run yet,
+so read it again in a minute. To remove the task:
 `Unregister-ScheduledTask -TaskName $name -Confirm:$false`.
 
 Not run here: the commands and their parameters were checked on Windows PowerShell 5.1 by
-building the action and the trigger, and no task was registered or started. So the run you
+building the action, the trigger and the settings, and no task was registered or started. So the run you
 start above is the test. Registered this way, the task belongs to your account and runs while
 you are signed in.
 

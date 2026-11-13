@@ -3,7 +3,8 @@
 # check-repo-settings.sh - which of this GitHub repository's safety settings
 # are off?
 # =============================================================================
-# READ-ONLY. Every call it makes is a GET. It prints the command that would
+# READ-ONLY. Every request is a plain `gh api <path>`, which gh sends as a GET,
+# and gh is asked for nothing else. It prints the command that would
 # turn each missing setting on and runs none of them: changing a repository's
 # settings is the owner's decision, one setting at a time.
 #
@@ -33,8 +34,12 @@
 #   private-vulnerability-reporting    a private way to report a security bug
 #                                      (public repositories only)
 #   dependabot-config                  .github/dependabot.yml has at least one
-#                                      entry, and the ON line names what it
-#                                      watches (a local file check)
+#                                      entry, every entry has the keys GitHub
+#                                      requires (a directory, and a schedule
+#                                      or a group that has one), and the ON
+#                                      line names what it watches. A local
+#                                      file check, read as text: GitHub's own
+#                                      verdict on the file is not asked for
 #
 # States: ON, OFF, SKIP (does not apply, or your GitHub plan does not offer it),
 # UNKNOWN (could not be read). A refusal counts as SKIP only when GitHub says
@@ -53,7 +58,8 @@
 # Usage:
 #   check-repo-settings.sh [--repo OWNER/NAME] [--root DIR] [--porcelain]
 #
-# With no arguments it checks the repository this checkout pushes to. --repo
+# With no arguments it checks the repository this checkout pushes to: the
+# push address of its `origin` remote, which has to be on github.com. --repo
 # names another one; the local file check is then skipped unless --root says
 # where that repository's checkout is. --root alone checks the repository
 # that checkout pushes to, wherever the script was started from.
@@ -111,13 +117,38 @@ if [ "$LOCAL" -eq 1 ] && [ ! -d "$ROOT" ]; then
 fi
 
 if [ -z "$REPO" ]; then
-  # From inside the checkout, so --root reads the settings and the file of the
-  # same repository. (ROOT is always set here: by --root, or by git above.)
-  REPO="$(cd "$ROOT" 2>/dev/null && gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null)" || REPO=""
+  # The repository this checkout pushes to: the push address of its `origin`
+  # remote, as git gives it, read from inside --root's checkout so the settings
+  # and the file are the same repository's. (ROOT is always set here: by
+  # --root, or by git above.)
+  # gh is not asked. In a checkout that also has a remote named `upstream`, as
+  # every fork does, `gh repo view` answers for that one (seen with gh 2.89.0),
+  # and the report would be the parent project's settings under this one's
+  # name.
+  # Only a github.com address is taken. Any other host, an SSH alias included,
+  # is not guessed at: gh would be asked about a repository of the same name on
+  # github.com, which is a different one. The address is never printed: an
+  # https one can carry a token.
+  URL="$(git -C "$ROOT" remote get-url --push origin 2>/dev/null)" || URL=""
+  case "$URL" in
+    https://*)
+      REST="${URL#https://}"; HOST="${REST%%/*}"
+      case "$HOST" in github.com|*@github.com) REPO="${REST#*/}" ;; esac ;;
+    ssh://git@github.com/*) REPO="${URL#ssh://git@github.com/}" ;;
+    git@github.com:*) REPO="${URL#git@github.com:}" ;;
+  esac
+  REPO="${REPO%/}"; REPO="${REPO%.git}"
   if [ -z "$REPO" ]; then
-    echo "check-repo-settings: could not work out which GitHub repository this is (no GitHub remote, or gh is not signed in: try 'gh auth status') - nothing was checked." >&2
+    echo "check-repo-settings: could not work out which GitHub repository this checkout pushes to: it has no 'origin' remote, or that remote is not a github.com address. Nothing was checked. Name the repository yourself: --repo OWNER/NAME" >&2
     exit 2
   fi
+  # gh sends its requests to $GH_HOST when that is set, and the address just
+  # read is on github.com.
+  case "${GH_HOST:-github.com}" in
+    github.com) ;;
+    *) echo "check-repo-settings: GH_HOST points gh at '$GH_HOST', and this checkout's origin is on github.com. Nothing was checked. Unset GH_HOST, or name the repository yourself: --repo OWNER/NAME" >&2
+       exit 2 ;;
+  esac
 fi
 # The name goes into API paths and into commands printed for a person to paste.
 case "$REPO" in
@@ -155,23 +186,33 @@ record() { RESULTS="${RESULTS}${1}${TAB}${2}${TAB}${3}
 "; }
 
 # --- the repository itself ---------------------------------------------------
-# One call, six fields, joined with | because an empty TSV field collapses
+# One call, seven fields, joined with | because an empty TSV field collapses
 # under `read`. null becomes the word none, so "absent" stays distinguishable
 # from false.
-api "repos/$REPO" '[.private, .default_branch, .permissions.admin, .delete_branch_on_merge, .security_and_analysis.secret_scanning.status, .security_and_analysis.secret_scanning_push_protection.status] | map(if . == null then "none" else tostring end) | join("|")'
+api "repos/$REPO" '[.full_name, .private, .default_branch, .permissions.admin, .delete_branch_on_merge, .security_and_analysis.secret_scanning.status, .security_and_analysis.secret_scanning_push_protection.status] | map(if . == null then "none" else tostring end) | join("|")'
 if [ "$API_CODE" != 200 ]; then
   echo "check-repo-settings: could not read $REPO (${API_OUT:-no response}) - nothing was checked." >&2
   exit 2
 fi
-PRIVATE=""; BRANCH=""; ADMIN=""; DELETE_ON_MERGE=""; SS=""; PP=""; EXTRA=""
-IFS='|' read -r PRIVATE BRANCH ADMIN DELETE_ON_MERGE SS PP EXTRA <<FIELDS
+FULL=""; PRIVATE=""; BRANCH=""; ADMIN=""; DELETE_ON_MERGE=""; SS=""; PP=""; EXTRA=""
+IFS='|' read -r FULL PRIVATE BRANCH ADMIN DELETE_ON_MERGE SS PP EXTRA <<FIELDS
 $API_OUT
 FIELDS
 case "$PRIVATE" in true|false) ;; *) PRIVATE="" ;; esac
-if [ -z "$PRIVATE" ] || [ -z "$BRANCH" ] || [ -z "$PP" ] || [ -n "$EXTRA" ]; then
+# The name as GitHub has it now. It goes into API paths and printed commands,
+# so it is held to the same shape as a name given by hand.
+case "$FULL" in
+  */*/*|/*|*/|*[!A-Za-z0-9._/-]*) FULL="" ;;
+  */*) ;;
+  *) FULL="" ;;
+esac
+if [ -z "$FULL" ] || [ -z "$PRIVATE" ] || [ -z "$BRANCH" ] || [ -z "$PP" ] || [ -n "$EXTRA" ]; then
   echo "check-repo-settings: GitHub's answer for $REPO was not in the expected shape - nothing was checked." >&2
   exit 2
 fi
+# GitHub answers under an old name after a rename or a move. Everything from
+# here on, the printed commands included, uses the name the repository has now.
+REPO="$FULL"
 if [ "$ADMIN" != true ]; then
   echo "check-repo-settings: you do not have admin access to $REPO. GitHub leaves the security settings out of its answer for anyone else, so they cannot be told apart from 'off' - nothing was checked." >&2
   exit 2
@@ -291,9 +332,15 @@ FIELDS
   403) plan_refusal "$API_CODE" "$API_OUT" && C_STATE=plan ;;
 esac
 
-# Rules: the active rules that apply to the branch, every page of them. Each
-# page comes back as a count of its entries, then one `type ruleset-id` line
-# per blocking rule. An entry that is not a rule, or a blocking rule that does
+# Rules: the active rules that apply to the branch, every page of them. Three
+# types count. `non_fast_forward` blocks force pushes and `deletion` blocks
+# deletion. `update` ("Restrict updates") lets only people with bypass
+# permission push to the branch at all, which stops a force push with every
+# other push and says nothing about deletion. `pull_request` is not counted:
+# it stops commits arriving outside a pull request, and whether it stops a
+# push that only moves the branch backwards was not established.
+# Each page comes back as a count of its entries, then one `type ruleset-id`
+# line per blocking rule. An entry that is not a rule, or a blocking rule that does
 # not say which ruleset it is from, fails the read: an answer this script does
 # not understand is not an answer with no blocking rule in it. GitHub sends 30
 # entries a page unless asked, and a first page with no blocking rule says
@@ -301,7 +348,7 @@ esac
 # that never sends a short page cannot keep this running.
 R_STATE=unreadable; R_RULES=""
 # shellcheck disable=SC2016  # $r is jq's variable, not the shell's
-RULES_JQ='if type == "array" then (map(if type == "object" and (.type | type) == "string" then . else error("an entry that is not a rule") end)) as $r | [($r | length | tostring)] + [$r[] | select(.type == "non_fast_forward" or .type == "deletion") | if (.ruleset_id | type) == "number" then "\(.type) \(.ruleset_id)" else error("a rule with no ruleset") end] | join("\n") else error("not a list") end'
+RULES_JQ='if type == "array" then (map(if type == "object" and (.type | type) == "string" then . else error("an entry that is not a rule") end)) as $r | [($r | length | tostring)] + [$r[] | select(.type == "non_fast_forward" or .type == "update" or .type == "deletion") | if (.ruleset_id | type) == "number" then "\(.type) \(.ruleset_id)" else error("a rule with no ruleset") end] | join("\n") else error("not a list") end'
 page=1
 while [ "$page" -le 10 ]; do
   branch_api "repos/$REPO/rules/branches/$BRANCH?per_page=100&page=$page" "$RULES_JQ"
@@ -319,71 +366,111 @@ done
 
 # A ruleset can name people, teams, roles or apps that may bypass it, and a
 # rule they can walk past does not stop everyone. So each ruleset holding a
-# blocking rule is read once, and its rules count only when the bypass list is
-# there and nobody on it can push past the rules. `pull_request` is the one
-# bypass that does not matter here: GitHub says such an actor can bypass rules
-# only on pull requests, which is neither a force-push nor a deletion. Any
-# other mode, or none given, counts as a way through.
+# blocking rule is read once. `pull_request` is the one bypass that does not
+# matter here: GitHub says such an actor can bypass rules only on pull
+# requests, which is neither a force-push nor a deletion. Any other mode, or
+# none given, counts as a way through.
 # GitHub leaves the list out for someone who may not edit the ruleset (one set
 # above the repository, for example). Absent is not empty: that is unread.
-# bypass_for <ruleset id> -> BYPASS: none, some or unread.
+# bypass_for <ruleset id> -> BYPASS: `-` when nobody can push past it, `?`
+# when the list could not be read, else who can, as `type:id` entries joined
+# with commas. jq percent-encodes each entry (@uri), so whatever GitHub sends,
+# no entry holds a comma or a space, and two entries are compared whole.
 BYPASS=""; RS_SEEN=""
 bypass_for() {
   local id="$1" v
   case "$RS_SEEN " in
     *" $id="*) v="${RS_SEEN#* "$id"=}"; BYPASS="${v%% *}"; return ;;
   esac
-  BYPASS=unread
-  api "repos/$REPO/rulesets/$id" 'if (.bypass_actors | type) == "array" then [.bypass_actors[] | select(.bypass_mode != "pull_request")] | length | tostring else error("no bypass list") end'
-  if [ "$API_CODE" = 200 ]; then
-    case "$API_OUT" in
-      0) BYPASS=none ;;
-      ''|*[!0-9]*) ;;
-      *) BYPASS=some ;;
-    esac
-  fi
+  BYPASS='?'
+  api "repos/$REPO/rulesets/$id" 'if (.bypass_actors | type) == "array" then [.bypass_actors[] | select(.bypass_mode != "pull_request") | "\(.actor_type):\(.actor_id)" | @uri] | join(",") else error("no bypass list") end'
+  [ "$API_CODE" = 200 ] && BYPASS="${API_OUT:--}"
   RS_SEEN="$RS_SEEN $id=$BYPASS"
 }
-add_id() { # $1 list, $2 id -> ADDED: the list with the id in it once
-  case " $1 " in *" $2 "*) ADDED="$1" ;; *) ADDED="${1:+$1 }$2" ;; esac
-}
-R_FORCE=0; R_DELETE=0; R_BYPASSED=""; R_UNREAD=""; ADDED=""
-if [ "$R_STATE" = read ]; then
+
+# Rulesets layer: every one that applies is enforced, so somebody gets past a
+# rule only by being on the bypass list of EVERY ruleset that holds it. For
+# each question (force pushes, deletion) the rulesets that hold a rule for it
+# come out as one of:
+#   blocked   one of them has nobody who can push past it
+#   bypassed  each has a list, and one entry is on all of them: whoever that
+#             entry is can still do it
+#   unsure    each has a list and no entry is on all of them. Two different
+#             entries can still be the same person (a team and a role, say),
+#             and this script cannot see inside either
+#   unread    none is clean, and at least one list could not be read
+#   none      no ruleset holds such a rule
+# kind <rule type>... -> K_ST, and K_IDS: the rulesets it is about.
+K_ST=none; K_IDS=""
+kind() {
+  local rtype rid a keep seen="" lists="" unread="" common="" blocked=0
   while read -r rtype rid; do
-    [ -n "$rtype" ] || continue
-    case "$rid" in ''|*[!0-9]*) R_STATE=unreadable; break ;; esac
+    case " $* " in *" $rtype "*) ;; *) continue ;; esac
+    case " $seen " in *" $rid "*) continue ;; esac
+    seen="$seen $rid"
     bypass_for "$rid"
     case "$BYPASS" in
-      none) case "$rtype" in non_fast_forward) R_FORCE=1 ;; deletion) R_DELETE=1 ;; esac ;;
-      some) add_id "$R_BYPASSED" "$rid"; R_BYPASSED="$ADDED" ;;
-      *)    add_id "$R_UNREAD" "$rid"; R_UNREAD="$ADDED" ;;
+      -)  blocked=1 ;;
+      \?) unread="${unread:+$unread }$rid" ;;
+      *)
+        if [ -z "$lists" ]; then
+          common="$BYPASS"
+        else
+          keep=""
+          for a in $(printf '%s' "$common" | tr ',' ' '); do
+            case ",$BYPASS," in *",$a,"*) keep="${keep:+$keep,}$a" ;; esac
+          done
+          common="$keep"
+        fi
+        lists="${lists:+$lists }$rid" ;;
     esac
   done <<RULES
 $R_RULES
 RULES
-fi
+  K_IDS=""
+  if [ "$blocked" -eq 1 ]; then K_ST=blocked
+  elif [ -n "$unread" ]; then K_ST=unread; K_IDS="$unread"
+  elif [ -z "$lists" ]; then K_ST=none
+  elif [ -n "$common" ]; then K_ST=bypassed; K_IDS="$lists"
+  else K_ST=unsure; K_IDS="$lists"
+  fi
+}
 
-FORCE_BLOCKED=0; DELETE_BLOCKED=0; C_LOCKED=0
+F_ST=none; F_IDS=""; D_ST=none; D_IDS=""; C_LOCKED=0
+if [ "$R_STATE" = read ]; then
+  kind non_fast_forward update; F_ST="$K_ST"; F_IDS="$K_IDS"
+  kind deletion; D_ST="$K_ST"; D_IDS="$K_IDS"
+fi
 if [ "$C_STATE" = read ]; then
   [ "$C_LOCK" = true ] && [ "$C_ENFORCE" = true ] && C_LOCKED=1
-  { [ "$C_FORCE" = false ] || [ "$C_LOCKED" -eq 1 ]; } && FORCE_BLOCKED=1
-  { [ "$C_DELETE" = false ] || [ "$C_LOCKED" -eq 1 ]; } && DELETE_BLOCKED=1
+  { [ "$C_FORCE" = false ] || [ "$C_LOCKED" -eq 1 ]; } && F_ST=blocked
+  { [ "$C_DELETE" = false ] || [ "$C_LOCKED" -eq 1 ]; } && D_ST=blocked
 fi
-if [ "$R_STATE" = read ]; then
-  [ "$R_FORCE" -eq 1 ] && FORCE_BLOCKED=1
-  [ "$R_DELETE" -eq 1 ] && DELETE_BLOCKED=1
-fi
-OPEN=""
-[ "$FORCE_BLOCKED" -eq 1 ] || OPEN="force pushes are allowed"
-[ "$DELETE_BLOCKED" -eq 1 ] || OPEN="${OPEN:+$OPEN, }deletion is allowed"
-# Why a protection that is there did not count, for the OFF line.
-WHY=""
-[ -z "$R_BYPASSED" ] || WHY="; ruleset $R_BYPASSED would block this but has a bypass list, and whoever is on it can still do it"
+
+# What goes on the line. OPEN is what is certainly allowed, WHY names a
+# protection that is there and did not count, and HOLE is what could not be
+# settled.
+OPEN=""; WHY=""; HOLE=""
+tell() { # $1 status, $2 its rulesets, $3 and $4 the words for what it is about
+  case "$1" in
+    none) OPEN="${OPEN:+$OPEN, }$3 allowed" ;;
+    bypassed)
+      OPEN="${OPEN:+$OPEN, }$3 allowed"
+      case "$2" in
+        *' '*) WHY="$WHY; rulesets $2 each block $4, but one entry is on the bypass list of every one of them, and whoever that is can still get past" ;;
+        *)     WHY="$WHY; ruleset $2 blocks $4 but has a bypass list, and whoever is on it can still get past" ;;
+      esac ;;
+    unread) HOLE="${HOLE:+$HOLE; }could not read the bypass list of ruleset $2, so whether it stops $4 for everyone is not known" ;;
+    unsure) HOLE="${HOLE:+$HOLE; }rulesets $2 each block $4 and each has a bypass list, with no entry on all of them; whether one person is on every list cannot be read from here" ;;
+  esac
+}
+tell "$F_ST" "$F_IDS" "force pushes are" "force pushes"
+tell "$D_ST" "$D_IDS" "deletion is" "deletion"
 if [ "$C_STATE" = read ] && [ "$C_LOCK" = true ] && [ "$C_LOCKED" -eq 0 ]; then
   WHY="$WHY; the branch is locked, but administrators can bypass the lock"
 fi
 PROTECT_FIX="open https://github.com/$REPO/settings/rules and add a ruleset for the default branch that blocks force pushes and deletion, with its enforcement set to Active and nobody on its bypass list"
-if [ -z "$OPEN" ]; then
+if [ "$F_ST" = blocked ] && [ "$D_ST" = blocked ]; then
   # Both blocked by what could be read. An unreadable route cannot undo that.
   record default-branch-protection ON ""
 elif [ "$C_STATE" = unreadable ] || [ "$R_STATE" = unreadable ]; then
@@ -393,13 +480,14 @@ elif [ "$C_STATE" = unreadable ] || [ "$R_STATE" = unreadable ]; then
   else
     record default-branch-protection UNKNOWN "the branch name '$BRANCH' has a character this script will not put in a URL - look at https://github.com/$REPO/settings/branches yourself"
   fi
-elif [ -n "$R_UNREAD" ]; then
-  # A blocking rule is there, and whether anyone may walk past it is not known.
-  record default-branch-protection UNKNOWN "could not read the bypass list of ruleset $R_UNREAD, so its rules may not bind everyone - look at https://github.com/$REPO/settings/rules yourself"
 elif [ "$C_STATE" = plan ] && [ "$R_STATE" = plan ]; then
   record default-branch-protection SKIP "your GitHub plan does not offer branch protection on a private repository"
+elif [ -n "$OPEN" ]; then
+  # Something is certainly open. A hole beside it does not make that unknown.
+  record default-branch-protection OFF "$PROTECT_FIX (now: $OPEN$WHY${HOLE:+; $HOLE})"
 else
-  record default-branch-protection OFF "$PROTECT_FIX (now: $OPEN$WHY)"
+  # Nothing is certainly open, and at least one question could not be settled.
+  record default-branch-protection UNKNOWN "$HOLE - look at https://github.com/$REPO/settings/rules yourself"
 fi
 
 onoff delete-branch-on-merge "$DELETE_ON_MERGE" true false \
@@ -433,16 +521,78 @@ if [ "$LOCAL" -eq 0 ]; then
 elif [ -f "$ROOT/.github/dependabot.yml" ] || [ -f "$ROOT/.github/dependabot.yaml" ]; then
   # The file being there does not mean it watches anything, and the template
   # ships one that watches only its own CI's actions. So ON names what is
-  # watched, and a file with no entry is OFF. Comment lines do not count.
+  # watched, and a file with no entry is OFF. So is one with an entry GitHub
+  # would refuse: it requires a directory and a schedule interval on each (an
+  # entry in a multi-ecosystem group takes the group's schedule), and an entry
+  # without them opens no pull request.
+  # The file is read as text, not parsed as YAML. An entry is a `-` item
+  # under `updates:`, and its keys are looked for on the lines down to the
+  # next item at that depth. Comment lines do not count. A YAML anchor is not
+  # followed, so an entry that looks incomplete in a file that uses one is
+  # UNKNOWN rather than OFF. The third line awk prints is 0 or 1, and anything
+  # else there means the file was not read at all.
   DEP_FILE="$ROOT/.github/dependabot.yml"
   [ -f "$DEP_FILE" ] || DEP_FILE="$ROOT/.github/dependabot.yaml"
-  WATCHES="$(sed -n 's/^[[:space:]]*-\{0,1\}[[:space:]]*package-ecosystem:[[:space:]]*//p' "$DEP_FILE" \
-    | tr -d "\"'\r" | sed 's/[[:space:]]*#.*$//; s/[[:space:]]*$//' | tr '\n' ' ' | sed 's/ *$//')"
-  if [ -n "$WATCHES" ]; then
-    record dependabot-config ON "watches: $WATCHES"
-  else
-    record dependabot-config OFF "$DEP_FILE has no package-ecosystem entry, so it watches nothing - add one (the comments in the template's file show how)"
-  fi
+  DEP_READ="$(awk -v q="'" '
+    function lacks(what) { problems = problems (problems == "" ? "" : "; ") what }
+    function flush() {
+      if (!initem) return
+      n++
+      if (eco == "") lacks("entry " n " names no package-ecosystem")
+      else {
+        names = names (names == "" ? "" : " ") eco
+        if (!dir) lacks("the entry for " eco " has no directory")
+        if (!sched) lacks("the entry for " eco " has no schedule interval")
+      }
+      initem = 0; eco = ""; dir = 0; sched = 0
+    }
+    {
+      line = $0
+      sub(/\r$/, "", line)
+      if (line ~ /^[ \t]*(#|$)/) next
+      if (line ~ /<<[ \t]*:/ || line ~ /[:-][ \t]+\*[A-Za-z0-9_-]/) anchor = 1
+      match(line, /^ */); ind = RLENGTH
+      dash = (substr(line, ind + 1, 1) == "-")
+      if (where == 0) {
+        if (line ~ /^ *updates[ \t]*:[ \t]*(#.*)?$/) { where = 1; depth = -1 }
+        next
+      }
+      if (where == 2) next
+      if (depth < 0) { if (dash) depth = ind; else { where = 2; next } }
+      if (ind < depth || (ind == depth && !dash)) { flush(); where = 2; next }
+      if (ind == depth) { flush(); initem = 1 }
+      key = line
+      sub(/^ *(-[ \t]*)?/, "", key)
+      if (key ~ /^package-ecosystem[ \t]*:/) {
+        eco = key
+        sub(/^package-ecosystem[ \t]*:[ \t]*/, "", eco)
+        sub(/[ \t]+#.*$/, "", eco)
+        gsub("[\"" q "]", "", eco)
+        sub(/[ \t]+$/, "", eco)
+      }
+      if (key ~ /^(directory|directories)[ \t]*:/) dir = 1
+      if (key ~ /^multi-ecosystem-group[ \t]*:/) sched = 1
+      if (key ~ /(^|[{,][ \t]*)interval[ \t]*:/) sched = 1
+    }
+    END { flush(); print names; print problems; print anchor + 0 }
+  ' "$DEP_FILE" 2>/dev/null)"
+  WATCHES=""; DEP_LACKS=""; DEP_ANCHOR=""
+  { IFS= read -r WATCHES; IFS= read -r DEP_LACKS; IFS= read -r DEP_ANCHOR; } <<DEP
+$DEP_READ
+DEP
+  case "$DEP_ANCHOR" in
+    0|1)
+      if [ -n "$DEP_LACKS" ] && [ "$DEP_ANCHOR" = 1 ]; then
+        record dependabot-config UNKNOWN "$DEP_LACKS, as far as this script reads the file - but the file uses a YAML anchor, which it does not follow, so the entry may be complete"
+      elif [ -n "$DEP_LACKS" ]; then
+        record dependabot-config OFF "$DEP_FILE: $DEP_LACKS. GitHub requires a directory and a schedule interval on every entry - add what is missing (the template's file shows a whole entry)"
+      elif [ -n "$WATCHES" ]; then
+        record dependabot-config ON "watches: $WATCHES"
+      else
+        record dependabot-config OFF "$DEP_FILE has no package-ecosystem entry, so it watches nothing - add one (the comments in the template's file show how)"
+      fi ;;
+    *) record dependabot-config UNKNOWN "could not read $DEP_FILE" ;;
+  esac
 else
   record dependabot-config OFF "add .github/dependabot.yml (the template ships one; see SETUP.md)"
 fi

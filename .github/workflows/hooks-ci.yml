@@ -1162,45 +1162,63 @@ jobs:
           # are off. Three exit states: 0 nothing off, 1 at least one off,
           # 2 could not tell (outranks 1, and every finding still prints).
           # The property that matters most is one a user cannot see: it never
-          # writes. A fake gh on PATH answers only the two read forms the
-          # script uses (`repo view --json nameWithOwner` and
-          # `api <path> [--jq <expr>]`) and records anything else, however it
-          # is spelled. The last case fails if one was recorded, and counts the
-          # runs it looked at so an empty record cannot pass for a clean one.
-          # A list of forbidden flags was tried first and walked around three
-          # ways (`--method=PUT`, `-XPUT`, `gh repo edit`). The fake runs
-          # each --jq expression with real jq over a JSON body shaped like
-          # GitHub's, pages a list as GitHub does (30 entries unless asked),
-          # and a refusal carries the message gh prints, so the expressions,
-          # the paging and the message matching are all under test. gh's own
-          # jq is not jq: the suite's header says what that leaves unproven.
-          # The shapes were read from real responses on 2026-11-13, except a
-          # bypass list with somebody on it, which is from GitHub's API
-          # reference. Needs jq. 94 cases.
+          # writes. A fake gh on PATH allows only the one read form the script
+          # uses (`api <path> [--jq <expr>]`, which gh sends as a GET) and
+          # records anything else, however it is spelled. The last case fails
+          # if one was recorded, and counts the runs it looked at so an empty
+          # record cannot pass for a clean one. A list of forbidden flags was
+          # tried first and walked around three ways (`--method=PUT`, `-XPUT`,
+          # `gh repo edit`). The fake runs each --jq expression with real jq
+          # over a JSON body shaped like GitHub's, pages a list as GitHub does
+          # (30 entries unless asked), and a refusal carries the message gh
+          # prints, so the expressions, the paging and the message matching
+          # are all under test. gh's own jq is not jq: the suite's header says
+          # what that leaves unproven. The shapes were read from real
+          # responses on 2026-11-13, except a bypass list with somebody on it,
+          # which is from GitHub's API reference. Needs jq and git. 158 cases.
+          #
+          # Which repository: the one the checkout pushes to, read from its
+          # `origin` remote by git. gh is not asked, because in a checkout
+          # that also has an `upstream` remote it answers for that one (seen
+          # with gh 2.89.0), and the fake answers the same way. Only a
+          # github.com address is taken, the address is never printed, and
+          # the name GitHub gives back is the one used from then on.
           #
           # What "protected" means here: no rule lets anyone force-push to the
           # default branch or delete it. Classic protection and rulesets are
-          # both read and add up, and every page of rules is read. These are
-          # OFF: a protection that allows force pushes, a ruleset holding only
-          # a review rule, a ruleset with somebody on its bypass list (a
-          # bypass that works only through a pull request does not count), and
-          # a branch lock administrators can bypass. A refusal is a plan SKIP
-          # only on a private repository whose refusal names the plan, and a
-          # 404 is "off" only with GitHub's own message. UNKNOWN covers what
-          # could not be read or was not understood: an error, a rules answer
-          # holding an entry that is not a rule, a ruleset whose bypass list
-          # is missing, more than ten pages of rules. Not read at all, and
-          # said so in the script: an organisation's custom roles that carry
-          # a bypass permission.
+          # both read and add up, and every page of rules is read. "Restrict
+          # updates" counts as a force-push block. These are OFF: a protection
+          # that allows force pushes, a ruleset holding only a review rule, a
+          # ruleset with somebody on its bypass list (a bypass that works only
+          # through a pull request does not count), and a branch lock
+          # administrators can bypass. Rulesets layer, so with two that hold
+          # the same rule somebody gets past only by being on both bypass
+          # lists: an entry on both is OFF, and lists with no entry in common
+          # are UNKNOWN, since two entries can still be one person. A refusal
+          # is a plan SKIP only on a private repository whose refusal names
+          # the plan, and a 404 is "off" only with GitHub's own message.
+          # UNKNOWN covers what could not be read or was not understood: an
+          # error, a rules answer holding an entry that is not a rule, a
+          # ruleset whose bypass list is missing, more than ten pages of
+          # rules. Not read at all, and said so in the script: an
+          # organisation's custom roles that carry a bypass permission, and a
+          # ruleset's pull-request rule as a block on force pushes.
           #
           # Security updates that are enabled but paused are OFF. The
-          # dependabot-config line reads the file: ON names the ecosystems it
-          # watches, and a file with no entry is OFF. A branch name holding a
-          # character that changes what a URL means is never sent.
+          # dependabot-config line reads the file as text: ON names the
+          # ecosystems it watches, and a file with no entry, or with an entry
+          # that lacks a directory or a schedule, is OFF. A branch name
+          # holding a character that changes what a URL means is never sent.
           #
-          # Mutation ledger, measured 2026-11-13, 62 mutants each in its own
+          # Mutation ledger, measured 2026-11-13, 104 mutants each in its own
           # copy beside an unmutated baseline (0 red), predicted -> observed
-          # red:
+          # red. Measured on Linux (bash 5.3, GNU awk 5.3, jq 1.8.1, under
+          # WSL). The baseline and the first 15 rows were also measured under
+          # Git for Windows' bash, with the same counts, before that run was
+          # stopped for time: a suite takes a minute on Linux and ten there.
+          # The last row can only be measured on Linux. Git for Windows' awk
+          # drops a carriage return before the program sees the line, so
+          # removing the script's own line for it changes nothing there.
           #
           #   alerts endpoint error read as ON                2 -> 2
           #   unreadable on/off field read as OFF             4 -> 4
@@ -1212,37 +1230,37 @@ jobs:
           #   a write is sent                                 1 -> 1
           #   default branch hardcoded to main                1 -> 1
           #   extra field in the repository line accepted     1 -> 1
-          #   --repo shape validation removed                 1 -> 1
+          #   repository name shape check removed             2 -> 2
           #   --repo still reads the local tree               1 -> 1
           #   option value check removed (the endless loop)   4 -> 4
           #   empty option value accepted                     2 -> 2
           #   classic force-push flag ignored                 2 -> 2
           #   classic deletion flag ignored                   1 -> 1
-          #   any blocking rule counts as a force-push block  2 -> 2
-          #   any blocking rule counts as a deletion block    4 -> 4
+          #   a deletion rule counts as a force-push block    6 -> 6
+          #   a force-push rule counts as a deletion block    6 -> 6
           #   plan refusal believed on a public repo          1 -> 1
           #   any 403 on a private repo read as the plan      2 -> 2
           #   any classic 404 read as not protected           1 -> 1
           #   unreadable route no longer UNKNOWN              11 -> 11
-          #   deletion left out of the verdict                5 -> 5
+          #   deletion left out of the verdict                8 -> 8
           #   an unreadable route undoes a proven ON          1 -> 1
           #   classic answer missing its fields accepted      1 -> 1
           #   plan refusal on one route read as SKIP          1 -> 1
-          #   rules contribute nothing                        15 -> 15
+          #   a ruleset nobody can bypass blocks nothing      35 -> 35
           #   classic protection contributes nothing          5 -> 5
           #   plan refusal on both routes read as OFF         1 -> 1
           #   any alerts 404 read as off                      1 -> 1
           #   security updates endpoint error read as ON      1 -> 1
           #   a write spelled --method=PUT and -XPUT          1 -> 1
           #   a setting changed through gh repo edit          1 -> 1
-          #   --root: repository looked up from elsewhere     1 -> 1
+          #   --root: remote read from the starting folder    10 -> 10
           #   branch name sent whatever it holds              1 -> 1
           #   a slash in a branch name refused                1 -> 1
           #   a dependabot file with no entry counts as ON    2 -> 2
-          #   commented-out entries count                     2 -> 2
+          #   comment lines read as part of the file          1 -> 1
           #   what the file watches left out of the report    1 -> 1
-          #   what the file watches not recorded              3 -> 3
-          #   quotes kept around an ecosystem name            3 -> 3
+          #   what the file watches not recorded              6 -> 6
+          #   quotes kept around an ecosystem name            5 -> 5
           #   paused security updates read as ON              2 -> 2
           #   enabled, no word on paused, read as ON          1 -> 1
           #   disabled security updates no longer OFF         2 -> 2
@@ -1251,19 +1269,61 @@ jobs:
           #   a lock counts though admins can bypass it       2 -> 2
           #   allow flags count only with enforce_admins      1 -> 1
           #   note on a lock that does not bind dropped       1 -> 1
-          #   a ruleset with a bypass list still counts       6 -> 6
-          #   pull-request-only bypass counted as a way in    1 -> 1
-          #   a missing bypass list read as an empty one      2 -> 2
-          #   an unreadable ruleset counts as no bypass       3 -> 3
-          #   an unread bypass list no longer UNKNOWN         3 -> 3
-          #   note naming the bypassed ruleset dropped        1 -> 1
+          #   a ruleset with a bypass list still counts       17 -> 17
+          #   pull-request-only bypass counted as a way in    2 -> 2
+          #   a missing bypass list read as an empty one      3 -> 3
+          #   an unreadable ruleset counts as no bypass       5 -> 5
+          #   what could not be settled reported as OFF       7 -> 7
+          #   note naming one bypassed ruleset dropped        2 -> 2
           #   only an 'always' bypass counts as a way in      2 -> 2
-          #   an unread bypass list undoes a proven ON        1 -> 1
+          #   a classic block loses to an unread ruleset      1 -> 1
           #   the first page taken as the whole list          2 -> 2
           #   a hundred a page is not asked for               2 -> 2
           #   the ten-page cap removed                        1 -> 1
           #   an entry that is not a rule skipped             1 -> 1
           #   a blocking rule with no ruleset skipped         1 -> 1
+          #   lists with nothing in common read as a way in   4 -> 4
+          #   lists with nothing in common read as blocked    5 -> 5
+          #   note naming several bypassed rulesets dropped   1 -> 1
+          #   'Restrict updates' not read from the rules      3 -> 3
+          #   'Restrict updates' not a force-push block       3 -> 3
+          #   'Restrict updates' counted as a deletion block  2 -> 2
+          #   two bypass lists are not compared               4 -> 4
+          #   entries compared as parts of a word             1 -> 1
+          #   an entry not encoded before lists are joined    1 -> 1
+          #   a ruleset with two force rules counted twice    1 -> 1
+          #   certainly open no longer outranks a hole        2 -> 2
+          #   the hole left out of an OFF line                1 -> 1
+          #   an unread bypass list is passed over            5 -> 5
+          #   fetch address read, not the push address        1 -> 1
+          #   any https host taken for github.com             5 -> 5
+          #   a host that only ends in github.com taken       1 -> 1
+          #   an SSH alias taken for github.com               1 -> 1
+          #   an ssh:// address on any host taken             1 -> 1
+          #   the .git ending kept in the name                6 -> 6
+          #   a trailing slash kept in the name               1 -> 1
+          #   GH_HOST pointing elsewhere ignored              1 -> 1
+          #   the address printed when it is refused          1 -> 1
+          #   the old name kept after a rename                1 -> 1
+          #   the name GitHub gives back not checked          1 -> 1
+          #   an answer naming no repository accepted         2 -> 2
+          #   gh asked which repository this is               140 -> 140
+          #   an entry with no schedule counts                7 -> 7
+          #   an entry with no directory counts               2 -> 2
+          #   an entry naming no ecosystem passed over        1 -> 1
+          #   one entry's keys carry over to the next         2 -> 2
+          #   the end of the list never noticed               3 -> 3
+          #   the word interval counts anywhere on a line     1 -> 1
+          #   anchor no longer makes a gap UNKNOWN            1 -> 1
+          #   an anchor makes a complete file UNKNOWN         1 -> 1
+          #   a file that could not be read reported OFF      1 -> 1
+          #   a group's schedule not honoured                 1 -> 1
+          #   a list of directories not accepted              2 -> 2
+          #   entries looked for two spaces in only           2 -> 2
+          #   ecosystem must be the entry's first key         2 -> 2
+          #   key after a flush-left list read as an entry    2 -> 2
+          #   trailing comment read as part of the name       1 -> 1
+          #   a carriage return kept on the line              2 -> 2
           bash bin/tests/test-check-repo-settings.sh
 
       - name: Suite - brain refresh (optional project memory)

@@ -207,8 +207,8 @@ Run `bash bin/check-repo-settings.sh`. It only reads.
 
 - **Exit 2 means it could not tell.** With no table printed, nothing was
   read: say why in their terms (the GitHub tool is not installed or not signed
-  in, the project has no GitHub remote yet, they do not administer the
-  repository) and record the step as not checked. With a table and an
+  in, the project has no `origin` remote on github.com yet, they do not
+  administer the repository) and record the step as not checked. With a table and an
   `UNKNOWN` line in it, only that setting could not be read: handle the other
   lines as usual and report that one as not checked, with the reason its line
   gives. Never report an unread setting as fine, and do not treat exit 2 as a
@@ -228,7 +228,10 @@ what the file watches today. Read the repo for the package managers it uses
 (`package.json`, `pyproject.toml`, `pubspec.yaml`, `Cargo.toml`, `go.mod`,
 `Gemfile`), and for each one the file does not watch, propose the entry and
 say what it brings: a pull request, at most weekly, when one of those packages
-has a newer release. Add it on a yes. If the project has no package manager
+has a newer release. Add it on a yes, as a whole entry shaped like the shipped
+one: GitHub requires a `directory` and a `schedule` on each, and the script
+reports the file as `OFF` when an entry lacks either, so run it again
+afterwards. If the project has no package manager
 yet, say that the entry gets added when the first one appears, and leave the
 file alone. Say once what the shipped entry does, since they did not choose
 it: the same weekly pull request for the GitHub Actions in the template's own
