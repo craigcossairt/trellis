@@ -113,6 +113,11 @@ or command needs its router in the same commit** - a procedure the harness canno
 exactly like one that was never written. Each adapter's own directory documents its router
 format; delete the adapter and the rule goes with it.
 
+`.claude/skills/` here holds only skills specific to this project. Personal skills you use across
+projects belong in one home repo of your own, installed user-level (`~/.claude/skills/`); never
+copy one into a project. If you keep such a repo, name it on this line so agents know where shared
+skills come from.
+
 ## Rules
 
 ### Working Methodology
