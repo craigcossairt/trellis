@@ -19,8 +19,12 @@
 #   dependabot-security-updates        opens the pull request that fixes it
 #   secret-scanning                    finds keys that were committed
 #   push-protection                    refuses the push that contains a key
-#   default-branch-protection          no force-push or deletion of the default
-#                                      branch (classic protection OR a ruleset)
+#   default-branch-protection          nobody can force-push to or delete the
+#                                      default branch. Classic protection and
+#                                      rulesets are both read, and they add up.
+#                                      A protection that allows force pushes, or
+#                                      a ruleset that only asks for a review, is
+#                                      reported OFF: it stops neither.
 #   delete-branch-on-merge             merged branches are removed for you
 #   workflow-token-read-only           CI's built-in token cannot write by default
 #   private-vulnerability-reporting    a private way to report a security bug
@@ -29,7 +33,9 @@
 #                                      updates are configured (a local file check)
 #
 # States: ON, OFF, SKIP (does not apply, or your GitHub plan does not offer it),
-# UNKNOWN (could not be read).
+# UNKNOWN (could not be read). A refusal counts as SKIP only when GitHub says
+# the plan is the reason; any other refusal is a token that may not look, and
+# what it may not see is UNKNOWN.
 #
 # Exit: 0 nothing is off / 1 at least one setting is OFF / 2 could not tell.
 # 2 never means clean, and it wins over 1: a report with a hole in it is not a
@@ -52,8 +58,14 @@ set -uo pipefail
 REPO=""; ROOT=""; PORCELAIN=0
 while [ $# -gt 0 ]; do
   case "$1" in
-    --repo) REPO="${2:-}"; shift 2 ;;
-    --root) ROOT="${2:-}"; shift 2 ;;
+    --repo|--root)
+      # Checked before the shift: `shift 2` with one argument left fails and
+      # shifts nothing, and this loop would then read the same option for ever.
+      if [ $# -lt 2 ] || [ -z "$2" ]; then
+        echo "check-repo-settings: $1 needs a value" >&2; exit 2
+      fi
+      case "$1" in --repo) REPO="$2" ;; --root) ROOT="$2" ;; esac
+      shift 2 ;;
     --porcelain) PORCELAIN=1; shift ;;
     -h|--help)
       while IFS= read -r line; do
@@ -131,16 +143,16 @@ record() { RESULTS="${RESULTS}${1}${TAB}${2}${TAB}${3}
 "; }
 
 # --- the repository itself ---------------------------------------------------
-# One call, seven fields, joined with | because an empty TSV field collapses
+# One call, six fields, joined with | because an empty TSV field collapses
 # under `read`. null becomes the word none, so "absent" stays distinguishable
 # from false.
-api "repos/$REPO" '[.private, .default_branch, .permissions.admin, .delete_branch_on_merge, .security_and_analysis.dependabot_security_updates.status, .security_and_analysis.secret_scanning.status, .security_and_analysis.secret_scanning_push_protection.status] | map(if . == null then "none" else tostring end) | join("|")'
+api "repos/$REPO" '[.private, .default_branch, .permissions.admin, .delete_branch_on_merge, .security_and_analysis.secret_scanning.status, .security_and_analysis.secret_scanning_push_protection.status] | map(if . == null then "none" else tostring end) | join("|")'
 if [ "$API_CODE" != 200 ]; then
   echo "check-repo-settings: could not read $REPO (${API_OUT:-no response}) - nothing was checked." >&2
   exit 2
 fi
-PRIVATE=""; BRANCH=""; ADMIN=""; DELETE_ON_MERGE=""; DSU=""; SS=""; PP=""; EXTRA=""
-IFS='|' read -r PRIVATE BRANCH ADMIN DELETE_ON_MERGE DSU SS PP EXTRA <<FIELDS
+PRIVATE=""; BRANCH=""; ADMIN=""; DELETE_ON_MERGE=""; SS=""; PP=""; EXTRA=""
+IFS='|' read -r PRIVATE BRANCH ADMIN DELETE_ON_MERGE SS PP EXTRA <<FIELDS
 $API_OUT
 FIELDS
 case "$PRIVATE" in true|false) ;; *) PRIVATE="" ;; esac
@@ -160,16 +172,31 @@ onoff() { # $1 check, $2 value, $3 on-value, $4 off-value, $5 fix
   fi
 }
 
-# --- dependabot alerts: 204 on, 404 off --------------------------------------
+# --- dependabot alerts: 204 on, 404 "Vulnerability alerts are disabled." off --
+# A 404 counts as off only with that message. GitHub can also answer 404 to a
+# token that may not look, and that is not the same fact.
 api "repos/$REPO/vulnerability-alerts"
 case "$API_CODE" in
   200) record dependabot-alerts ON "" ;;
-  404) record dependabot-alerts OFF "gh api -X PUT repos/$REPO/vulnerability-alerts" ;;
+  404)
+    case "$API_OUT" in
+      *"alerts are disabled"*) record dependabot-alerts OFF "gh api -X PUT repos/$REPO/vulnerability-alerts" ;;
+      *) record dependabot-alerts UNKNOWN "${API_OUT:-no response}" ;;
+    esac ;;
   *)   record dependabot-alerts UNKNOWN "${API_OUT:-no response}" ;;
 esac
 
-onoff dependabot-security-updates "$DSU" enabled disabled \
-  "gh api -X PUT repos/$REPO/automated-security-fixes"
+# --- dependabot security updates ----------------------------------------------
+# From its own endpoint, not from the repository's security block: GitHub
+# leaves that whole block out for a private repository on a plan without
+# secret scanning, and this setting does not depend on that plan.
+api "repos/$REPO/automated-security-fixes" '.enabled'
+if [ "$API_CODE" = 200 ]; then
+  onoff dependabot-security-updates "$API_OUT" true false \
+    "gh api -X PUT repos/$REPO/automated-security-fixes"
+else
+  record dependabot-security-updates UNKNOWN "${API_OUT:-no response}"
+fi
 
 # --- secret scanning ----------------------------------------------------------
 # Free and automatic on a public repository. On a private one it needs a paid
@@ -186,28 +213,87 @@ else
 fi
 
 # --- default branch -----------------------------------------------------------
-# Two routes protect a branch and either is enough: classic branch protection,
-# or a ruleset. Asking only one reports a protected branch as bare.
-#   classic: 200 protected, 404 not, 403 the plan does not offer it
-#   rules:   a count of the active rules that apply to the branch
-api "repos/$REPO/branches/$BRANCH/protection" '.url'
-CLASSIC="$API_CODE"
-api "repos/$REPO/rules/branches/$BRANCH" 'length'
-RULES_CODE="$API_CODE"; RULES="$API_OUT"
-if [ "$RULES_CODE" = 200 ]; then
-  case "$RULES" in ''|*[!0-9]*) RULES_CODE=0 ;; esac
+# The question is narrow: can anyone force-push to the default branch, or
+# delete it? Two routes can say no, classic branch protection and rulesets, and
+# they add up - one may stop force pushes while the other stops deletion.
+# Asking only one reports a protected branch as bare. Counting either as
+# "protected" because it exists reports a bare branch as protected: a classic
+# protection can allow force pushes, and a ruleset can hold nothing but a
+# review rule.
+#
+# Each route ends up read, absent, plan (GitHub says the plan does not offer
+# it) or unreadable, and only affirmative evidence moves it off unreadable:
+#   classic  200 with both fields -> read
+#            404 "Branch not protected" -> absent
+#   rules    200 with a list -> read (an empty list is a read, not an absence)
+#   either   403 on a private repository whose message names the plan -> plan
+# A 403 that does not name the plan is a token that may not look. The
+# protection may be there, so that is unreadable, never a SKIP.
+plan_refusal() { # $1 status, $2 gh's message
+  [ "$PRIVATE" = true ] && [ "$1" = 403 ] || return 1
+  case "$2" in *"Upgrade to GitHub"*) return 0 ;; esac
+  return 1
+}
+# pair <text> -> PAIR_A, PAIR_B when the text is exactly `a|b`, both non-empty.
+PAIR_A=""; PAIR_B=""
+pair() {
+  PAIR_A=""; PAIR_B=""
+  case "$1" in *'|'*'|'*|'|'*|*'|'|'') return 1 ;; *'|'*) ;; *) return 1 ;; esac
+  PAIR_A="${1%%|*}"; PAIR_B="${1#*|}"
+}
+
+# Classic: are force pushes / deletions ALLOWED? (true means open.)
+C_STATE=unreadable; C_FORCE=""; C_DELETE=""
+api "repos/$REPO/branches/$BRANCH/protection" '[.allow_force_pushes.enabled, .allow_deletions.enabled] | map(if . == null then "none" else tostring end) | join("|")'
+case "$API_CODE" in
+  200)
+    if pair "$API_OUT"; then
+      case "$PAIR_A/$PAIR_B" in
+        true/true|true/false|false/true|false/false)
+          C_STATE="read"; C_FORCE="$PAIR_A"; C_DELETE="$PAIR_B" ;;
+      esac
+    fi ;;
+  404) case "$API_OUT" in *"Branch not protected"*) C_STATE=absent ;; esac ;;
+  403) plan_refusal "$API_CODE" "$API_OUT" && C_STATE=plan ;;
+esac
+
+# Rules: how many active rules of each blocking type apply to the branch?
+R_STATE=unreadable; R_FORCE=0; R_DELETE=0
+api "repos/$REPO/rules/branches/$BRANCH" 'if type == "array" then [(map(select(.type == "non_fast_forward")) | length), (map(select(.type == "deletion")) | length)] | map(tostring) | join("|") else error("not a list") end'
+case "$API_CODE" in
+  200)
+    if pair "$API_OUT"; then
+      case "$PAIR_A$PAIR_B" in
+        *[!0-9]*) ;;
+        *) R_STATE="read"; R_FORCE="$PAIR_A"; R_DELETE="$PAIR_B" ;;
+      esac
+    fi ;;
+  403) plan_refusal "$API_CODE" "$API_OUT" && R_STATE=plan ;;
+esac
+
+FORCE_BLOCKED=0; DELETE_BLOCKED=0
+if [ "$C_STATE" = read ]; then
+  [ "$C_FORCE" = false ] && FORCE_BLOCKED=1
+  [ "$C_DELETE" = false ] && DELETE_BLOCKED=1
 fi
+if [ "$R_STATE" = read ]; then
+  [ "$R_FORCE" -gt 0 ] && FORCE_BLOCKED=1
+  [ "$R_DELETE" -gt 0 ] && DELETE_BLOCKED=1
+fi
+OPEN=""
+[ "$FORCE_BLOCKED" -eq 1 ] || OPEN="force pushes are allowed"
+[ "$DELETE_BLOCKED" -eq 1 ] || OPEN="${OPEN:+$OPEN, }deletion is allowed"
 PROTECT_FIX="open https://github.com/$REPO/settings/rules and add a ruleset for the default branch that blocks force pushes and deletion"
-if [ "$CLASSIC" = 200 ] || { [ "$RULES_CODE" = 200 ] && [ "$RULES" -gt 0 ]; }; then
+if [ -z "$OPEN" ]; then
+  # Both blocked by what could be read. An unreadable route cannot undo that.
   record default-branch-protection ON ""
-elif [ "$CLASSIC" = 403 ] && [ "$RULES_CODE" = 403 ]; then
-  record default-branch-protection SKIP "your GitHub plan does not offer branch protection on a private repository"
-elif { [ "$CLASSIC" = 404 ] || [ "$CLASSIC" = 403 ]; } && [ "$RULES_CODE" = 200 ]; then
-  record default-branch-protection OFF "$PROTECT_FIX"
-elif [ "$CLASSIC" = 404 ] && [ "$RULES_CODE" = 403 ]; then
-  record default-branch-protection OFF "$PROTECT_FIX"
-else
+elif [ "$C_STATE" = unreadable ] || [ "$R_STATE" = unreadable ]; then
+  # The route that could not be read may be the one doing the blocking.
   record default-branch-protection UNKNOWN "could not read the branch rules for '$BRANCH'"
+elif [ "$C_STATE" = plan ] && [ "$R_STATE" = plan ]; then
+  record default-branch-protection SKIP "your GitHub plan does not offer branch protection on a private repository"
+else
+  record default-branch-protection OFF "$PROTECT_FIX (now: $OPEN)"
 fi
 
 onoff delete-branch-on-merge "$DELETE_ON_MERGE" true false \

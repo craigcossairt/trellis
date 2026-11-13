@@ -1154,30 +1154,56 @@ jobs:
           # 2 could not tell (outranks 1, and every finding still prints).
           # The property that matters most is one a user cannot see: it never
           # writes. A fake gh on PATH records any call that carries a method
-          # or a field flag, and a case fails if one was sent. The fake does
-          # not evaluate the --jq expressions; those were exercised by real
-          # runs against two repositories when the script was added. 35 cases.
+          # or a field flag, and a case fails if one was sent. The fake runs
+          # each --jq expression with real jq over a JSON body shaped like
+          # GitHub's, and a refusal carries the message gh prints, so the
+          # expressions and the message matching are both under test. The
+          # shapes were read from real responses on 2026-11-13. Needs jq.
+          # 58 cases.
           #
-          # Mutation ledger, measured 2026-11-13, predicted -> observed red:
+          # What "protected" means here: nobody can force-push to the default
+          # branch or delete it. Classic protection and rulesets are both
+          # read and add up. A protection that allows force pushes, or a
+          # ruleset holding only a review rule, is OFF. A refusal is a plan
+          # SKIP only on a private repository whose refusal names the plan,
+          # and a 404 is "off" only with GitHub's own message. Anything else
+          # is UNKNOWN: a state is reported only on evidence for it.
+          #
+          # Mutation ledger, measured 2026-11-13, 32 mutants each in its own
+          # copy, predicted -> observed red:
           #
           #   alerts endpoint error read as ON                2 -> 2
-          #   unreadable on/off field read as OFF             2 -> 2
-          #   ruleset route dropped (classic only)            7 -> 7
-          #   classic protection route dropped                1 -> 1
+          #   unreadable on/off field read as OFF             3 -> 3
           #   found (1) outranks could-not-tell (2)           1 -> 1
-          #   private repo's absent secret scanning a finding 2 -> 2
-          #   vulnerability reporting checked on private      3 -> 3
+          #   private repo's absent secret scanning a finding 4 -> 4
+          #   vulnerability reporting checked on private      5 -> 5
           #   admin check removed                             1 -> 1
           #   gh presence check removed                       1 -> 1
-          #   plan refusal (403 on both routes) read as OFF   1 -> 1
           #   a write is sent                                 1 -> 1
           #   default branch hardcoded to main                1 -> 1
           #   extra field in the repository line accepted     1 -> 1
           #   --repo shape validation removed                 1 -> 1
           #   dependabot config always ON                     1 -> 1
           #   --repo still reads the local tree               1 -> 1
-          #   403 on one route + empty rules read as SKIP     1 -> 1
-          #   non-numeric rule count accepted                 1 -> 1
+          #   option value check removed (the endless loop)   3 -> 3
+          #   empty option value accepted                     1 -> 1
+          #   classic force-push flag ignored                 2 -> 2
+          #   classic deletion flag ignored                   1 -> 1
+          #   any rule counts as a force-push block           2 -> 2
+          #   any rule counts as a deletion block             2 -> 2
+          #   plan refusal believed on a public repo          1 -> 1
+          #   any 403 on a private repo read as the plan      2 -> 2
+          #   any classic 404 read as not protected           1 -> 1
+          #   unreadable route no longer UNKNOWN              7 -> 7
+          #   deletion left out of the verdict                3 -> 3
+          #   an unreadable route undoes a proven ON          1 -> 1
+          #   classic answer missing its fields accepted      1 -> 1
+          #   plan refusal on one route read as SKIP          1 -> 1
+          #   rules contribute nothing                        10 -> 10
+          #   classic protection contributes nothing          2 -> 2
+          #   plan refusal on both routes read as OFF         1 -> 1
+          #   any alerts 404 read as off                      1 -> 1
+          #   security updates endpoint error read as ON      1 -> 1
           bash bin/tests/test-check-repo-settings.sh
 
       - name: Suite - brain refresh (optional project memory)
