@@ -113,8 +113,9 @@ every Bash call, so wire it only where node is installed. To turn it on, add thi
 ```
 
 Suite: `node --test .claude/hooks/tests/heredoc-backslash-warn.test.mjs` (runs in hooks CI
-whether or not you wire the hook). Claude Code only: the Cursor, Grok and Codex adapters
-translate blocks, and a non-blocking warning has no equivalent there yet.
+whether or not you wire the hook). Claude Code only as shipped: the Cursor, Grok and Codex
+adapters translate blocks and nothing else. Grok can carry a non-blocking note to the model
+(a PreToolUse `additionalContext`, per its hooks guide), but no adapter here sends one.
 
 ### Shared main checkout check - `bin/check-main-checkouts.sh`
 

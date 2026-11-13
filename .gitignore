@@ -3,6 +3,7 @@
 .env.*
 !.env.example
 .mcp.json
+.cursor/mcp.json
 *.pem
 *.key
 

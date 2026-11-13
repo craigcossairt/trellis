@@ -15,6 +15,10 @@
 # 2. Verdict shape - Claude hooks block via exit 2 + a reason on stderr. Grok wants
 #    {"decision":"deny"} on stdout; Cursor wants {"permission":"deny"} and needs an
 #    explicit allow JSON even on a clean pass. Translated here.
+#    Context shape - neither tool reads a session hook's plain stdout. Cursor
+#    takes {"additional_context": ...}; Grok reads only a top-level
+#    {"systemMessage": ...} from a SessionStart reply. Printed raw, the block
+#    reaches nobody and nothing says so.
 # 3. Windows: invoke this script with Git Bash's FULL path in the hook JSON (see
 #    .grok/hooks/hooks.json and .cursor/hooks.json) - a bare `bash` can resolve to
 #    WSL, where HOME and every path are wrong.
@@ -102,9 +106,11 @@ case "$HOOK_ID" in
     exit 0
     ;;
   brain-enrich)
-    # Grok injects UserPromptSubmit stdout directly - emit the block once.
-    # Cursor's beforeSubmitPrompt schema is {"continue": bool} and cannot
-    # inject context - always let the prompt through.
+    # Neither tool adds this to the prompt today. Cursor's beforeSubmitPrompt
+    # schema is {"continue": bool} and cannot inject context, so always let the
+    # prompt through. Grok discards an allowing UserPromptSubmit hook's stdout
+    # (its hooks guide, CLI 1.0.77), which is why .grok/hooks/hooks.json no
+    # longer wires this id. The Grok branch stays for a version that keeps it.
     if [ "$HARNESS" = "cursor" ]; then
       printf '{"continue":true}'
     else
@@ -113,13 +119,14 @@ case "$HOOK_ID" in
     exit 0
     ;;
   session-start)
-    # Cursor's sessionStart schema delivers context via additional_context;
-    # raw stdout would be ignored. Grok surfaces plain stdout.
-    if [ "$HARNESS" = "cursor" ]; then
-      [ -n "$OUT" ] && printf '{"additional_context":%s}' "$(json_string "$OUT")"
-    else
-      [ -n "$OUT" ] && printf '%s' "$OUT"
-    fi
+    # Cursor's sessionStart schema delivers context via additional_context.
+    # Grok reads only a top-level systemMessage from a SessionStart reply.
+    # Raw stdout is ignored by both.
+    case "$HARNESS" in
+      cursor) [ -n "$OUT" ] && printf '{"additional_context":%s}' "$(json_string "$OUT")" ;;
+      grok)   [ -n "$OUT" ] && printf '{"systemMessage":%s}' "$(json_string "$OUT")" ;;
+      *)      [ -n "$OUT" ] && printf '%s' "$OUT" ;;
+    esac
     [ -n "$ERR" ] && printf '%s\n' "$ERR" >&2
     exit 0
     ;;

@@ -346,6 +346,47 @@ run "$D"
 c_has "stale and failed: reports the failure" 'the last refresh FAILED'
 c_hasnot "stale and failed: not also the staleness line" 'Project brain is stale'
 
+echo "== I. through the Cursor and Grok adapter =="
+# Neither tool reads this hook's plain stdout. Cursor takes the text from an
+# `additional_context` field; Grok reads only a top-level `systemMessage` from
+# a SessionStart hook's reply and ignores anything else. Printed raw, the block
+# reaches nobody and nothing says so: the hook ran, exited 0, and the session
+# opened without it. The adapter derives its root from its own location, so it
+# is copied into a throwaway repo beside a copy of the hook.
+ADAPTER="$ROOT/bin/run-claude-hook.sh"
+[ -f "$ADAPTER" ] || { echo "missing $ADAPTER" >&2; exit 1; }
+ADP="$TMP/adapter"; new_repo "$ADP"
+must mkdir -p "$ADP/bin" "$ADP/.claude/hooks"
+must cp "$ADAPTER" "$ADP/bin/run-claude-hook.sh"
+must cp "$HOOK" "$ADP/.claude/hooks/session-start.sh"
+AOUT=""; ARC=0
+adapter() { # $1 harness
+  AOUT="$(cd "$ADP" && printf '{}' | bash bin/run-claude-hook.sh "$1" session-start 2>/dev/null)"
+  ARC=$?
+}
+one_line() { [ "$(printf '%s\n' "$AOUT" | wc -l | tr -d ' ')" = 1 ]; }
+
+adapter grok
+c_eq "grok: the adapter exits 0" "$ARC" 0
+case "$AOUT" in
+  '{"systemMessage":"'*'"}') ok "grok: the reply is one object with a top-level systemMessage" ;;
+  *) bad "grok: the reply is one object with a top-level systemMessage" "$AOUT" ;;
+esac
+case "$AOUT" in
+  *'=== SESSION CONTEXT ==='*'=== END SESSION CONTEXT ==='*) ok "grok: the whole block is inside it, both markers" ;;
+  *) bad "grok: the whole block is inside it, both markers" "$AOUT" ;;
+esac
+if one_line; then ok "grok: newlines are escaped (one line of JSON)"
+else bad "grok: newlines are escaped (one line of JSON)" "$AOUT"; fi
+
+adapter cursor
+case "$AOUT" in
+  '{"additional_context":"'*'"}') ok "cursor: the reply carries additional_context" ;;
+  *) bad "cursor: the reply carries additional_context" "$AOUT" ;;
+esac
+if one_line; then ok "cursor: newlines are escaped (one line of JSON)"
+else bad "cursor: newlines are escaped (one line of JSON)" "$AOUT"; fi
+
 echo
 echo "passed: $PASS   failed: $FAIL"
 [ "$FAIL" -eq 0 ]

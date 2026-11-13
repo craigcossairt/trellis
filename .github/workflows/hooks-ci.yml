@@ -1028,6 +1028,15 @@ jobs:
           #   staleness always fires                        3 -> 3
           #   staleness never fires                         7 -> 7
           #   stale line tells the agent to schedule it     2 -> 2
+          #
+          # Through the Cursor/Grok adapter (bin/run-claude-hook.sh), measured
+          # 2026-11-13 over 59 cases, predicted -> observed red. Neither tool
+          # reads this hook's plain stdout, so a reply in the wrong shape is a
+          # session that opens without the block and says nothing:
+          #   grok reply back to raw stdout                 2 -> 2
+          #   cursor key renamed                            1 -> 1
+          #   grok text not JSON-escaped                    1 -> 1
+          #   grok message nested, not top-level            1 -> 1
           bash bin/tests/test-session-start.sh
 
       - name: CDPATH-guarded self-location

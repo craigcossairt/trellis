@@ -72,7 +72,7 @@ If no, it goes in the issue tracker, not here.
 │   ├── decision-log.md      # what was decided, when, and why
 │   └── methodology/         # TDD, bug protocol, verification gates, adversarial review, sessions, rule changes
 ├── .claude/                 # Claude Code adapter (hooks, commands, skills, agents)
-├── .agents/                 # Codex skill routers to the canonical procedures
+├── .agents/                 # skill routers to the canonical procedures
 ├── .codex/                  # Codex hooks and payload adapter
 ├── .cursor/                 # Cursor adapter (rules + hooks + skill routers)
 ├── .grok/                   # Grok Build adapter (config + hooks)
@@ -92,7 +92,7 @@ The knowledge in this file and `docs/` is harness-agnostic; each tool gets only 
 |---|---|
 | Claude Code | `CLAUDE.md` (imports this file) + hooks via `.claude/settings.json` |
 | Cursor | `.cursor/rules/project.mdc` (always-on rule) + `.cursor/hooks.json` (guardrail parity) + `.cursor/skills/*` (routers) |
-| Grok Build | `.grok/config.toml` (reuses `.claude/` skills and commands) + `.grok/hooks/hooks.json` |
+| Grok Build | `.grok/hooks/hooks.json` + `.agents/skills/*` routers (`.grok/config.toml`: MCP only) |
 | Codex | reads this file natively + `.agents/skills/*` routers + `.codex/hooks.json` |
 | Gemini CLI | `GEMINI.md` pointer |
 | GitHub Copilot | `.github/copilot-instructions.md` pointer |
