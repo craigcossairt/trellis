@@ -475,6 +475,17 @@ case "$(note dependabot-config)" in
   *) bad "and the name carries no stray character" "$(note dependabot-config | od -c | head -3)" ;;
 esac
 
+# Some Windows editors start a file with a byte-order mark. It is not part of
+# the first key, so the file reads as it would without one. Only there: the
+# same three bytes anywhere else are part of the file.
+BOM='\357\273\277'
+healthy; printf "${BOM}"'version: 2\nupdates:\n  - package-ecosystem: "npm"\n    directory: "/"\n    schedule:\n      interval: weekly\n' > "$PROJ/.github/dependabot.yml"; run --porcelain
+expect "a file that starts with a byte-order mark -> ON" 0 dependabot-config ON
+healthy; printf 'version: 2\n'"${BOM}"'updates:\n  - package-ecosystem: "npm"\n    directory: "/"\n    schedule:\n      interval: weekly\n' > "$PROJ/.github/dependabot.yml"; run --porcelain
+expect "the same bytes at the start of a later line are not passed over -> UNKNOWN" 2 dependabot-config UNKNOWN
+healthy; printf 'version: '"${BOM}"'2\nupdates:\n  - package-ecosystem: "npm"\n    directory: "/"\n    schedule:\n      interval: weekly\n' > "$PROJ/.github/dependabot.yml"; run --porcelain
+expect "nor in the middle of the first line -> OFF" 1 dependabot-config OFF
+
 echo "== dependabot.yml: a required key in the wrong place, or with no value, is not there"
 E='  - package-ecosystem: npm'
 healthy; dep 'version: 2' 'updates:' "$E" '    directory: /' '    interval: weekly'; run --porcelain
@@ -550,10 +561,121 @@ healthy; dep 'version: 2' 'multi-ecosystem-groups:' '  apps:' '    labels: [deps
 run --porcelain
 expect "another group's schedule does not cover this entry's group -> UNKNOWN" 2 dependabot-config UNKNOWN
 
-healthy; dep 'version: 2' 'updates:' "$D" '    directory: /' '    multi-ecosystem-group: infra' \
+healthy; dep 'version: 2' 'updates:' "$D" '    directory: /' '    patterns: ["*"]' '    multi-ecosystem-group: infra' \
   'multi-ecosystem-groups:' '  infra:' '    schedule: {interval: weekly}'
 run --porcelain
 expect "a group defined after the entries, with a one-line schedule -> ON" 0 dependabot-config ON
+
+# The group is looked up whether or not the entry has a schedule of its own.
+healthy; dep 'version: 2' 'updates:' "$D" '    directory: /' '    patterns: ["*"]' '    schedule:' '      interval: weekly' \
+  '    multi-ecosystem-group: missing'
+run --porcelain
+expect "an entry with its own schedule, in a group the file does not define -> UNKNOWN" 2 dependabot-config UNKNOWN
+case "$(note dependabot-config)" in
+  *missing*"does not define"*) ok "and the note says the group is not defined" ;;
+  *) bad "and the note says the group is not defined" "$(note dependabot-config)" ;;
+esac
+healthy; dep 'version: 2' 'multi-ecosystem-groups:' '  infra:' '    labels: [deps]' \
+  'updates:' "$D" '    directory: /' '    patterns: ["*"]' '    schedule:' '      interval: weekly' '    multi-ecosystem-group: infra'
+run --porcelain
+expect "an entry with its own schedule, in a defined group that has none -> ON" 0 dependabot-config ON
+
+echo "== dependabot.yml: keys GitHub requires only sometimes"
+# An entry in a multi-ecosystem group needs patterns, and a cron interval needs
+# a cronjob (both from GitHub's docs, 2026-11-13). Missing, each is a key the
+# file lacks: OFF, like a missing directory.
+GW='multi-ecosystem-groups:'; GI='  infra:'; GS='    schedule:'; GV='      interval: weekly'
+IN='    multi-ecosystem-group: infra'
+W='    schedule:'; I='      interval: weekly'
+healthy; dep 'version: 2' "$GW" "$GI" "$GS" "$GV" 'updates:' "$D" '    directory: /' "$IN"; run --porcelain
+expect "an entry in a group, with no patterns -> OFF" 1 dependabot-config OFF
+case "$(note dependabot-config)" in
+  *docker*patterns*) ok "and the note names the entry and the key" ;;
+  *) bad "and the note names the entry and the key" "$(note dependabot-config)" ;;
+esac
+healthy; dep 'version: 2' "$GW" "$GI" "$GS" "$GV" 'updates:' "$D" '    directory: /' '    patterns:' '      - "nginx"' "$IN"; run --porcelain
+expect "patterns as a block list -> ON" 0 dependabot-config ON
+healthy; dep 'version: 2' "$GW" "$GI" "$GS" "$GV" 'updates:' "$D" '    directory: /' '    patterns: []' "$IN"; run --porcelain
+expect "patterns: [] is no patterns -> OFF" 1 dependabot-config OFF
+healthy; dep 'version: 2' "$GW" "$GI" "$GS" "$GV" 'updates:' "$D" '    directory: /' '    patterns:' "$IN"; run --porcelain
+expect "patterns: with nothing under it -> OFF" 1 dependabot-config OFF
+healthy; dep 'version: 2' "$GW" "$GI" "$GS" "$GV" 'updates:' "$D" '    directory: /' '    groups:' '      dev:' '        patterns: ["*"]' "$IN"; run --porcelain
+expect "patterns inside the entry's groups: are not the entry's own -> OFF" 1 dependabot-config OFF
+healthy; dep 'version: 2' "$GW" "$GI" "$GS" "$GV" 'updates:' "$D" '    directory: /' '    patterns: "*"' "$IN"; run --porcelain
+expect "patterns written as one value, not a list -> UNKNOWN" 2 dependabot-config UNKNOWN
+
+healthy; dep 'version: 2' 'updates:' "$E" '    directory: /' '    schedule:' '      interval: cron'; run --porcelain
+expect "a cron interval with no cronjob -> OFF" 1 dependabot-config OFF
+case "$(note dependabot-config)" in
+  *npm*cronjob*) ok "and the note names the entry and the key" ;;
+  *) bad "and the note names the entry and the key" "$(note dependabot-config)" ;;
+esac
+healthy; dep 'version: 2' 'updates:' "$E" '    directory: /' '    schedule:' '      interval: "cron"' '      cronjob: "0 9 * * *"'; run --porcelain
+expect "a cron interval with its cronjob -> ON" 0 dependabot-config ON
+healthy; dep 'version: 2' 'updates:' "$E" '    directory: /' '    schedule:' '      interval: cron' '      cronjob:'; run --porcelain
+expect "cronjob: with no value -> OFF" 1 dependabot-config OFF
+healthy; dep 'version: 2' 'updates:' "$E" '    directory: /' '    schedule:' '      interval: cron' '    cronjob: "0 9 * * *"'; run --porcelain
+expect "a cronjob beside schedule, not in it -> OFF" 1 dependabot-config OFF
+healthy; dep 'version: 2' 'updates:' "$E" '    directory: /' '    schedule: {interval: cron}'; run --porcelain
+expect "a one-line schedule with a cron interval and no cronjob -> OFF" 1 dependabot-config OFF
+healthy; dep 'version: 2' 'updates:' "$E" '    directory: /' '    schedule: {interval: cron, cronjob: "0 9 * * *"}'; run --porcelain
+expect "a one-line schedule with both -> ON" 0 dependabot-config ON
+healthy; dep 'version: 2' 'updates:' "$E" '    directory: /' '    schedule: {interval: cron, cronjob: ~}'; run --porcelain
+expect "a one-line schedule whose cronjob is null -> OFF" 1 dependabot-config OFF
+healthy; dep 'version: 2' 'updates:' "$E" '    directory: /' '    schedule: {interval: cron, cronjob: "0 9 * * *"}' \
+  '  - package-ecosystem: pip' '    directory: /' '    schedule: {interval: cron}'
+run --porcelain
+expect "one entry's one-line cronjob does not cover the next entry -> OFF" 1 dependabot-config OFF
+healthy; dep 'version: 2' "$GW" "$GI" "$GS" '      interval: cron' 'updates:' "$D" '    directory: /' '    patterns: ["*"]' "$IN"; run --porcelain
+expect "a group's cron interval with no cronjob -> OFF" 1 dependabot-config OFF
+case "$(note dependabot-config)" in
+  *infra*cronjob*) ok "and the note names the group and the key" ;;
+  *) bad "and the note names the group and the key" "$(note dependabot-config)" ;;
+esac
+healthy; dep 'version: 2' "$GW" "$GI" "$GS" '      interval: cron' '      cronjob: "0 9 * * 1"' 'updates:' "$D" '    directory: /' '    patterns: ["*"]' "$IN"; run --porcelain
+expect "a group's cron interval with its cronjob -> ON" 0 dependabot-config ON
+healthy; dep 'version: 2' "$GW" "$GI" '    schedule: {interval: cron}' 'updates:' "$D" '    directory: /' '    patterns: ["*"]' "$IN"; run --porcelain
+expect "a group's one-line schedule with a cron interval and no cronjob -> OFF" 1 dependabot-config OFF
+healthy; dep 'version: 2' "$GW" "$GI" "$GS" '      interval: cron' '      cronjob:' 'updates:' "$D" '    directory: /' '    patterns: ["*"]' "$IN"; run --porcelain
+expect "a group's cronjob with no value -> OFF" 1 dependabot-config OFF
+healthy; dep 'version: 2' "$GW" "$GI" '    schedule: {interval: cron, cronjob: "0 9 * * 1"}' 'updates:' "$D" '    directory: /' '    patterns: ["*"]' "$IN"; run --porcelain
+expect "a group's one-line schedule with both -> ON" 0 dependabot-config ON
+healthy; dep 'version: 2' "$GW" "$GI" "$GS" '      interval: cron' 'updates:' "$D" '    directory: /' '    patterns: ["*"]' "$IN" \
+  "$E" '    directory: /' '    patterns: ["*"]' "$IN"
+run --porcelain
+expect "two entries in a group whose cron interval has no cronjob -> OFF" 1 dependabot-config OFF
+case "$(note dependabot-config | grep -o 'the group infra' | wc -l | tr -d ' ')" in
+  1) ok "and the note names the group once, not once an entry" ;;
+  *) bad "and the note names the group once, not once an entry" "$(note dependabot-config)" ;;
+esac
+healthy; dep 'version: 2' "$GW" "$GI" "$GS" "$GV" 'updates:' "$D" '    directory: /' '    patterns: [*all]' "$IN"; run --porcelain
+expect "a one-line patterns list holding an alias is not followed -> UNKNOWN" 2 dependabot-config UNKNOWN
+
+# A one-line list counts for what is in it, not for having brackets.
+healthy; dep 'version: 2' 'updates:' "$E" '    directories: [""]' "$W" "$I"; run --porcelain
+expect "a one-line directories list holding only empty quotes -> OFF" 1 dependabot-config OFF
+healthy; dep 'version: 2' 'updates:' "$E" '    directories: [null]' "$W" "$I"; run --porcelain
+expect "a one-line directories list holding only null -> OFF" 1 dependabot-config OFF
+healthy; dep 'version: 2' 'updates:' "$E" '    directories: ["", "/b"]' "$W" "$I"; run --porcelain
+expect "a one-line directories list with one real folder in it -> ON" 0 dependabot-config ON
+healthy; dep 'version: 2' 'updates:' "$E" '    directories: ["/a,b"]' "$W" "$I"; run --porcelain
+expect "a comma inside a quoted folder in a one-line list is not followed -> UNKNOWN" 2 dependabot-config UNKNOWN
+healthy; dep 'version: 2' 'updates:' "$E" '    directories: [ ]' "$W" "$I"; run --porcelain
+expect "a one-line directories list holding only a space -> OFF" 1 dependabot-config OFF
+healthy; dep 'version: 2' 'updates:' "$E" '    directories: [/a] [/b]' "$W" "$I"; run --porcelain
+expect "two pairs of brackets on a directories line are not followed -> UNKNOWN" 2 dependabot-config UNKNOWN
+
+# A one-line schedule is read only when it is flat.
+healthy; dep 'version: 2' 'updates:' "$E" '    directory: /' '    schedule: {every: {day: monday, interval: weekly}}'; run --porcelain
+expect "an interval inside a map inside a one-line schedule -> UNKNOWN" 2 dependabot-config UNKNOWN
+healthy; dep 'version: 2' 'x-weekly: &weekly' '  interval: weekly' 'updates:' "$E" '    directory: /' '    schedule: {<<: *weekly}'; run --porcelain
+expect "a one-line schedule that takes its keys from a YAML merge -> UNKNOWN" 2 dependabot-config UNKNOWN
+
+# `...` ends a document. At the end of the only one it changes nothing.
+healthy; dep 'version: 2' 'updates:' "$E" '    directory: /' "$W" "$I" '...'; run --porcelain
+expect "a file that ends with the end-of-document mark -> ON" 0 dependabot-config ON
+healthy; dep 'version: 2' 'updates:' "$E" '    directory: /' "$W" "$I" '...' 'version: 2'; run --porcelain
+expect "more after the end-of-document mark -> UNKNOWN" 2 dependabot-config UNKNOWN
 
 echo "== dependabot.yml: a layout the script does not read is UNKNOWN, never on or off"
 # Each of these is YAML GitHub may well accept. The reader follows the plain

@@ -196,7 +196,9 @@ Never present the three outcomes as a menu.
      new `refresh - ok` line from that run.
   3. Read the entry back (`crontab -l`, or the task's result) and show it to
      them. If the script exits 2, the crontab was written and did not read
-     back as written: show them `crontab -l` and stop.
+     back as written: show them `crontab -l` and stop. If the Windows lines
+     print `Nothing was changed`, no task was made: tell them the reason the
+     lines gave and stop.
 
   Report the schedule as working only after step 2. If it fails, say so, show
   what it printed, and ask whether to leave the job or remove it. If they say

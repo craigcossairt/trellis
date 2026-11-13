@@ -23,12 +23,15 @@
 #      environment, with nothing inherited from the terminal, and only after
 #      the crontab was read. A crontab that cannot be read is never written
 #      over, and a failed read is not retried.
-#   7. Every other line survives, in order, however often it is run, and this
-#      folder's line is there exactly once. A crontab that held only this
-#      folder's line ends with that line, not with nothing.
-#   8. It believes the write only after reading it back: a crontab that
-#      accepts a table and keeps nothing, or keeps this folder's line and
-#      drops another, is exit 2, not exit 0.
+#   7. Every other line survives, in order and byte for byte, however often
+#      it is run, and this folder's line is there exactly once. A crontab
+#      that held only this folder's line ends with that line, not with
+#      nothing. A line is this folder's only when it is the line the script
+#      writes: one that mentions the refresh, or runs something besides it,
+#      is somebody else's and stays.
+#   8. It believes the write only when the table it reads back is the table
+#      it wrote: a crontab that accepts a table and keeps nothing, drops a
+#      line, keeps the old table or changes another job is exit 2, not 0.
 #   9. What cannot be written into a cron line safely is refused before
 #      anything is run: a single quote, a percent sign or a line break, in
 #      PATH or in the project folder's own path.
@@ -150,7 +153,9 @@ echo "== install-cron.sh: the schedule goes in without a crontab being lost"
 # $CRON/mode: none (no crontab yet), has, fail (it cannot be read), flaky (the
 # first read fails and later ones work), writefail (a new table is refused),
 # lossy (a new table is accepted and nothing is kept), lastonly (a new table
-# is accepted and only its last line is kept).
+# is accepted and only its last line is kept), stale (a new table is accepted
+# and the old one stays), swap (a new table is accepted with its first line
+# changed into another job).
 CRON="$TMP/cron"; export CRON
 must mkdir -p "$CRON/bin"
 cat > "$CRON/bin/crontab" <<'FAKE'
@@ -171,6 +176,8 @@ case "${1:-}" in
       writefail) cat > /dev/null; echo "crontab: errors in crontab file" >&2; exit 1 ;;
       lossy)     cat > /dev/null; : > "$CRON/store"; exit 0 ;;
       lastonly)  tail -n 1 > "$CRON/store"; echo has > "$CRON/mode"; exit 0 ;;
+      stale)     cat > /dev/null; exit 0 ;;
+      swap)      sed '1s|.*|1 1 * * * /bin/something-else|' > "$CRON/store"; exit 0 ;;
       *)         cat > "$CRON/store"; echo has > "$CRON/mode"; exit 0 ;;
     esac ;;
 esac
@@ -212,6 +219,10 @@ cronproject 0 has; printf '%s\n' "$OTHER" '' '# weekly' '0 1 * * 0 /home/me/week
 if [ "$RC" = 0 ] && [ "$(head -n 4 "$CRON/store" | tr '\n' '|')" = "$OTHER||# weekly|0 1 * * 0 /home/me/weekly.sh|" ] && [ "$(mine)" = 1 ]; then
   ok "other jobs are kept as they were, in order, and this one is added"
 else bad "other jobs are kept as they were, in order, and this one is added" "rc=$RC :: $(cat "$CRON/store")"; fi
+case "$OUT" in
+  *"has 3 other line(s)"*) ok "and it says how many other lines were kept, not counting the empty one" ;;
+  *) bad "and it says how many other lines were kept, not counting the empty one" "$OUT" ;;
+esac
 install; install
 if [ "$RC" = 0 ] && [ "$(mine)" = 1 ] && [ "$(lines)" = 4 ]; then ok "run twice more: still one line for this folder, and the others untouched"
 else bad "run twice more: still one line for this folder, and the others untouched" "rc=$RC mine=$(mine) lines=$(lines)"; fi
@@ -232,6 +243,66 @@ cronproject 0 has
 printf '%s\n' "0 9 * * * export PATH='/usr/bin'; cd '/other/project' && bash brain/scripts/refresh.sh >/dev/null 2>&1" > "$CRON/store"; install
 if [ "$RC" = 0 ] && [ "$(grep -c 'brain/scripts/refresh.sh' "$CRON/store")" = 2 ] && [ "$(mine)" = 1 ]; then ok "another project's refresh line is kept"
 else bad "another project's refresh line is kept" "rc=$RC :: $(cat "$CRON/store")"; fi
+
+# A line is this folder's only when it is the line this script writes: a
+# schedule, then exactly this job. One that mentions the command, or runs
+# something besides it, is somebody else's and stays, whole.
+stays() { # $1 label, $2 the line
+  printf '%s\n' "$OTHER" "$2" > "$CRON/store"; install
+  if [ "$RC" = 0 ] && [ "$(lines)" = 3 ] && [ "$(grep -cxF -- "$2" "$CRON/store")" = 1 ]; then ok "$1"
+  else bad "$1" "rc=$RC :: $OUT :: $(cat "$CRON/store")"; fi
+}
+cronproject 0 has
+stays "a job that only mentions this folder's refresh in a message is kept" \
+  "* * * * * logger \"cd '$P' && bash brain/scripts/refresh.sh\""
+cronproject 0 has
+stays "a person's own line for this folder that runs something after the refresh is kept" \
+  "30 9 * * 1 cd '$P' && bash brain/scripts/refresh.sh && /home/me/after.sh"
+cronproject 0 has
+stays "a line that ends like this job and does not start like it is kept" \
+  "0 9 * * * true'; cd '$P' && bash brain/scripts/refresh.sh >/dev/null 2>&1"
+cronproject 0 has
+stays "a line that runs another command between the PATH and the refresh is kept" \
+  "0 9 * * * export PATH='/usr/bin'; echo 'x'; cd '$P' && bash brain/scripts/refresh.sh >/dev/null 2>&1"
+cronproject 0 has
+stays "a line with a sixth word before the job is kept" \
+  "0 9 * * * nice export PATH='/usr/bin'; cd '$P' && bash brain/scripts/refresh.sh >/dev/null 2>&1"
+cronproject 0 has
+stays "a commented-out copy of this folder's line is kept" \
+  "#0 9 * * * export PATH='/usr/bin'; cd '$P' && bash brain/scripts/refresh.sh >/dev/null 2>&1"
+cronproject 0 has
+stays "and so is one with spaces before the #" \
+  "  #0 9 * * * export PATH='/usr/bin'; cd '$P' && bash brain/scripts/refresh.sh >/dev/null 2>&1"
+
+# Its own line is its own whatever time and PATH it carries.
+cronproject 0 has
+printf '%s\n' "$OTHER" "0 8 * * 1-5 export PATH='/old/bin'; cd '$P' && bash brain/scripts/refresh.sh >/dev/null 2>&1" > "$CRON/store"; install
+if [ "$RC" = 0 ] && [ "$(lines)" = 2 ] && [ "$(mine)" = 1 ] && ! grep -q '/old/bin' "$CRON/store"; then ok "this folder's line with another time and an older PATH is replaced, not doubled"
+else bad "this folder's line with another time and an older PATH is replaced, not doubled" "rc=$RC :: $(cat "$CRON/store")"; fi
+case "$OUT" in
+  *"eplaced 1 "*) ok "and it says one line was replaced" ;;
+  *) bad "and it says one line was replaced" "$OUT" ;;
+esac
+cronproject 0 has
+printf '%s\n' "@daily export PATH='/old/bin'; cd '$P' && bash brain/scripts/refresh.sh >/dev/null 2>&1" > "$CRON/store"; install
+if [ "$RC" = 0 ] && [ "$(lines)" = 1 ] && ! grep -q '@daily' "$CRON/store"; then ok "and so is one whose schedule was rewritten as @daily"
+else bad "and so is one whose schedule was rewritten as @daily" "rc=$RC :: $(cat "$CRON/store")"; fi
+cronproject 0 has; echo "$OTHER" > "$CRON/store"; install
+case "$RC/$OUT" in
+  0/*"eplaced"*) bad "a first install does not say anything was replaced" "$OUT" ;;
+  0/*) ok "a first install does not say anything was replaced" ;;
+  *) bad "a first install does not say anything was replaced" "rc=$RC :: $OUT" ;;
+esac
+
+# Lines are kept byte for byte. grep, told the text is UTF-8, drops a line
+# that is not, so nothing here may depend on a filter that reads the text.
+cronproject 0 has
+printf '# caf\351 au lait\n0 3 * * * /home/jos\351/bin/nightly.sh\n' > "$CRON/store"
+cp "$CRON/store" "$TMP/latin1.want"; RC=0
+OUT=$(LC_ALL=C.UTF-8 PATH="$CRON/bin:$PATH" bash "$P/brain/scripts/install-cron.sh" 2>&1) || RC=$?
+if [ "$RC" = 0 ] && head -n 2 "$CRON/store" | cmp -s - "$TMP/latin1.want" && [ "$(wc -l < "$CRON/store" | tr -d ' ')" = 3 ]; then
+  ok "lines that are not valid UTF-8 are kept, byte for byte, in a UTF-8 locale"
+else bad "lines that are not valid UTF-8 are kept, byte for byte, in a UTF-8 locale" "rc=$RC :: $OUT :: $(od -c "$CRON/store" | head -5)"; fi
 
 cronproject 0 fail; echo "$OTHER" > "$CRON/store"; install
 if [ "$RC" = 1 ] && [ "$(writes)" = 0 ] && [ "$(cat "$CRON/store")" = "$OTHER" ]; then ok "the crontab cannot be read: exit 1, nothing written"
@@ -276,6 +347,16 @@ else bad "the table is accepted and nothing is kept: exit 2, not 0" "rc=$RC :: $
 cronproject 0 lastonly; echo "$OTHER" > "$CRON/store"; install
 if [ "$RC" = 2 ] && [ "$(mine)" = 1 ]; then ok "this folder's line is kept and another line is dropped: exit 2, not 0"
 else bad "this folder's line is kept and another line is dropped: exit 2, not 0" "rc=$RC :: $OUT :: $(cat "$CRON/store")"; fi
+
+# The table read back has to be the table that was written, not one with the
+# same number of lines.
+cronproject 0 stale
+printf '%s\n' "0 8 * * * export PATH='/old/bin'; cd '$P' && bash brain/scripts/refresh.sh >/dev/null 2>&1" > "$CRON/store"; install
+if [ "$RC" = 2 ]; then ok "the table is accepted and the old one is still there: exit 2, not 0"
+else bad "the table is accepted and the old one is still there: exit 2, not 0" "rc=$RC :: $OUT :: $(cat "$CRON/store")"; fi
+cronproject 0 swap; echo "$OTHER" > "$CRON/store"; install
+if [ "$RC" = 2 ] && [ "$(lines)" = 2 ] && [ "$(mine)" = 1 ]; then ok "another job comes back changed, with the line count the same: exit 2, not 0"
+else bad "another job comes back changed, with the line count the same: exit 2, not 0" "rc=$RC :: $OUT :: $(cat "$CRON/store")"; fi
 
 # A single quote would end the quoting in the job line, cron reads % as the
 # end of the command, and a line break would make two entries of one. None can

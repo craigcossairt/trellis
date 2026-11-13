@@ -69,18 +69,25 @@ That adds one line to your crontab: the refresh, daily at 9:00. What it does, in
    does not exit 0, it stops and nothing is installed.
 3. Reads your crontab. If it cannot be read, it stops and nothing is written.
 4. Writes the crontab back with this folder's line added, or replaced if one was there.
-   Every other line is kept.
-5. Reads it back, and reports success only if this folder's line is there once and no other
-   line is missing.
+   Every other line is kept as it was, byte for byte.
+5. Reads it back, and reports success only if what comes back is the table it wrote.
 
 It says which step stopped it and why. Run it again after installing bun or node somewhere
 new, so the job carries the new `PATH`. To remove the job, run `crontab -e` and delete the
 line that names this folder. Cron does not catch up: a computer that is asleep or off at 9:00
 skips that day.
 
+Which line counts as this folder's: one the script wrote, meaning a schedule followed by
+exactly its job. If you change the time with `crontab -e` the line is still recognised, and
+the next run of the script puts it back to 9:00 and says it replaced a line. A line of your
+own that runs the refresh some other way, or only mentions it, is not touched. Nor is a
+line that starts with `#`, so a copy of the job you commented out stays as a comment.
+
 Installing a crontab replaces the whole table, which is why this is a script with tests and
 not a few lines to paste. Two earlier versions of this page were lines to paste, and review
-found a way for each to empty a crontab.
+found a way for each to empty a crontab. Review of the script's own first version found two
+more ways to lose a line, both fixed: it took any line that mentioned this folder's refresh
+for its own, and it picked lines out with `grep`, which drops a line that is not valid UTF-8.
 
 What was run, on 2026-11-13: with cron's usual `PATH` the QMD launcher stopped with exit 127
 ("node: not found"), and with the terminal's `PATH` carried in it ran. The script's steps are
@@ -95,6 +102,11 @@ each of which it reports instead of guessing:
 - Some versions of cron are said to cut a command off near 1000 characters. That was not
   checked here. Past 900 it installs the line and says so, with what to do if the scheduled
   run fails.
+- On macOS, cron is said to be refused the Documents, Desktop and Downloads folders unless
+  it has been given Full Disk Access (System Settings, Privacy & Security). That was not
+  checked here either. The trial run cannot show it, because it runs from your terminal,
+  which has its own permission. If the project is in one of those folders and nothing new
+  appears in `brain/log.md` after 9:00, that is the first thing to look at.
 
 ### Windows (Task Scheduler)
 
@@ -104,11 +116,21 @@ In PowerShell:
 $here = (Get-Location).Path
 $name = "Brain refresh - $(Split-Path -Leaf $here)"
 # Two projects in folders of the same name would get the same task name, and registering
-# the second would replace the first. So look at what is there before replacing anything.
-# (Looked up by exact name: -TaskName would read [ ] and * in a folder name as a pattern.)
-$old = Get-ScheduledTask -TaskPath '\' | Where-Object { $_.TaskName -eq $name }
-if ($old -and @($old.Actions)[0].WorkingDirectory -ne $here) {
-  "A task named '$name' already runs in another folder: $(@($old.Actions)[0].WorkingDirectory)"
+# the second would replace the first. So look at what is there before replacing anything,
+# and stop if the look itself fails: not knowing is not the same as nothing being there.
+# (Every task is listed and compared by exact name. -TaskName would read [ ] and * in a
+# folder name as a pattern, and -TaskPath fails on a folder that holds no task yet.)
+$looked = $true
+try {
+  $old = @(Get-ScheduledTask -ErrorAction Stop | Where-Object { $_.TaskPath -eq '\' -and $_.TaskName -eq $name })
+} catch {
+  $looked = $false
+  "Could not list the scheduled tasks: $($_.Exception.Message)"
+}
+if (-not $looked) {
+  "Nothing was changed."
+} elseif ($old.Count -gt 0 -and @($old[0].Actions)[0].WorkingDirectory -ne $here) {
+  "A task named '$name' already runs in another folder: $(@($old[0].Actions)[0].WorkingDirectory)"
   "Nothing was changed. Put another name on the second line and run all of these again."
 } else {
   $action  = New-ScheduledTaskAction -Execute 'C:\Program Files\Git\bin\bash.exe' `
@@ -135,8 +157,8 @@ Not run here: no task was registered or started. What was checked on Windows Pow
 5.1: the commands and their parameters, by building the action, the trigger and the settings;
 the look-up of an existing task, which only reads, against the real scheduler; and which way
 the lines go, by running them with stand-ins for the four commands that touch the scheduler
-(no task of that name, one for this folder, one for another folder). So the run you start
-above is the test. Registered this way, the task belongs to your account and runs while
+(no task of that name, one for this folder, one for another folder, and a look-up that
+fails). So the run you start above is the test. Registered this way, the task belongs to your account and runs while
 you are signed in.
 
 By hand in the Task Scheduler app, the same task is a daily one whose action starts

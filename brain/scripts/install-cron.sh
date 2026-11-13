@@ -10,7 +10,10 @@
 # (bin/tests/test-brain-refresh.sh) and not a few lines to paste. Two earlier
 # versions were lines to paste, and each could empty a crontab: one wrote over
 # a table it had failed to read, the other wrote an empty table when the shell
-# it was pasted into stopped at the first failed command.
+# it was pasted into stopped at the first failed command. The first version of
+# this script lost lines too: it took any line that mentioned this folder's
+# refresh for its own, and it picked lines out with grep, which drops a line
+# that is not valid UTF-8 when the terminal says the text is.
 #
 # What it does, in order. It stops at the first step that fails, and nothing
 # is written before step 4.
@@ -22,9 +25,16 @@
 #      terminal. If it does not exit 0, nothing is installed.
 #   3. Reads your crontab. If it cannot be read, nothing is written.
 #   4. Writes it back with this folder's line added, or replaced if one was
-#      there. Every other line is kept, in order.
-#   5. Reads it back. The write counts only if this folder's line is there
-#      once and no other line went missing.
+#      there. Every other line is kept, in order, byte for byte.
+#   5. Reads it back. The write counts only if what comes back is the table
+#      that was written.
+#
+# Which line is this folder's: one this script wrote. That is a schedule, then
+# exactly the job, with whatever PATH it carried. Change the time in
+# `crontab -e` and it is still recognised, and the next run of this script
+# puts it back to 9:00. A line of your own that runs the refresh some other
+# way is not recognised and is left alone, and so is any line that starts
+# with #.
 #
 # Run it again after installing bun or node somewhere new, so the job carries
 # the new PATH. To remove the job: `crontab -e`, and delete the line that
@@ -60,11 +70,33 @@ for pair in "PATH:$PATH" "the project folder:$ROOT"; do
   esac
 done
 
-# MARK is what makes a line this folder's. Another project's refresh line
-# names another folder and is left alone.
+# MARK names this folder. Another project's refresh line names another folder
+# and is left alone.
 MARK="cd '$ROOT' && bash brain/scripts/refresh.sh"
-JOB="export PATH='$PATH'; $MARK >/dev/null 2>&1"
+JOBHEAD="export PATH='"
+JOBTAIL="'; $MARK >/dev/null 2>&1"
+JOB="$JOBHEAD$PATH$JOBTAIL"
 LINE="0 9 * * * $JOB"
+
+# A crontab line is this folder's only when it is a line this script writes: a
+# schedule (five fields, or one @word), then exactly the job, with whatever
+# PATH it carried. This folder's name turning up in a line is not enough. A
+# job that mentions the command in a message, or runs something before or
+# after it, is somebody else's. So is a line that starts with #: a copy of the
+# job that somebody commented out is a comment, and stays.
+is_mine() { # $1 one crontab line
+  local line rest carried
+  line="${1#"${1%%[![:space:]]*}"}"
+  case "$line" in
+    '#'*) return 1 ;;
+    @*) read -r _ rest <<< "$line" ;;
+    *)  read -r _ _ _ _ _ rest <<< "$line" ;;
+  esac
+  case "$rest" in "$JOBHEAD"*"$JOBTAIL") ;; *) return 1 ;; esac
+  carried="${rest#"$JOBHEAD"}"; carried="${carried%"$JOBTAIL"}"
+  case "$carried" in *"'"*) return 1 ;; esac
+  return 0
+}
 
 # --- 2. the trial run ----------------------------------------------------------
 rc=0
@@ -99,12 +131,21 @@ fi
 rm -f "$err"
 
 # --- 4. write it back with this folder's line replaced ---------------------------
-# grep exits 1 when it prints nothing, which is the ordinary case of a crontab
-# that held only this folder's line. That is not a failure, and it must not
-# stop the new line from being written.
-kept="$(printf '%s\n' "$old" | grep -vF -- "$MARK" || true)"
-before="$(printf '%s\n' "$kept" | grep -c . || true)"
-if [ -n "$kept" ]; then new="$kept$NL$LINE"; else new="$LINE"; fi
+# Line by line in the shell, and not through grep or sed: a tool that reads
+# the table as text may drop a line it cannot decode, and a line dropped here
+# is a job lost.
+kept=""; others=0; replaced=0
+if [ -n "$old" ]; then
+  while IFS= read -r line; do
+    if is_mine "$line"; then
+      replaced=$((replaced + 1))
+    else
+      kept="$kept$line$NL"
+      if [ -n "$line" ]; then others=$((others + 1)); fi
+    fi
+  done <<< "$old"
+fi
+new="$kept$LINE"
 
 rc=0
 printf '%s\n' "$new" | crontab - || rc=$?
@@ -114,17 +155,19 @@ if [ "$rc" -ne 0 ]; then
 fi
 
 # --- 5. read it back -------------------------------------------------------------
-# A read that fails here gives no lines, and counts as this folder's line
-# not being there.
+# What comes back has to be what was written, whole. Counting lines is not
+# enough: a table with the right number of lines can still be another table.
+# A read that fails here gives nothing, which is not what was written either.
 now="$(crontab -l 2>/dev/null)" || true
-mine="$(printf '%s\n' "$now" | grep -cF -- "$MARK" || true)"
-others="$(printf '%s\n' "$now" | grep -vF -- "$MARK" | grep -c . || true)"
-if [ "$mine" != 1 ] || [ "$others" -lt "$before" ]; then
-  say "a new table was written, and reading it back does not show it: this folder's line is there $mine time(s) and should be there once, and there are $others other line(s) where there were $before. Run 'crontab -l' and check it."
+if [ "$now" != "$new" ]; then
+  say "a new table was written, and what crontab holds now is not that table. Run 'crontab -l' and check it: it should end with this folder's line and hold your $others other line(s) as they were."
   exit 2
 fi
 
 echo "Installed: the brain refresh for $ROOT runs daily at 9:00."
+if [ "$replaced" -gt 0 ]; then
+  echo "Replaced $replaced line(s) this script wrote for this folder before."
+fi
 echo "Your crontab has $others other line(s), kept as they were."
 if [ "${#LINE}" -gt 900 ]; then
   echo "Note: the job line is ${#LINE} characters long. Some versions of cron are said to cut a command off near 1000. That was not checked here. If the scheduled run fails, shorten PATH to the folders that hold bun or node and run this again."

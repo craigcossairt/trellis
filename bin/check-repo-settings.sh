@@ -40,7 +40,10 @@
 #                                      has the keys GitHub requires, each with
 #                                      a value: an ecosystem, a directory, and
 #                                      a schedule interval (its own, or its
-#                                      multi-ecosystem group's). A local file
+#                                      multi-ecosystem group's), plus patterns
+#                                      when it is in such a group and a
+#                                      cronjob when the interval is cron. A
+#                                      local file
 #                                      check, read as text. Only the plain
 #                                      block layout is read; any other is
 #                                      UNKNOWN. Whether GitHub accepts a
@@ -549,8 +552,9 @@ elif [ -f "$ROOT/.github/dependabot.yml" ] || [ -f "$ROOT/.github/dependabot.yam
   # ecosystems the file has entries for, and a file with no entry is OFF. So
   # is one GitHub would refuse for a missing key: it requires `version: 2`,
   # and on every entry a package-ecosystem, a directory (or directories) and a
-  # schedule interval. An entry in a multi-ecosystem group takes the group's
-  # schedule.
+  # schedule interval. An entry in a multi-ecosystem group may take the
+  # group's schedule, and must have `patterns`. A `cron` interval must have a
+  # `cronjob` beside it.
   #
   # The file is read as text by the awk program below, which is not a YAML
   # parser. The rule that keeps it honest: it says ON or OFF only for a file
@@ -561,17 +565,22 @@ elif [ -f "$ROOT/.github/dependabot.yml" ] || [ -f "$ROOT/.github/dependabot.yam
   #     by its other keys at the same depth
   #   - a value on the key's own line, plain or in quotes, with an optional
   #     comment after it
-  #   - `directories:` as a block list or a one-line [list]
-  #   - `schedule:` as a block or a one-line {map}, with `interval` directly
-  #     in it
+  #   - `directories:` and `patterns:` as a block list or a one-line [list]
+  #   - `schedule:` as a block or a one-line {map}, with `interval` (and
+  #     `cronjob`) directly in it
   #   - `multi-ecosystem-groups:` as a block of named groups
+  #   - a byte-order mark at the very start of the file, `---` before the
+  #     first key and `...` after the last line
   # What makes it UNKNOWN: the list or an entry written on one line, a second
   # document, a tab in the indentation, an alias (*name) as the value of a
-  # required key, a required value in any other form (a tag, a block of text,
+  # required key or anywhere in a one-line schedule, a required value in any
+  # other form (a tag, a block of text,
   # a value that runs on to a second line, a backslash inside quotes), a
-  # version in quotes, an entry in a group the file does not define or whose
-  # group shows no schedule (GitHub's rule for those two was not established),
-  # and any line under `updates:` it cannot place. Inside
+  # [list] or {map} that runs over several lines, a comma inside quotes in a
+  # one-line list, a version in quotes, an entry in a group the file does not
+  # define, or one that needs its group's schedule when the group shows none
+  # (GitHub's rule for those two was not established), and any line under
+  # `updates:` it cannot place. Inside
   # `multi-ecosystem-groups:` a line it cannot place is passed over instead:
   # the group then has no schedule as far as it can see, and an entry in it is
   # UNKNOWN. A merge (<<) is not followed either, so a file that uses one and
@@ -629,27 +638,44 @@ elif [ -f "$ROOT/.github/dependabot.yml" ] || [ -f "$ROOT/.github/dependabot.yam
       else KIND = "plain"
       return v
     }
-    # flowlist: 1 for a one-line [list] with something in it, 0 for an empty
-    # one, -1 for anything else.
-    function flowlist(v,    inner) {
+    # flowlist: 1 for a one-line [list] holding at least one value, 0 for one
+    # holding none (nothing, or only empty quotes and nulls), -1 for anything
+    # else. It is split at every comma, so a comma inside quotes is not
+    # followed.
+    function flowlist(v,    inner, parts, n, i, x, has) {
       if (v !~ /^\[.*\]$/) return -1
       inner = substr(v, 2, length(v) - 2)
       if (inner ~ /[][{}]/) return -1
-      return (inner ~ /[^ \t,]/) ? 1 : 0
+      n = split(inner, parts, ",")
+      has = 0
+      for (i = 1; i <= n; i++) {
+        x = scalar(parts[i])
+        if (KIND == "empty") continue
+        if (KIND != "plain" && KIND != "quoted") return -1
+        if (usable(x)) has = 1
+      }
+      return has
     }
     # flowinterval: 1 for a one-line {map} holding interval with a value, 0
-    # for one without, -1 for anything else.
-    function flowinterval(v,    inner, parts, n, i, p, found) {
+    # for one without, -1 for anything else: a map or list inside it, or an
+    # alias as any value, which is also what a merge (<<) has. It leaves the
+    # interval in FIV, and 1 in FCJ when the map also holds cronjob with a
+    # value.
+    function flowinterval(v,    inner, parts, n, i, p, x, found) {
+      FIV = ""; FCJ = 0
       if (v !~ /^\{.*\}$/) return -1
       inner = substr(v, 2, length(v) - 2)
-      if (inner ~ /[][{}*&]/) return -1
+      if (inner ~ /[][{}]/) return -1
       n = split(inner, parts, ",")
       found = 0
       for (i = 1; i <= n; i++) {
         p = parts[i]; sub(/^[ \t]+/, "", p)
         if (p == "") continue
         if (!keyval(p)) return -1
-        if (K == "interval" && val(scalar(V), "an interval that is not a plain value")) found = 1
+        x = scalar(V)
+        if (KIND == "alias") return -1
+        if (K == "interval" && val(x, "an interval that is not a plain value")) { found = 1; FIV = x }
+        if (K == "cronjob" && val(x, "a cronjob that is not a plain value")) FCJ = 1
       }
       return found
     }
@@ -660,12 +686,13 @@ elif [ -f "$ROOT/.github/dependabot.yml" ] || [ -f "$ROOT/.github/dependabot.yam
       else {
         names = names (names == "" ? "" : " ") eco
         if (!dir) lacks("the entry for " eco " has no directory")
-        if (!sched) {
-          if (grp != "") { np++; pg[np] = grp; pe[np] = eco }
-          else lacks("the entry for " eco " has no schedule interval")
-        }
+        if (sched && ival == "cron" && !cj) lacks("the entry for " eco " has a cron interval and no cronjob")
+        if (grp != "") {
+          np++; pg[np] = grp; pe[np] = eco; ps[np] = sched
+          if (!pat) lacks("the entry for " eco " is in a multi-ecosystem group and has no patterns")
+        } else if (!sched) lacks("the entry for " eco " has no schedule interval")
       }
-      initem = 0; eco = ""; dir = 0; sched = 0; grp = ""; curkey = ""
+      initem = 0; eco = ""; dir = 0; sched = 0; grp = ""; curkey = ""; ival = ""; cj = 0; pat = 0
     }
     # One key of an entry, on its own line.
     function entrykey(t,    v, r) {
@@ -677,9 +704,15 @@ elif [ -f "$ROOT/.github/dependabot.yml" ] || [ -f "$ROOT/.github/dependabot.yam
       else if (K == "directories") {
         if (KIND == "flow") { r = flowlist(v); if (r < 0) odd("a directories list it cannot follow"); else if (r) dir = 1 }
         else if (KIND != "empty") odd("directories written as something other than a list")
+      } else if (K == "patterns") {
+        if (KIND == "flow") { r = flowlist(v); if (r < 0) odd("a patterns list it cannot follow"); else if (r) pat = 1 }
+        else if (KIND != "empty") odd("patterns written as something other than a list")
       } else if (K == "schedule") {
-        if (KIND == "flow") { r = flowinterval(v); if (r < 0) odd("a one-line schedule it cannot follow"); else if (r) sched = 1 }
-        else if (!plainish()) odd("a schedule that is not written out")
+        if (KIND == "flow") {
+          r = flowinterval(v)
+          if (r < 0) odd("a one-line schedule it cannot follow")
+          else if (r) { sched = 1; ival = FIV; cj = FCJ }
+        } else if (!plainish()) odd("a schedule that is not written out")
       } else if (K == "multi-ecosystem-group") { if (val(v, "a multi-ecosystem-group that is not a plain value")) grp = v }
     }
     # A line that belongs to the key above it.
@@ -688,18 +721,20 @@ elif [ -f "$ROOT/.github/dependabot.yml" ] || [ -f "$ROOT/.github/dependabot.yam
       if (curkey == "package-ecosystem" || curkey == "directory" || curkey == "multi-ecosystem-group") {
         odd("a " curkey " written over more than one line"); return
       }
-      if (curkey == "directories") {
+      if (curkey == "directories" || curkey == "patterns") {
         if (nestind < 0) nestind = ind
-        if (!curempty || ind != nestind || !dash) { odd("a directories list it cannot follow"); return }
+        if (!curempty || ind != nestind || !dash) { odd("a " curkey " list it cannot follow"); return }
         v = scalar(substr(text, 2))
-        if (val(v, "a directories list it cannot follow")) dir = 1
+        if (val(v, "a " curkey " list it cannot follow")) { if (curkey == "patterns") pat = 1; else dir = 1 }
         return
       }
       if (curkey == "schedule") {
         if (nestind < 0) nestind = ind
         if (!curempty || ind != nestind || !keyval(text)) { odd("a schedule it cannot follow"); return }
         if (K == "<<") { anchor = 1; return }
-        if (K == "interval") { v = scalar(V); if (val(v, "an interval that is not a plain value")) sched = 1 }
+        v = scalar(V)
+        if (K == "interval") { if (val(v, "an interval that is not a plain value")) { sched = 1; ival = v } }
+        else if (K == "cronjob") { if (val(v, "a cronjob that is not a plain value")) cj = 1 }
       }
     }
     # A line inside updates:.
@@ -719,15 +754,16 @@ elif [ -f "$ROOT/.github/dependabot.yml" ] || [ -f "$ROOT/.github/dependabot.yam
       if (ind > keycol) { nested(); return }
       odd("a line indented between an entry and its keys")
     }
-    # A line inside multi-ecosystem-groups:. All that is wanted from it is
-    # which groups have a schedule with an interval directly in it. A group
-    # this does not follow never gets one, and an entry in a group with none is
-    # UNKNOWN at the end, so most lines it cannot place are passed over.
+    # A line inside multi-ecosystem-groups:. What is wanted from it is which
+    # groups the file defines, and which have a schedule with an interval
+    # directly in it (and a cronjob, when the interval is cron). A group this
+    # does not follow never gets a schedule, and an entry that needs one from
+    # it is UNKNOWN at the end, so most lines it cannot place are passed over.
     function grline(    v) {
       if (g1 < 0) g1 = ind
       if (ind <= g1) {
         if (ind < g1 || !keyval(text)) { odd("a multi-ecosystem-groups: block that is not a block of named groups"); cg = ""; return }
-        cg = K; g2 = -1; gkey = ""
+        cg = K; gdef[cg] = 1; g2 = -1; gkey = ""
         return
       }
       if (cg == "") return
@@ -736,19 +772,24 @@ elif [ -f "$ROOT/.github/dependabot.yml" ] || [ -f "$ROOT/.github/dependabot.yam
         gkey = ""
         if (ind < g2 || !keyval(text)) return
         gkey = K; v = scalar(V); gempty = (KIND == "empty"); g3 = -1
-        if (K == "schedule" && KIND == "flow" && flowinterval(v) > 0) gsched[cg] = 1
+        if (K == "schedule" && KIND == "flow" && flowinterval(v) > 0) { gsched[cg] = 1; giv[cg] = FIV; if (FCJ) gcj[cg] = 1 }
         return
       }
       if (gkey != "schedule") return
       if (g3 < 0) g3 = ind
       if (!gempty || ind != g3 || !keyval(text)) return
-      if (K == "interval") { v = scalar(V); if (val(v, "an interval that is not a plain value")) gsched[cg] = 1 }
+      v = scalar(V)
+      if (K == "interval") { if (val(v, "an interval that is not a plain value")) { gsched[cg] = 1; giv[cg] = v } }
+      else if (K == "cronjob") { if (val(v, "a cronjob that is not a plain value")) gcj[cg] = 1 }
     }
     {
       line = $0
       sub(/\r$/, "", line)
+      if (NR == 1) sub(/^\357\273\277/, "", line)
       if (line ~ /^[ \t]*(#|$)/) next
-      if (line ~ /^(---|\.\.\.)([ \t]|$)/) {
+      if (ended) { odd("more than one YAML document"); next }
+      if (line ~ /^\.\.\.([ \t]|$)/) { ended = 1; next }
+      if (line ~ /^---([ \t]|$)/) {
         if (line ~ /^---[ \t]*(#.*)?$/ && !content && !docstart) { docstart = 1; next }
         odd("more than one YAML document"); next
       }
@@ -782,7 +823,11 @@ elif [ -f "$ROOT/.github/dependabot.yml" ] || [ -f "$ROOT/.github/dependabot.yam
     END {
       flush()
       for (i = 1; i <= np; i++) {
-        if (!(pg[i] in gsched)) odd("an entry (" pe[i] ") in a multi-ecosystem group, " pg[i] ", for which the file shows no schedule interval")
+        g = pg[i]
+        if (!(g in gdef)) odd("an entry (" pe[i] ") in a multi-ecosystem group, " g ", that the file does not define")
+        else if (ps[i]) continue
+        else if (!(g in gsched)) odd("an entry (" pe[i] ") in a multi-ecosystem group, " g ", for which the file shows no schedule interval")
+        else if (giv[g] == "cron" && !(g in gcj) && !(g in gtold)) { gtold[g] = 1; lacks("the group " g " has a cron interval and no cronjob") }
       }
       if (ver != "2") lacks("the file has no version: 2 line")
       print names; print problems; print anchor + 0; print unsure
