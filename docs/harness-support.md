@@ -89,13 +89,22 @@ Guardrail parity through `.cursor/hooks.json`, which calls the same canonical sc
 - **Its MCP file is `.cursor/mcp.json`**, not `.mcp.json`. It is ignored by git here for the
   same reason `.mcp.json` is.
 
-Its hook config declares `failClosed: true` on the block hook, so a check that cannot start,
-times out or answers nothing refuses the edit rather than waving it through. That covers the
-adapter failing, not the check behind it. Once `bin/run-claude-hook.sh` is running it treats
-only the check's own refusal (exit 2) as a refusal, the rule Claude Code applies to a hook, so
-a check that crashes partway (exit 1, exit 127, a kill) lets the edit through. Run against
-stub checks on 2026-11-13: each of those came back as an allow. The check itself answers 2 for
-a payload it cannot read. The same holds for Grok Build.
+Its hook config declares `failClosed: true` on the block hook, so a check that cannot start
+or times out refuses the edit rather than waving it through (from Cursor's documentation; not
+run). That covers the adapter failing to run. Once `bin/run-claude-hook.sh` is running it
+keeps to the same rule: it allows an edit only when the check finished and said yes (exit 0).
+The check's own refusal (exit 2), a check that crashes partway (exit 1, exit 127, a kill) and
+a check file that is missing all come back as a refusal, and the last two say that the check
+did not run and carry whatever it printed. If every edit is refused that way, the check is
+what is broken, not your edit: read what the message says the check printed, and restore
+`.claude/hooks/block-sensitive-files.sh` from the template if it is gone. Run against stub
+checks on 2026-11-13; they are cases in `bin/tests/test-session-start.sh`. This is stricter
+than Claude Code, which treats only exit 2 from its own hook as a refusal, so there a crashed
+check lets the edit through.
+The check itself answers 2 for a payload it cannot read, and 0 for an empty one. The same
+holds for Grok Build, whose guide adds that a hook printing plain text and exiting 0 is still
+an allow. The session, format and prompt hooks are different: missing or crashed, they do
+nothing and the session carries on.
 
 You must trust the workspace for project hooks to load. On Windows, see the Windows section
 below before your first edit: a bare `bash` there is WSL's or nothing, and when it is nothing
@@ -111,7 +120,8 @@ Checked against Grok CLI 1.0.77 on 2026-11-13: its shipped user guide for what i
 - **Three hooks are wired** in `.grok/hooks/hooks.json` through the shared adapter: session
   start, the sensitive-file check, and format on edit. The check declares `failClosed: true`,
   so a hook that cannot run refuses the edit. Grok's own default is to let it through. The
-  limit described under Cursor applies here too: a check that starts and then crashes allows.
+  adapter's rule described under Cursor applies here too: a check that starts and then
+  crashes refuses.
 - **Session-start context reaches you, and maybe not the agent.** Grok reads only a top-level
   `systemMessage` from a SessionStart hook and ignores plain output, so the adapter sends
   that. Its guide does not say whether the model receives a `systemMessage` or only you see
@@ -202,14 +212,20 @@ there.
 What that does depends on the machine. On the one this was checked on (2026-11-13, Windows
 PowerShell 5.1, WSL with Ubuntu), PowerShell found only WSL's `bash`, and the hooks ran inside
 Linux: the session block came back and the sensitive-file check refused a `.env` and allowed
-an ordinary file, through the slower path that has no `jq`. On a machine with no WSL
-distribution the launcher has nothing to start (not run here), and because both files mark the
-sensitive-file check `failClosed`, the tool then refuses every edit. That is the safe
-direction, and it looks like the template being broken. Settle it before your first edit.
+an ordinary file, through the slower path that has no `jq`. That is not the same as working:
+inside Linux the git state in the session block is whatever Linux's git reports, and the
+format hook looks for the edited file by the Windows path the tool sends and for a formatter
+installed in Linux, finds neither, and does nothing without saying so (read from the hook, not
+run). On a machine with no WSL distribution the launcher has nothing to start (not run here),
+and because both files mark the sensitive-file check `failClosed`, the tool then refuses every
+edit. That is the safe direction, and it looks like the template being broken. Either way,
+settle it before your first edit.
 
-**Grok Build.** Set the environment variable `GROK_SHELL=bash`. Grok's guide names it as the
-setting for hook files shared with other platforms, and says the command then runs under Git
-Bash. Nothing in the repository changes. From the guide; not run here.
+**Grok Build.** Set the environment variable `GROK_SHELL=bash`: in PowerShell, run
+`setx GROK_SHELL bash`, then open a new terminal, because the setting reaches only programs
+started after it. Grok's guide names the variable as the setting for hook files shared with
+other platforms, and says the command then runs under Git Bash. Nothing in the repository
+changes. From the guide; not run here.
 
 **Cursor, when only Windows machines use the repository.** In `.cursor/hooks.json`, change the
 first word of each of the four `command` values and nothing else in the file. The first one
@@ -233,7 +249,14 @@ command, from this repository's folder, on 2026-11-13:
 | `bash` | runs inside WSL | runs inside WSL |
 
 If Git is installed somewhere else, or `dir /x C:\` shows no `PROGRA~1`, use the second form
-with your own path. It needs PowerShell.
+with your own path. `where.exe git` prints where Git is; `bash.exe` is in the `bin` folder
+beside the `cmd` folder it names. With Git in `D:\Tools\Git`, the first line becomes:
+
+```json
+"command": "& 'D:/Tools/Git/bin/bash.exe' bin/run-claude-hook.sh cursor session-start",
+```
+
+That form needs PowerShell, which is what Cursor's documentation says it uses.
 
 To see whether a line works before you rely on it, open PowerShell in the project folder and
 paste it with something on its input (the hook waits for input otherwise):
@@ -242,9 +265,13 @@ paste it with something on its input (the hook waits for input otherwise):
 '{}' | C:\PROGRA~1\Git\bin\bash.exe bin/run-claude-hook.sh cursor session-start
 ```
 
-A reply that starts `{"additional_context":"=== SESSION CONTEXT ===\n` came from Git Bash. One
-with spaces where the `\n` should be came from WSL. None of this was run inside Cursor, so
-step 9 of `SETUP.md` is the check that counts.
+Any reply that starts `{"additional_context":"=== SESSION CONTEXT ===` means the line works.
+What follows has `\n` between its lines when `jq` is installed and spaces when it is not. Git
+for Windows does not ship `jq`, so spaces are the usual case and are fine. The reply does not
+tell you which Bash answered. For that, run `bash -c 'uname -s'`: `Linux` is WSL, and a name
+starting `MINGW` is Git Bash (here: `Linux` for the bare word, `MINGW64_NT-10.0-26200` for the
+full path). None of this was run inside Cursor, so step 9 of `SETUP.md` is the check that
+counts.
 
 **Cursor, when macOS or Linux machines share the repository.** That edit puts a Windows path
 in a file everybody runs, and it breaks the hooks for everybody else. Leaving it uncommitted
@@ -254,8 +281,13 @@ Bash on the Windows machine itself, by putting `C:\Program Files\Git\bin` ahead 
 `C:\Windows\System32` in the system `PATH`. That folder holds `bash.exe`, `sh.exe` and
 `git.exe` and nothing else. With it first in one PowerShell session's `PATH`, the unedited
 `bash bin/run-claude-hook.sh ...` line ran under Git Bash here; the system setting itself was
-not changed to test it. The cost is that typing `bash` no longer opens WSL on that machine
-(`wsl` still does). There is no cleaner answer today.
+not changed to test it. The steps are Windows' usual ones and were not walked through here:
+search the Start menu for "environment variables", open "Edit the system environment
+variables", choose Environment Variables, edit `Path` under System variables, add
+`C:\Program Files\Git\bin`, and move it above the `System32` entry. That needs an
+administrator account, and Cursor has to be closed and reopened to see it. The cost is that
+typing `bash` no longer opens WSL on that machine (`wsl` still does). There is no cleaner
+answer today.
 
 Claude's `$CLAUDE_PROJECT_DIR` resolves script paths, but does not choose the Bash executable.
 Check its selected shell too. Codex's Windows launcher uses Python through the selected shell; the adapter

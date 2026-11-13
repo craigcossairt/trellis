@@ -23,12 +23,19 @@
 #    must be told to use Git Bash. docs/harness-support.md ("Windows") has the
 #    exact lines for each tool.
 #
-# Where this fails OPEN, on purpose and worth knowing: a missing target allows
-# (never brick a session because a path moved), and so does any exit from the
-# sensitive-file hook other than 2 - the same rule Claude Code applies to a
-# hook, so a hook that crashes (exit 1, 127, a kill) lets the edit through. The
-# hook itself answers 2 for a payload it cannot read. A tool's `failClosed`
-# covers only this script failing to start or to answer, not that case.
+# Where this fails open, and where it does not. The session, format and prompt
+# hooks fail OPEN: a target that is missing or a hook that crashes prints
+# nothing and exits 0, because a path that moved must not stop a session from
+# starting. The sensitive-file check fails CLOSED: it allows an edit only when
+# the check finished and said yes (exit 0). A refusal (exit 2), any other exit
+# (a crash, a missing program, a kill) and a check file that is not there all
+# come back as a refusal, and the last two say that the check did not run.
+# That is stricter than the rule Claude Code applies to its own hooks, where
+# only exit 2 refuses, and it is on purpose: both tools' hook files mark this
+# check `failClosed`, which covers this script failing to start or timing out,
+# and a script that then answered "allow" for a crashed check would undo that
+# setting from the inside. The hook itself answers 2 for a payload it cannot
+# read, and 0 for an empty one.
 set -uo pipefail
 
 HARNESS="${1:-}"
@@ -82,9 +89,18 @@ deny_json() {
   esac
 }
 
+refuse() {
+  # $1 = reason. The tool's deny reply on stdout, the reason on stderr, exit 2.
+  deny_json "$1"
+  printf '%s\n' "$1" >&2
+  exit 2
+}
+
 if [ ! -f "$TARGET" ]; then
   echo "run-claude-hook.sh: missing target $TARGET" >&2
-  [ "$HOOK_ID" = "block-sensitive-files" ] && allow_json
+  if [ "$HOOK_ID" = "block-sensitive-files" ]; then
+    refuse "The sensitive-file check is missing ($TARGET), so this edit was refused rather than let through unchecked. Restore that file. docs/harness-support.md says more."
+  fi
   exit 0
 fi
 
@@ -100,16 +116,23 @@ rm -f "$TMP_OUT" "$TMP_ERR" 2>/dev/null || true
 
 case "$HOOK_ID" in
   block-sensitive-files)
-    if [ "$RC" -eq 2 ]; then
-      REASON="$ERR"
-      [ -n "$REASON" ] || REASON="Blocked by hook: $HOOK_ID"
-      deny_json "$REASON"
-      printf '%s\n' "$REASON" >&2
-      exit 2
-    fi
-    allow_json
-    [ -n "$ERR" ] && printf '%s\n' "$ERR" >&2
-    exit 0
+    # 0 is the check saying yes and 2 is the check saying no. Anything else is
+    # a check that did not finish, and that is answered as a refusal too.
+    case "$RC" in
+      0)
+        allow_json
+        [ -n "$ERR" ] && printf '%s\n' "$ERR" >&2
+        exit 0
+        ;;
+      2)
+        REASON="$ERR"
+        [ -n "$REASON" ] || REASON="Blocked by hook: $HOOK_ID"
+        refuse "$REASON"
+        ;;
+      *)
+        refuse "The sensitive-file check did not finish (exit $RC), so this edit was refused rather than let through unchecked.${ERR:+ It printed: $ERR} docs/harness-support.md says more."
+        ;;
+    esac
     ;;
   brain-enrich)
     # Neither tool adds this to the prompt today. Cursor's beforeSubmitPrompt

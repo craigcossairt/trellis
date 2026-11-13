@@ -103,8 +103,9 @@ fit your project. `docs/harness-support.md` lists the coverage and limits.
       section of `docs/harness-support.md` has the other way, and a line to paste that shows
       whether the command works on your machine.
 - [ ] **Grok Build:** run `/hooks-trust` the first time you open the project. **On Windows**,
-      set the environment variable `GROK_SHELL=bash` so Grok runs the hooks under Git Bash.
-      There is no file to edit. Grok also reads the Claude and Cursor hook files by default,
+      set the environment variable `GROK_SHELL=bash` so Grok runs the hooks under Git Bash:
+      run `setx GROK_SHELL bash` in PowerShell, then open a new terminal. There is no file to
+      edit. Grok also reads the Claude and Cursor hook files by default,
       so expect four harmless "hook load error" lines for the Cursor file.
       `docs/harness-support.md` has the details.
 - [ ] **Muse Code, Antigravity, Gemini CLI, Copilot:** no in-session hooks are shipped for

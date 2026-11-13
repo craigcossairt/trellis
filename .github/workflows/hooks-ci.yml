@@ -1030,7 +1030,7 @@ jobs:
           #   stale line tells the agent to schedule it     2 -> 2
           #
           # Through the Cursor/Grok adapter (bin/run-claude-hook.sh), measured
-          # 2026-11-13 over 66 cases, each mutant in its own copy beside an
+          # 2026-11-13 over 98 cases, each mutant in its own copy beside an
           # unmutated baseline (0 red), predicted -> observed red. Neither
           # tool reads this hook's plain stdout, so a reply in the wrong shape
           # is a session that opens without the block and says nothing. The
@@ -1048,6 +1048,24 @@ jobs:
           #   jq never used (always the flattening path)    1 -> 1
           #   cursor prompt hook answers nothing            1 -> 1
           #   grok prompt hook prints the hook's text again 1 -> 1
+          #
+          # The sensitive-file check through the same adapter. Both tools'
+          # hook files mark it failClosed, which covers the adapter failing to
+          # start. Once it is running, what it prints is the answer, so it
+          # allows an edit only when the check finished and said yes. A check
+          # that is missing, crashes or is killed comes back as a refusal that
+          # says so. The session, format and prompt hooks stay open, and that
+          # is pinned too: a missing path must not stop a session starting.
+          # Same run:
+          #   a check that did not finish is allowed        7 -> 7
+          #   a check that is missing is allowed            4 -> 4
+          #   a missing target refuses for every hook       3 -> 3
+          #   the check's yes is not taken as a yes         3 -> 3
+          #   its own refusal reported as a failed run      1 -> 1
+          #   failed-run reply drops what the check said    1 -> 1
+          #   a refusal exits 0                             5 -> 5
+          #   a refusal prints no reply                     8 -> 8
+          #   a refusal's reason is not on stderr           1 -> 1
           bash bin/tests/test-session-start.sh
 
       - name: CDPATH-guarded self-location
@@ -1057,7 +1075,8 @@ jobs:
           # EMPTY CDPATH= prefix. Unguarded, a script run by a relative path
           # with CDPATH exported captures its directory twice and loses every
           # sibling. The Cursor/Grok adapter is invoked exactly that way and
-          # fails open on a missing target, so this let a .env write through.
+          # at the time allowed on a missing target, so this let a .env write
+          # through. (It refuses on a missing sensitive-file check now.)
           # `bash bin/check-cdpath-cd.sh --list` prints every site.
           bash bin/check-cdpath-cd.sh
 
@@ -1733,10 +1752,15 @@ jobs:
           # the tool lets an edit through when the sensitive-file check cannot
           # start. A Grok UserPromptSubmit entry is a hook whose output Grok
           # discards (CLI 1.0.77): wired, running, and adding nothing, which
-          # reads as project memory working. Four bad copies were made by hand
-          # on 2026-11-13 (failClosed removed from each file, set false, a Grok
-          # prompt hook added) and this step went red on each, 4 of 4, and
-          # stayed green with either adapter's file deleted.
+          # reads as project memory working. The test is "there is at least
+          # one sensitive-file entry and every one sets failClosed", so a
+          # second entry, or another hook with no command key, does not trip
+          # it. Ten copies were made by hand on 2026-11-13 and this step did
+          # what was predicted on each, 10 of 10. Red: failClosed removed from
+          # each file, set false, a Grok prompt hook added, one of two
+          # sensitive-file entries not failClosed, the entry removed. Green:
+          # either adapter's file deleted, a second entry that sets it, an
+          # extra entry with no command key.
           pin() { # $1 file, $2 jq test that must hold, $3 what it means
             [ -f "$1" ] || return 0
             jq -e "$2" "$1" >/dev/null 2>&1 && { echo "ok $1: $3"; return 0; }
@@ -1744,10 +1768,10 @@ jobs:
             fail=1
           }
           pin .cursor/hooks.json \
-            '[.hooks.preToolUse[] | select(.command | contains("block-sensitive-files")) | .failClosed] == [true]' \
+            '[.hooks.preToolUse[] | select((.command // "") | contains("block-sensitive-files")) | .failClosed] | length > 0 and all(. == true)' \
             'the sensitive-file check sets failClosed'
           pin .grok/hooks/hooks.json \
-            '[.hooks.PreToolUse[].hooks[] | select(.command | contains("block-sensitive-files")) | .failClosed] == [true]' \
+            '[.hooks.PreToolUse[].hooks[] | select((.command // "") | contains("block-sensitive-files")) | .failClosed] | length > 0 and all(. == true)' \
             'the sensitive-file check sets failClosed'
           pin .grok/hooks/hooks.json '.hooks | has("UserPromptSubmit") | not' \
             'no UserPromptSubmit hook is wired (Grok discards its output)'
