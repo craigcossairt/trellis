@@ -114,8 +114,8 @@ exactly like one that was never written. Each adapter's own directory documents 
 format; delete the adapter and the rule goes with it.
 
 `.claude/skills/` here holds only skills specific to this project. Personal skills you use across
-projects belong in one home repo of your own, installed user-level (`~/.claude/skills/`); never
-copy one into a project. If you keep such a repo, name it on this line so agents know where shared
+projects belong in one home repo of your own, installed at each tool's user level (for Claude Code,
+see `docs/recommended-tooling.md`); never copy one into a project. If you keep such a repo, name it on this line so agents know where shared
 skills come from.
 
 ## Rules
