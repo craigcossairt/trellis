@@ -117,4 +117,8 @@ If you cannot make it fail today, the criterion is either already done (drop it)
 check (rewrite it). This matters most for AFK slices, where nobody is watching the run that
 declares the issue finished.
 
+One kind stays although it passes today: a criterion that guards what the work must not break
+("people who are signed in stay signed in"). Keep it, and label it *must stay true*, so that
+nobody reads its passing as proof the work was done.
+
 Do NOT close or modify the parent PRD issue.

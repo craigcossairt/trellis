@@ -39,7 +39,7 @@ Twenty-seven skills that make the agent slow down before it builds. It grills yo
 (`grill-me`, `grill-with-docs`), runs a real debugging loop (`diagnosing-bugs`), turns a
 conversation into a spec and a spec into tickets (`to-spec`, `to-tickets`), keeps a glossary of
 your project's words (`domain-modeling`), and reviews a change against your own standards
-(`code-review`). Start with the grilling skills: they are the ones people install it for.
+(`code-review`). Start with the grilling skills.
 
 Where your tool has plugins, install it as one, so it updates itself:
 
@@ -189,9 +189,11 @@ Source: https://github.com/craigcossairt/Longshot
 ## T3 Code - every agent session in one window
 
 An open-source app for desktop, web and phone that runs the coding agents you already have, side
-by side: Claude Code, Codex, Cursor, OpenCode, Grok Build, Antigravity, Kiro, Pi, Muse Code, and
-any agent that speaks ACP. It does not resell model access. Each agent signs in with your own
-account and uses the plan you already pay for, so the app adds no bill of its own.
+by side: Claude Code, Codex, Cursor, OpenCode, Grok Build, Antigravity, Kiro, Pi, Muse Code, fx,
+and any agent that speaks ACP (the Agent Client Protocol, a shared way for an app to drive a
+coding agent). It does not resell model access. Each agent signs in with your own account and
+uses the plan you already pay for, so the app adds no bill of its own. The agent list and the
+"does not resell" line are its README's, read 2026-11-13.
 
 It earns its place the first time you want two things at once: a second session working while
 the first one runs, a different model reviewing the first one's work (which this template asks
@@ -210,8 +212,10 @@ agent installed and signed in first: T3 Code drives agents, it is not one.
 **With this template:** a thread working in its own worktree still has to claim its branch. Run
 `bin/claim-branch.sh --acquire` from inside that thread's worktree. The lease is recorded in the
 worktree's own git folder, and that record is how the push gate tells your push from another
-session's. Nothing collides: used on this template's own repository, it added no files to the
-working tree.
+session's. Used on this template's own repository, it added no files to the working tree.
+It does add its own working instructions to every session it starts (how to delegate, how to
+link a pull request), next to the ones in `AGENTS.md`. Where the two differ, say in `AGENTS.md`
+which wins.
 
 **Maturity:** MIT, and young. It was at version 0.1.9 when this entry was written (checked
 2026-11-13), so expect it to change. Disclosure: this entry was written from a session running
@@ -234,6 +238,7 @@ the point is to install it knowingly.
 | pstack | `/tdd`, `/learn`, plus principles that argue against rules in your `AGENTS.md` | An agent holding two rule sets that contradict each other |
 | gstack | `/learn`, and your repo's `CLAUDE.md`, `.claude/settings.json` and `.claude/hooks/` if you run its team setup | A second `/learn` that writes somewhere else, and tracked files edited by an installer |
 | gbrain | `brain/` | Two project memories, neither aware of the other |
+| T3 Code | No skill or file by name. It adds its own orchestration instructions to each session it starts | Two sets of working rules in one session, and the agent choosing between them where they differ |
 
 ## How name collisions actually work
 
@@ -371,14 +376,14 @@ exceptions.
 | Category | Pick | When it earns its place |
 |---|---|---|
 | Issue tracking | GitHub Issues to start; **Linear** when the backlog outgrows it | Day 1 for Issues (free, zero setup, agents read/write via `gh`). Move to Linear when you're juggling priorities across many issues and need cycles/projects - it has an MCP server, so agents work the backlog directly. |
-| Automated PR review | **CodeRabbit** | As soon as you're merging AI-written code you can't fully review yourself - an automated second reader catches real bugs. Free for public repos; a private repo gets a 14-day trial and is paid after that, which matters because most first projects are private. Caveat: treat it as a reviewer, not a gate; question its premise before applying a remedy, and never merge on its check status alone - read the actual comments. |
+| Automated PR review | **CodeRabbit** | As soon as you're merging AI-written code you can't fully review yourself - an automated second reader catches real bugs. Free for public repos; a private repo gets a 14-day trial and is paid after that (its pricing page, 2026-11-13), which matters because most first projects are private. Caveat: treat it as a reviewer, not a gate; question its premise before applying a remedy, and never merge on its check status alone - read the actual comments. |
 | Error tracking | **Sentry** | The day real users touch the product. Before that, local logs are enough. Free tier is generous for a small app; agents can triage straight from its MCP server. |
 | Uptime monitoring | **UptimeRobot** | The day something is deployed that users depend on. Free tier covers a small site. |
 | Product analytics | **PostHog** | When you start making product decisions and need evidence instead of vibes. Free tier is generous. |
 | CI | **GitHub Actions** | First time a broken push costs you an evening. Start with lint + test on PR; it's free for public repos and cheap for private ones. |
 | Secrets | A password manager (**Bitwarden**, 1Password) | Day 1, non-negotiable. Real values live there; repos get `.example` files only. The template's hooks enforce the repo side. |
-| Backend | **Supabase** (if you need a database + auth) | Day 1 if your product stores user data and you don't have strong stack opinions: Postgres, auth, storage, and functions in one, generous free tier, and an MCP server so agents can manage the schema. Two things the free tier does that surprise people: a project nobody touches for a week is paused until you wake it, and the built-in email sender is for testing only (2 messages an hour, to your own team's addresses), so connect a real email provider before your first outside signup. If you do have stack opinions, use them - this row is a default, not a mandate. |
-| Web hosting | **Vercel** | The day you have a web app or site to put in front of anyone. Free hobby tier, git-push deploys, and MCP/CLI so agents can ship and inspect deployments. Vercel's terms keep the free tier to personal or non-commercial use, so budget for the paid plan from the day the site earns money. |
+| Backend | **Supabase** (if you need a database + auth) | Day 1 if your product stores user data and you don't have strong stack opinions: Postgres, auth, storage, and functions in one, generous free tier, and an MCP server so agents can manage the schema. Two things the free tier does that surprise people: a project nobody touches for a week is paused until you wake it, and the built-in email sender is for testing only (2 messages an hour, to your own team's addresses), so connect a real email provider before your first outside signup (both from Supabase's pricing page and auth docs, 2026-11-13). If you do have stack opinions, use them - this row is a default, not a mandate. |
+| Web hosting | **Vercel** | The day you have a web app or site to put in front of anyone. Free hobby tier, git-push deploys, and MCP/CLI so agents can ship and inspect deployments. Vercel's terms (updated 2026-10-19, read 2026-11-13) keep the free tier to personal or non-commercial use, so budget for the paid plan from the day the site earns money. |
 | Dependency security | **OSV.dev** to start; **Socket** for supply-chain depth | OSV is day 1 - free, no signup, already wired into this template's `/review-dependency-updates` skill. Add Socket when you want supply-chain risk scoring (maintainer changes, install scripts) beyond known CVEs. |
 | Docs & knowledge | Markdown in the repo to start; **Notion** at company stage | This template's whole philosophy: docs live in git where agents read them for free. Notion earns its place when non-code collaborators and business ops appear (see `growing-into-a-workspace.md`). |
 | Codebase audits | **AuditBuffet** | Pre-launch, or whenever you suspect the AI has quietly accumulated slop. Audit prompts run locally inside your coding agent (your code never leaves your machine); free basic scan, ~$9/mo for the full catalog at time of writing. |

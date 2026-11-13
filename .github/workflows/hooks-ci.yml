@@ -1006,19 +1006,28 @@ jobs:
           #   both removed                                  6 -> 6 red
           #
           # Project-brain section (stale, or its last refresh failed), measured
-          # 2026-11-13 over 53 cases, predicted -> observed red:
+          # 2026-11-13 over 61 cases, each mutant in its own copy beside an
+          # unmutated baseline (0 red), predicted -> observed red. The age is
+          # asked for in minutes and tested an hour or two either side of the
+          # threshold; the two ages every earlier case used (now, and 2020)
+          # could not see an off-by-one-day. What the hook prints lands in the
+          # agent's context, so the wording is pinned too: it must not read as
+          # an instruction to create a scheduled job.
           #   setup guard removed (no .last-ingest needed)  1 -> 1
           #   kill switch ignored                           1 -> 1
-          #   threshold variable ignored                    2 -> 2
+          #   threshold variable ignored                    3 -> 3
+          #   threshold 0 no longer disables                1 -> 1
           #   non-number threshold not defaulted            1 -> 1
-          #   failure marker ignored                        4 -> 4
-          #   whole marker printed, not its first line      1 -> 1
-          #   staleness always fires                        2 -> 2
-          #   staleness never fires                         4 -> 4
-          #   threshold 0 no longer disables                0 -> 1
-          #     Predicted equivalent, on the theory that find would reject
-          #     "-mtime +-1". It does not: find accepts it and matches every
-          #     file, so the guard is load-bearing and its case pins it.
+          #   threshold not read as base 10 (08, 09)        2 -> 2
+          #   threshold a day early                         1 -> 1
+          #   threshold a day late                          1 -> 1
+          #   failure marker ignored                        5 -> 5
+          #   whole marker printed, unfiltered              3 -> 3
+          #   marker's 200-character cut removed            1 -> 1
+          #   marker's printable filter removed             1 -> 1
+          #   staleness always fires                        3 -> 3
+          #   staleness never fires                         7 -> 7
+          #   stale line tells the agent to schedule it     2 -> 2
           bash bin/tests/test-session-start.sh
 
       - name: CDPATH-guarded self-location
@@ -1153,27 +1162,48 @@ jobs:
           # are off. Three exit states: 0 nothing off, 1 at least one off,
           # 2 could not tell (outranks 1, and every finding still prints).
           # The property that matters most is one a user cannot see: it never
-          # writes. A fake gh on PATH records any call that carries a method
-          # or a field flag, and a case fails if one was sent. The fake runs
+          # writes. A fake gh on PATH answers only the two read forms the
+          # script uses (`repo view --json nameWithOwner` and
+          # `api <path> [--jq <expr>]`) and records anything else, however it
+          # is spelled. The last case fails if one was recorded, and counts the
+          # runs it looked at so an empty record cannot pass for a clean one.
+          # A list of forbidden flags was tried first and walked around three
+          # ways (`--method=PUT`, `-XPUT`, `gh repo edit`). The fake runs
           # each --jq expression with real jq over a JSON body shaped like
-          # GitHub's, and a refusal carries the message gh prints, so the
-          # expressions and the message matching are both under test. The
-          # shapes were read from real responses on 2026-11-13. Needs jq.
-          # 58 cases.
+          # GitHub's, pages a list as GitHub does (30 entries unless asked),
+          # and a refusal carries the message gh prints, so the expressions,
+          # the paging and the message matching are all under test. gh's own
+          # jq is not jq: the suite's header says what that leaves unproven.
+          # The shapes were read from real responses on 2026-11-13, except a
+          # bypass list with somebody on it, which is from GitHub's API
+          # reference. Needs jq. 94 cases.
           #
-          # What "protected" means here: nobody can force-push to the default
-          # branch or delete it. Classic protection and rulesets are both
-          # read and add up. A protection that allows force pushes, or a
-          # ruleset holding only a review rule, is OFF. A refusal is a plan
-          # SKIP only on a private repository whose refusal names the plan,
-          # and a 404 is "off" only with GitHub's own message. Anything else
-          # is UNKNOWN: a state is reported only on evidence for it.
+          # What "protected" means here: no rule lets anyone force-push to the
+          # default branch or delete it. Classic protection and rulesets are
+          # both read and add up, and every page of rules is read. These are
+          # OFF: a protection that allows force pushes, a ruleset holding only
+          # a review rule, a ruleset with somebody on its bypass list (a
+          # bypass that works only through a pull request does not count), and
+          # a branch lock administrators can bypass. A refusal is a plan SKIP
+          # only on a private repository whose refusal names the plan, and a
+          # 404 is "off" only with GitHub's own message. UNKNOWN covers what
+          # could not be read or was not understood: an error, a rules answer
+          # holding an entry that is not a rule, a ruleset whose bypass list
+          # is missing, more than ten pages of rules. Not read at all, and
+          # said so in the script: an organisation's custom roles that carry
+          # a bypass permission.
           #
-          # Mutation ledger, measured 2026-11-13, 32 mutants each in its own
-          # copy, predicted -> observed red:
+          # Security updates that are enabled but paused are OFF. The
+          # dependabot-config line reads the file: ON names the ecosystems it
+          # watches, and a file with no entry is OFF. A branch name holding a
+          # character that changes what a URL means is never sent.
+          #
+          # Mutation ledger, measured 2026-11-13, 62 mutants each in its own
+          # copy beside an unmutated baseline (0 red), predicted -> observed
+          # red:
           #
           #   alerts endpoint error read as ON                2 -> 2
-          #   unreadable on/off field read as OFF             3 -> 3
+          #   unreadable on/off field read as OFF             4 -> 4
           #   found (1) outranks could-not-tell (2)           1 -> 1
           #   private repo's absent secret scanning a finding 4 -> 4
           #   vulnerability reporting checked on private      5 -> 5
@@ -1183,27 +1213,57 @@ jobs:
           #   default branch hardcoded to main                1 -> 1
           #   extra field in the repository line accepted     1 -> 1
           #   --repo shape validation removed                 1 -> 1
-          #   dependabot config always ON                     1 -> 1
           #   --repo still reads the local tree               1 -> 1
-          #   option value check removed (the endless loop)   3 -> 3
-          #   empty option value accepted                     1 -> 1
+          #   option value check removed (the endless loop)   4 -> 4
+          #   empty option value accepted                     2 -> 2
           #   classic force-push flag ignored                 2 -> 2
           #   classic deletion flag ignored                   1 -> 1
-          #   any rule counts as a force-push block           2 -> 2
-          #   any rule counts as a deletion block             2 -> 2
+          #   any blocking rule counts as a force-push block  2 -> 2
+          #   any blocking rule counts as a deletion block    4 -> 4
           #   plan refusal believed on a public repo          1 -> 1
           #   any 403 on a private repo read as the plan      2 -> 2
           #   any classic 404 read as not protected           1 -> 1
-          #   unreadable route no longer UNKNOWN              7 -> 7
-          #   deletion left out of the verdict                3 -> 3
+          #   unreadable route no longer UNKNOWN              11 -> 11
+          #   deletion left out of the verdict                5 -> 5
           #   an unreadable route undoes a proven ON          1 -> 1
           #   classic answer missing its fields accepted      1 -> 1
           #   plan refusal on one route read as SKIP          1 -> 1
-          #   rules contribute nothing                        10 -> 10
-          #   classic protection contributes nothing          2 -> 2
+          #   rules contribute nothing                        15 -> 15
+          #   classic protection contributes nothing          5 -> 5
           #   plan refusal on both routes read as OFF         1 -> 1
           #   any alerts 404 read as off                      1 -> 1
           #   security updates endpoint error read as ON      1 -> 1
+          #   a write spelled --method=PUT and -XPUT          1 -> 1
+          #   a setting changed through gh repo edit          1 -> 1
+          #   --root: repository looked up from elsewhere     1 -> 1
+          #   branch name sent whatever it holds              1 -> 1
+          #   a slash in a branch name refused                1 -> 1
+          #   a dependabot file with no entry counts as ON    2 -> 2
+          #   commented-out entries count                     2 -> 2
+          #   what the file watches left out of the report    1 -> 1
+          #   what the file watches not recorded              3 -> 3
+          #   quotes kept around an ecosystem name            3 -> 3
+          #   paused security updates read as ON              2 -> 2
+          #   enabled, no word on paused, read as ON          1 -> 1
+          #   disabled security updates no longer OFF         2 -> 2
+          #   the paused field is never read                  3 -> 3
+          #   a branch lock is ignored                        1 -> 1
+          #   a lock counts though admins can bypass it       2 -> 2
+          #   allow flags count only with enforce_admins      1 -> 1
+          #   note on a lock that does not bind dropped       1 -> 1
+          #   a ruleset with a bypass list still counts       6 -> 6
+          #   pull-request-only bypass counted as a way in    1 -> 1
+          #   a missing bypass list read as an empty one      2 -> 2
+          #   an unreadable ruleset counts as no bypass       3 -> 3
+          #   an unread bypass list no longer UNKNOWN         3 -> 3
+          #   note naming the bypassed ruleset dropped        1 -> 1
+          #   only an 'always' bypass counts as a way in      2 -> 2
+          #   an unread bypass list undoes a proven ON        1 -> 1
+          #   the first page taken as the whole list          2 -> 2
+          #   a hundred a page is not asked for               2 -> 2
+          #   the ten-page cap removed                        1 -> 1
+          #   an entry that is not a rule skipped             1 -> 1
+          #   a blocking rule with no ruleset skipped         1 -> 1
           bash bin/tests/test-check-repo-settings.sh
 
       - name: Suite - brain refresh (optional project memory)
@@ -1214,16 +1274,26 @@ jobs:
           # accident, must not index a corpus the ingest refused, and must
           # leave brain/.refresh-failed behind on either failure, because that
           # marker is all the session-start hook has to report. Hermetic: a
-          # temp copy of brain/ and a fake indexer. 18 cases.
+          # temp copy of brain/ and a fake indexer. 22 cases.
           #
-          # Mutation ledger, measured 2026-11-13, predicted -> observed red:
+          # Exit 127 ("command not found") gets a hint in the marker, because
+          # on a schedule it is nearly always PATH and the same command then
+          # works by hand. The hint must fit the 200 characters the
+          # session-start hook prints, and must not show up on other failures.
+          #
+          # Mutation ledger, measured 2026-11-13, each mutant in its own copy
+          # beside an unmutated baseline (0 red), predicted -> observed red:
           #
           #   setup guard removed (runs with no .last-ingest) 4 -> 4
           #   ingest failure ignored                          3 -> 3
-          #   index failure ignored                           3 -> 3
+          #   index failure ignored                           6 -> 6
           #   marker never cleared by a clean run             1 -> 1
-          #   marker not written                              2 -> 2
+          #   marker not written                              5 -> 5
           #   CDPATH guard dropped from self-location         1 -> 1
+          #   exit 127 gets no hint                           1 -> 1
+          #   every failure blames PATH                       1 -> 1
+          #   hint long enough to pass 200 characters         1 -> 1
+          #   command no longer ends the marker               1 -> 1
           bash bin/tests/test-brain-refresh.sh
 
       # node is preinstalled on ubuntu-latest, but its version is the image's

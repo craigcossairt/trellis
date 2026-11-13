@@ -92,6 +92,21 @@ if grep -q 'FAILED at the index step' "$P/brain/log.md" 2>/dev/null; then ok "th
 run 0
 if [ "$RC" = 0 ] && [ ! -f "$P/brain/.refresh-failed" ]; then ok "the next clean run removes the marker"; else bad "the next clean run removes the marker" "rc=$RC"; fi
 
+echo "== a program that is not found (exit 127)"
+# 127 is the shell's "command not found". On a schedule that is nearly always
+# PATH, which a scheduler starts short, and the same command then works when
+# run by hand. The marker is all the next session sees, so it has to say so.
+project setup; run 127
+if grep -q 'usually PATH' "$P/brain/.refresh-failed" 2>/dev/null; then ok "exit 127: the marker says a program was not found and names PATH"
+else bad "exit 127: the marker says a program was not found and names PATH" "$(cat "$P/brain/.refresh-failed" 2>&1)"; fi
+MARK="$(head -n 1 "$P/brain/.refresh-failed" 2>/dev/null)"
+if [ -n "$MARK" ] && [ "${#MARK}" -le 200 ]; then ok "exit 127: the marker fits the 200 characters the session-start hook prints"
+else bad "exit 127: the marker fits the 200 characters the session-start hook prints" "length ${#MARK}"; fi
+case "$MARK" in *'Run: bash brain/scripts/refresh.sh') ok "exit 127: the marker still ends with the command to run" ;; *) bad "exit 127: the marker still ends with the command to run" "$MARK" ;; esac
+project setup; run 3
+if grep -q 'PATH' "$P/brain/.refresh-failed" 2>/dev/null; then bad "any other exit: the marker does not blame PATH" "$(cat "$P/brain/.refresh-failed")"
+else ok "any other exit: the marker does not blame PATH"; fi
+
 echo "== the ingest step fails"
 project setup
 # A GitHub-token-shaped string, assembled here so it never appears in this file.

@@ -161,8 +161,9 @@ what protects you; the check only catches the common case.
       sessions on one machine or wire the warning. Both do nothing until you opt in
       (`.claude/hooks/README.md` § Optional hooks). Delete each with its suite in `bin/tests/`
       or `.claude/hooks/tests/`; hooks CI skips a suite whose subject file is gone.
-- [ ] **The repository-settings check** (`bin/check-repo-settings.sh`, `.github/dependabot.yml`)
-      if this project will never live on GitHub. Step 8 is where it gets used.
+- [ ] **The repository-settings check** (`bin/check-repo-settings.sh`, its suite
+      `bin/tests/test-check-repo-settings.sh`, and `.github/dependabot.yml`) if this project
+      will never live on GitHub. Step 8 is where it gets used.
 - [ ] **`brain/`**, but not on a guess: step 7 decides it from what your project has. If the
       answer there is "delete", remove `brain/` and `bin/tests/test-brain-refresh.sh` together.
 - [ ] **`examples/`** once your own `AGENTS.md` is filled in. It is a worked sample of a
@@ -180,9 +181,10 @@ situation. Find the rows that describe you.
       - **Where your to-do list lives.** GitHub Issues is free and already attached to your
         repo. Linear is the pick once you are ranking a long backlog. Whichever you choose is
         what step 2 points at.
-      - **Whether to add a skill pack.** Matt Pocock's skills are the ones people ask for most:
-        they make your AI question the plan before it builds anything. One of them overlaps
-        this template's own test-first workflow, and the tooling page says which to leave out.
+      - **Whether to add a skill pack.** Matt Pocock's skills are the pack the tooling page
+        recommends: they make your AI question the plan before it builds anything. One of them
+        overlaps this template's own test-first workflow, and the tooling page says how to
+        settle which of the two is in charge.
 - [ ] If you run more than one AI session at a time, or more than one AI tool, read the
       **T3 Code** entry. It puts all of them in one window.
 - [ ] For every other row that fits you, the table says *when* to add it. Most wait until real
@@ -209,7 +211,8 @@ that rather than from how busy you feel.
         expect the project to run for months. An index that is already running picks those up
         as they appear. One you meant to set up later usually never gets set up.
 
-      Then follow `brain/README.md`. It needs one install and three commands.
+      Then follow `brain/README.md`. It installs two programs (bun and QMD) and takes three
+      commands.
 - [ ] **Leave it for later** if this is a new project with nothing written down and no plan to
       write much. Add a line to `docs/decision-log.md` saying when you will come back ("set up
       `brain/` when `docs/` has 15 files of mine"), because nothing else will remind you.
@@ -221,10 +224,13 @@ that rather than from how busy you feel.
 - [ ] **If you set it up, schedule its refresh.** The index only knows what it was last fed, so
       one built today and never refreshed is answering from today's project in three months.
       The whole job is one command, `bash brain/scripts/refresh.sh`, run once a day by your
-      computer's own scheduler. `brain/README.md` § Keeping it current has the exact lines for
-      macOS, Linux and Windows. It has to run on your computer: the index is not in git, so a
-      job running in the cloud has nothing to refresh. If the schedule ever breaks, your next
-      AI session opens with a line saying so.
+      computer's own scheduler. `brain/README.md` § Keeping it current has lines to paste for
+      macOS, Linux and Windows, and a check that the scheduled run will work before you rely
+      on it. It has to run on your computer: the index is not in git, so a job running in the
+      cloud has nothing to refresh. A scheduled run that fails leaves a note, and your next AI
+      session shows it at the top. A schedule that never starts leaves no note, so that case
+      shows up as a "stale" line once the index is a week old. Both lines need a tool that
+      runs this template's session-start hook: Claude Code, Cursor, Grok Build or Codex.
 
 ## 8. Your GitHub repository's settings (3 min)
 
@@ -235,23 +241,38 @@ tells you which are off. It only reads. It changes nothing.
 - [ ] Run `bash bin/check-repo-settings.sh`. It needs the GitHub command-line tool (`gh`),
       signed in as someone who can administer the repository. What it looks at:
       - **Dependabot alerts and security updates.** GitHub tells you when something your
-        project depends on has a known security hole, and opens the fix for you.
+        project depends on has a known security hole, and opens the fix for you. GitHub pauses
+        those fixes when its pull requests sit untouched for 90 days, and the script reports
+        paused as off.
       - **Secret scanning and push protection.** GitHub refuses a push that contains something
         shaped like a real key. This is the net under step 3.
-      - **Protection on your main branch.** Nobody, and no AI, can force-push over it or delete
-        it.
+      - **Protection on your main branch.** A rule that stops anyone, an AI included, from
+        force-pushing over it or deleting it. People on the rule's bypass list can still do
+        both, so leave that list empty. The script counts a rule with anyone on that list as
+        off.
       - **Smaller ones:** merged branches delete themselves, automated workflows start with
         read-only access, and (public repositories) people can report a security problem to
         you privately.
 - [ ] For each line marked `OFF`, the script prints the command or the settings page that turns
       it on. Decide each one separately. Nothing here is required, and all of it can be undone.
+      If you are not sure, turn them all on: none of them costs money, and each one only stops
+      or reports something you would want stopped or reported. One has a side effect worth
+      knowing. With read-only access as the default, a workflow that writes (commits, labels,
+      releases) needs a `permissions:` block of its own.
+- [ ] Run the script again when you are done. A setting is on when the script says so, not
+      when the command that changed it returned without an error.
 - [ ] Read the other marks correctly. `SKIP` means the setting does not apply to this
       repository or is not offered on your GitHub plan. `UNKNOWN` means the script could not
-      read it, which is not the same as on.
+      read it, which is not the same as on. Its line says why. The usual fixes are
+      `gh auth login`, or asking whoever administers the repository to run the check.
 - [ ] Open `.github/dependabot.yml` and add an entry for the language your project is written
       in. As shipped it watches only the GitHub Actions this template's own checks use, and it
       knows nothing about your app's packages until you tell it. The comments at the top of the
-      file show how.
+      file show how. Two things come with keeping the file. GitHub opens a pull request, at
+      most weekly, when one of those actions has a newer release. And that pull request edits
+      `.github/workflows/hooks-ci.yml`, a file the template also updates, so a later
+      `/trellis-sync` shows it as changed on both sides and asks which version to keep. Delete
+      the file if you want neither.
 
 ## 9. Check that it worked (5 min)
 

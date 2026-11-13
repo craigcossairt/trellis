@@ -51,31 +51,93 @@ Run it once by hand, then have your computer run it once a day.
 **It has to run on your own computer.** The corpus and the index are local and are not in git,
 so a scheduled job in the cloud (a hosted agent, a CI workflow) has nothing to refresh.
 
-- **macOS and Linux (cron).** Run `crontab -e` and add one line, with your project's real path:
+The lines below can be pasted as they are, by you or by your AI. They create a scheduled job
+on your computer, so an AI asks you before running them. Start in the project folder, in the
+terminal where the by-hand run just worked.
 
-  ```
-  0 9 * * * cd /path/to/your/project && bash brain/scripts/refresh.sh >/dev/null 2>&1
-  ```
+### macOS and Linux (cron)
 
-  cron starts jobs with a very short `PATH`. If the refresh works by hand and fails on the
-  schedule, that is the usual reason: add a `PATH=` line above it that includes the folder bun
-  was installed into, written out in full (cron does not expand `$HOME` on that line).
-- **Windows (Task Scheduler).** Create a basic task that runs daily, with the action "Start a
-  program":
-  - Program/script: `C:\Program Files\Git\bin\bash.exe`
-  - Add arguments: `brain/scripts/refresh.sh`
-  - Start in: your project folder, typed without quotes
-- **Or ask your AI:** "schedule `bash brain/scripts/refresh.sh` to run daily on this computer".
-  A scheduler built into your coding tool works too, as long as it runs on this machine.
+A scheduler starts a job with a much shorter `PATH` than your terminal has. The refresh then
+works by hand and fails on the schedule with "command not found", which is the most confusing
+way for it to fail. So the job carries your terminal's `PATH` with it:
+
+```bash
+job="export PATH='$PATH'; cd '$PWD' && bash brain/scripts/refresh.sh >/dev/null 2>&1"
+
+# 1. Run the job the way the scheduler will: with nothing inherited from this terminal.
+env -i HOME="$HOME" /bin/sh -c "$job"; echo "exit $?"
+
+# 2. Install it, daily at 9:00. An earlier line for this folder is replaced. Every other line
+#    in your crontab is kept.
+( crontab -l 2>/dev/null | grep -vF "cd '$PWD' && bash brain/scripts/refresh.sh"
+  printf '%s\n' "0 9 * * * $job" ) | crontab -
+
+# 3. Read it back.
+crontab -l
+```
+
+Step 1 is the check that counts. `exit 0`, and a new `refresh - ok` line at the end of
+`brain/log.md`, mean the scheduled run will find its programs. Anything else: stop, and fix
+that before installing the line. If you later install bun or node somewhere else, run the three
+steps again so the job carries the new `PATH`. To remove the job, run `crontab -e` and delete
+its line.
+
+What was run, on 2026-11-13: with cron's usual `PATH` the QMD launcher stopped with exit 127
+("node: not found"), and with the terminal's `PATH` carried in as above it ran. Step 2 was run
+against a stand-in for `crontab`: it kept the other lines and left one line for the folder
+however often it ran. No real crontab was changed, and none of this was run on macOS. Two
+limits: cron reads `%` as a line break, so a folder or `PATH` entry with a `%` in it needs it
+written `\%`, and a single quote in either breaks the quoting.
+
+### Windows (Task Scheduler)
+
+In PowerShell:
+
+```powershell
+$name    = "Brain refresh - $(Split-Path -Leaf (Get-Location))"
+$action  = New-ScheduledTaskAction -Execute 'C:\Program Files\Git\bin\bash.exe' `
+             -Argument 'brain/scripts/refresh.sh' -WorkingDirectory (Get-Location).Path
+$trigger = New-ScheduledTaskTrigger -Daily -At 9am
+Register-ScheduledTask -TaskName $name -Action $action -Trigger $trigger
+
+# Run it once through the scheduler, give it a minute, then read the result back.
+Start-ScheduledTask -TaskName $name
+Get-ScheduledTaskInfo -TaskName $name | Select-Object LastRunTime, LastTaskResult
+```
+
+`LastTaskResult` is `0` after a run that worked, and `brain/log.md` then ends with a new
+`refresh - ok` line. `267009` means it is still running, so read it again. To remove the task:
+`Unregister-ScheduledTask -TaskName $name -Confirm:$false`.
+
+Not run here: the commands and their parameters were checked on Windows PowerShell 5.1 by
+building the action and the trigger, and no task was registered or started. So the run you
+start above is the test. Registered this way, the task belongs to your account and runs while
+you are signed in.
+
+By hand in the Task Scheduler app, the same task is a daily one whose action starts
+`"C:\Program Files\Git\bin\bash.exe"` (keep the quotes), with the argument
+`brain/scripts/refresh.sh` and "Start in" set to your project folder, typed without quotes.
+
+### Or ask your AI
+
+"Schedule the brain refresh the way `brain/README.md` says." It runs the lines above for your
+system, shows you the entry it made, and tells you what the first scheduled run reported. A
+scheduler built into your coding tool works too, as long as it runs on this computer and you
+check its first run the same way.
 
 **A scheduled job fails where nobody is looking, so this one leaves a note.**
 
 - A run that fails writes `brain/.refresh-failed`, naming the step that failed, and the
   session-start hook prints it at the top of your next session. Fix the cause and run the
-  command by hand; a clean run removes the note.
+  command by hand; a clean run removes the note. When the failure was a program that could
+  not be found (exit 127), the note says so: run the schedule steps above again, so the job
+  carries your current `PATH`.
 - A schedule that never starts cannot write that note. That case is caught by age instead:
   once the last ingest is 7 days old, session start says the brain is stale. Change the number
   with `PROJECT_BRAIN_STALE_DAYS`; `0` turns the line off.
+- Both lines come from the session-start hook, so they appear only in a tool that runs it
+  (`docs/harness-support.md` has the table). In the others, `brain/log.md` is the place to
+  look.
 - Every run adds a line to `brain/log.md`, which is where to look for when it last worked.
 
 ## Layout

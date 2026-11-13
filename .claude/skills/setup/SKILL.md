@@ -159,7 +159,11 @@ Measure before you ask anything:
 - **Their own documents.** Tracked markdown the template did not ship:
   `git ls-files '*.md' | grep -vxFf <(cut -d' ' -f2- .trellis/manifest) | wc -l`
 - **History.** `git rev-list --count HEAD`, and the first commit's date from
-  `git log --reverse --format=%as | head -n 1`.
+  `git log --reverse --format=%as | head -n 1`. A project made by cloning or
+  forking the template carries the template's own commits, which are not
+  theirs: when the tag named by `version=` in `.trellis/source` exists here
+  (`git rev-parse -q --verify "refs/tags/<version>"`), count from it instead,
+  with `<version>..HEAD` in both commands.
 - **Their tool.** `docs/harness-support.md` says which tools get `brain/`
   context added to prompts on their own. In the others the index still builds
   and is searched by hand, which is a weaker case for setting it up.
@@ -173,13 +177,26 @@ documents of your own and four months of history, so I would set it up now."
 Never present the three outcomes as a menu.
 
 - **Now:** follow `brain/README.md`. It installs two things (bun and QMD), so
-  ask first. Finish by running a real search and showing a hit from their own
-  docs. Then propose the daily refresh: say that it creates a scheduled job on
-  their computer that runs one command a day, and on a yes create it with their
-  operating system's scheduler as `brain/README.md` describes. Run
-  `bash brain/scripts/refresh.sh` by hand first, and show them the schedule
-  entry afterwards. If they say no to the schedule, tell them session start will
-  say when the index is a week old.
+  ask first. Finish by running a real search and showing a hit: from their own
+  docs when they have some, otherwise from the methodology docs the template
+  shipped, and say which it was.
+
+  Then propose the daily refresh. Say what it is: a scheduled job on their
+  computer that runs one command a day. On a yes, run the lines under
+  **Keeping it current** in `brain/README.md` for their operating system, as
+  written and in order. Do not improvise a different schedule line: the ones
+  there carry the `PATH` a scheduler does not have, and a line without it
+  works by hand and fails on its first scheduled run.
+  1. `bash brain/scripts/refresh.sh` by hand, ending `brain refresh: done.`
+  2. The run that proves the scheduler's own environment works: step 1 of the
+     cron lines, or the started task on Windows. It counts only when
+     `brain/log.md` gained a new `refresh - ok` line from that run.
+  3. Read the entry back and show it to them.
+
+  Report the schedule as working only after step 2. If it fails, say so, show
+  what it printed, and ask whether to leave the job or remove it. If they say
+  no to the schedule, tell them session start will say when the index is a
+  week old, in the tools that run that hook.
 - **Later:** write the trigger into `docs/decision-log.md` in their words. A
   "later" with no trigger is a "never".
 - **Delete:** only on their say-so, like every other deletion.
@@ -188,10 +205,14 @@ Never present the three outcomes as a menu.
 
 Run `bash bin/check-repo-settings.sh`. It only reads.
 
-- **Exit 2 means it could not tell.** Say why in their terms (the GitHub tool
-  is not installed or not signed in, the project has no GitHub remote yet, they
-  do not administer the repository) and record the step as not checked. Never
-  report it as fine, and do not treat it as a reason to stop setup.
+- **Exit 2 means it could not tell.** With no table printed, nothing was
+  read: say why in their terms (the GitHub tool is not installed or not signed
+  in, the project has no GitHub remote yet, they do not administer the
+  repository) and record the step as not checked. With a table and an
+  `UNKNOWN` line in it, only that setting could not be read: handle the other
+  lines as usual and report that one as not checked, with the reason its line
+  gives. Never report an unread setting as fine, and do not treat exit 2 as a
+  reason to stop setup.
 - **For each `OFF` line:** one sentence on what it protects against, your
   recommendation, then ask. On a yes, run the one command the script printed
   for that setting, or give them the settings page when that is what it
@@ -202,10 +223,16 @@ Run `bash bin/check-repo-settings.sh`. It only reads.
 - **`SKIP`** is a plan or visibility limit. Say so and move on. Do not suggest
   buying a plan.
 
-Then open `.github/dependabot.yml` and add an entry for each package manager
-the project uses. Read the repo to find out (`package.json`, `pyproject.toml`,
-`pubspec.yaml`, `Cargo.toml`, `go.mod`, `Gemfile`). If there is none yet, say
-that the entry gets added when the first one appears, and leave the file alone.
+Then `.github/dependabot.yml`. The script's `dependabot-config` line names
+what the file watches today. Read the repo for the package managers it uses
+(`package.json`, `pyproject.toml`, `pubspec.yaml`, `Cargo.toml`, `go.mod`,
+`Gemfile`), and for each one the file does not watch, propose the entry and
+say what it brings: a pull request, at most weekly, when one of those packages
+has a newer release. Add it on a yes. If the project has no package manager
+yet, say that the entry gets added when the first one appears, and leave the
+file alone. Say once what the shipped entry does, since they did not choose
+it: the same weekly pull request for the GitHub Actions in the template's own
+workflow, which they can keep or delete with the file.
 
 ## Finish by proving it works
 
@@ -219,9 +246,10 @@ credentials for this check. Report missing activation or a failed block and fix
 it before claiming that protection works. For an adapter without edit hooks,
 report that limitation and verify the Git gate separately.
 
-`SETUP.md` step 2 already had them write the first `docs/decision-log.md` entry.
-Do not write a second one here - check that it exists, and if it got skipped,
-that is the moment to catch it rather than to duplicate it.
+`SETUP.md` step 2 had them write the first `docs/decision-log.md` entry, and
+steps 6 and 7 may have added the "later" ones. Check that the first entry is
+there, and write it now if it was skipped. Do not write an entry that
+repeats one already in the file.
 
 ## Last
 

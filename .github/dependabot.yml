@@ -5,12 +5,19 @@
 # (actions/checkout and friends). Those are pinned by major version and go stale
 # like any other dependency, and nothing else in here would tell you.
 #
+# WHAT KEEPING THIS FILE DOES. In every copy of the template it turns on that
+# weekly pull request for the actions in .github/workflows/. Each one edits
+# hooks-ci.yml, a file the template also updates, so a later /trellis-sync
+# shows that file as changed on both sides and asks which version to keep.
+# Delete this file if you want neither.
+#
 # ADD YOUR OWN ECOSYSTEM. This file knows nothing about your app's packages
-# until you add an entry for them. The setup skill does this for you; by hand,
-# copy the block below and change `package-ecosystem` to what your project uses
-# ("npm", "pip", "pub", "cargo", "gomod", "bundler", "gradle", ...) and
+# until you add an entry for them. The setup skill proposes it; by hand, copy
+# the block below and change `package-ecosystem` to what your project uses
+# ("npm", "pip", "pub", "cargo", "gomod", "bundler", "gradle", ...),
 # `directory` to the folder that holds its manifest (package.json,
-# pyproject.toml, pubspec.yaml, ...).
+# pyproject.toml, pubspec.yaml, ...), and the group's name (the
+# `github-actions:` line under `groups:`) to match.
 #
 # This file is the half that lives in git. The other half is a repository
 # setting: Dependabot alerts and security updates are switched on in GitHub, not

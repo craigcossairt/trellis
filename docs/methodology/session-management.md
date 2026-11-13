@@ -29,8 +29,8 @@ carries the summary version.
 - **Measure what loads before your first prompt.** Rule files, memory, every installed skill's
   description and every connected tool's definition are in the window before you type anything,
   in every session. Most tools can show the breakdown (Claude Code: `/context`). Look once after
-  setup and again whenever you install a pack: it is common to find a third of the useful window
-  spent before work starts, most of it on things this project never uses. Turn off the plugins
+  setup and again whenever you install a pack. What it shows is spent before work starts, in
+  every session, and whatever serves things this project never uses is waste. Turn off the plugins
   and MCP servers a project does not need in that project's own settings rather than globally,
   so your other projects keep them.
 

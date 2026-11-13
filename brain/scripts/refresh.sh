@@ -8,7 +8,10 @@
 # code, rather than two commands whose first failure the second one hides.
 #
 # It refreshes; it does not set up. First-time setup (installing QMD, adding the
-# collection) is in brain/README.md, and until that has run this exits 2.
+# collection) is in brain/README.md. Until the first ingest has run this exits
+# 2. What it cannot see is a setup that stopped halfway, ingested but never
+# indexed: the index step then answers for itself, and what QMD says when it
+# has no collection was not established here.
 #
 # A SCHEDULED JOB FAILS WHERE NOBODY IS LOOKING. So a failed run leaves
 # brain/.refresh-failed behind, saying which step failed and when, and the
@@ -32,9 +35,14 @@ if [ ! -f "$BRAIN/.last-ingest" ]; then
 fi
 
 fail() { # $1 step, $2 exit code
-  local now
+  local now hint=""
   now="$(date '+%Y-%m-%d %H:%M')"
-  printf '%s - the %s step failed (exit %s). Run: bash brain/scripts/refresh.sh\n' "$now" "$1" "$2" > "$FAILED"
+  # 127 is the shell's "command not found". On a schedule that is nearly always
+  # PATH: a scheduler starts with a short one, and the same line then works
+  # when run by hand, which is the most confusing way for this to fail. The
+  # whole line stays under the 200 characters the session-start hook prints.
+  [ "$2" = 127 ] && hint=" A program was not found; on a schedule that is usually PATH (see brain/README.md)."
+  printf '%s - the %s step failed (exit %s).%s Run: bash brain/scripts/refresh.sh\n' "$now" "$1" "$2" "$hint" > "$FAILED"
   printf -- '- %s - refresh - FAILED at the %s step (exit %s)\n' "$now" "$1" "$2" >> "$BRAIN/log.md"
   echo "brain refresh: the $1 step failed (exit $2). The index was left as it was. Marker written to brain/.refresh-failed." >&2
   exit 1

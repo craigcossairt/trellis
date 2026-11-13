@@ -17,25 +17,32 @@
 #   check                              what it is
 #   dependabot-alerts                  tells you when a dependency has a known hole
 #   dependabot-security-updates        opens the pull request that fixes it
+#                                      (enabled but paused is reported OFF)
 #   secret-scanning                    finds keys that were committed
 #   push-protection                    refuses the push that contains a key
-#   default-branch-protection          nobody can force-push to or delete the
-#                                      default branch. Classic protection and
-#                                      rulesets are both read, and they add up.
-#                                      A protection that allows force pushes, or
-#                                      a ruleset that only asks for a review, is
-#                                      reported OFF: it stops neither.
+#   default-branch-protection          no rule lets anyone force-push to or
+#                                      delete the default branch. Classic
+#                                      protection and rulesets are both read,
+#                                      and they add up. A protection that
+#                                      allows force pushes, a ruleset that only
+#                                      asks for a review, and a ruleset with
+#                                      somebody on its bypass list are reported
+#                                      OFF: none of them stops everyone.
 #   delete-branch-on-merge             merged branches are removed for you
 #   workflow-token-read-only           CI's built-in token cannot write by default
 #   private-vulnerability-reporting    a private way to report a security bug
 #                                      (public repositories only)
-#   dependabot-config                  .github/dependabot.yml exists, so version
-#                                      updates are configured (a local file check)
+#   dependabot-config                  .github/dependabot.yml has at least one
+#                                      entry, and the ON line names what it
+#                                      watches (a local file check)
 #
 # States: ON, OFF, SKIP (does not apply, or your GitHub plan does not offer it),
 # UNKNOWN (could not be read). A refusal counts as SKIP only when GitHub says
 # the plan is the reason; any other refusal is a token that may not look, and
-# what it may not see is UNKNOWN.
+# what it may not see is UNKNOWN. One SKIP is read from an absence instead:
+# secret scanning on a private repository, where GitHub leaves the fields out
+# for a plan without it and says nothing. That is only reached after the admin
+# check below, which is the other reason those fields go missing.
 #
 # Exit: 0 nothing is off / 1 at least one setting is OFF / 2 could not tell.
 # 2 never means clean, and it wins over 1: a report with a hole in it is not a
@@ -48,7 +55,8 @@
 #
 # With no arguments it checks the repository this checkout pushes to. --repo
 # names another one; the local file check is then skipped unless --root says
-# where that repository's checkout is.
+# where that repository's checkout is. --root alone checks the repository
+# that checkout pushes to, wherever the script was started from.
 #
 # --porcelain prints `check<TAB>state<TAB>note`, one line per check.
 # Needs the GitHub CLI (`gh`), signed in.
@@ -103,7 +111,9 @@ if [ "$LOCAL" -eq 1 ] && [ ! -d "$ROOT" ]; then
 fi
 
 if [ -z "$REPO" ]; then
-  REPO="$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null)" || REPO=""
+  # From inside the checkout, so --root reads the settings and the file of the
+  # same repository. (ROOT is always set here: by --root, or by git above.)
+  REPO="$(cd "$ROOT" 2>/dev/null && gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null)" || REPO=""
   if [ -z "$REPO" ]; then
     echo "check-repo-settings: could not work out which GitHub repository this is (no GitHub remote, or gh is not signed in: try 'gh auth status') - nothing was checked." >&2
     exit 2
@@ -122,10 +132,12 @@ API_OUT=""; API_CODE=0
 api() {
   local path="$1" jq="${2:-}" err rc=0
   err="$(mktemp 2>/dev/null || mktemp -t reposet)"
+  # stdin from /dev/null: one caller sits inside a `while read` loop, and gh
+  # must not be handed the lines that loop is reading.
   if [ -n "$jq" ]; then
-    API_OUT="$(gh api "$path" --jq "$jq" 2>"$err")" || rc=$?
+    API_OUT="$(gh api "$path" --jq "$jq" 2>"$err" </dev/null)" || rc=$?
   else
-    API_OUT="$(gh api "$path" 2>"$err")" || rc=$?
+    API_OUT="$(gh api "$path" 2>"$err" </dev/null)" || rc=$?
   fi
   if [ "$rc" -eq 0 ]; then
     API_CODE=200
@@ -165,6 +177,16 @@ if [ "$ADMIN" != true ]; then
   exit 2
 fi
 
+# The branch name goes into two API paths as it stands. GitHub allows
+# characters in a branch name that change what a URL means (`#`, `?`, `%`), so
+# a name outside the plain set is never sent: asking about another path and
+# reporting its answer would be worse than not asking.
+BRANCH_OK=1
+case "$BRANCH" in *[!A-Za-z0-9._/-]*) BRANCH_OK=0 ;; esac
+branch_api() { # as api, or no call at all when the name cannot be sent
+  if [ "$BRANCH_OK" -eq 1 ]; then api "$@"; else API_OUT=""; API_CODE=0; fi
+}
+
 onoff() { # $1 check, $2 value, $3 on-value, $4 off-value, $5 fix
   if [ "$2" = "$3" ]; then record "$1" ON ""
   elif [ "$2" = "$4" ]; then record "$1" OFF "$5"
@@ -189,11 +211,18 @@ esac
 # --- dependabot security updates ----------------------------------------------
 # From its own endpoint, not from the repository's security block: GitHub
 # leaves that whole block out for a private repository on a plan without
-# secret scanning, and this setting does not depend on that plan.
-api "repos/$REPO/automated-security-fixes" '.enabled'
+# secret scanning, and this setting does not depend on that plan. Two fields,
+# because a paused setting still answers enabled:true and opens nothing.
+# GitHub pauses it by itself when a Dependabot pull request has been open for
+# 90 days with nobody acting on one, and resumes it when somebody does.
+api "repos/$REPO/automated-security-fixes" '[.enabled, .paused] | map(if . == null then "none" else tostring end) | join("|")'
 if [ "$API_CODE" = 200 ]; then
-  onoff dependabot-security-updates "$API_OUT" true false \
-    "gh api -X PUT repos/$REPO/automated-security-fixes"
+  case "$API_OUT" in
+    'true|false') record dependabot-security-updates ON "" ;;
+    'true|true')  record dependabot-security-updates OFF "merge or close one of Dependabot's open pull requests and GitHub resumes them (they are enabled but paused: GitHub pauses them when its pull requests sit untouched for 90 days)" ;;
+    'false|'*)    record dependabot-security-updates OFF "gh api -X PUT repos/$REPO/automated-security-fixes" ;;
+    *)            record dependabot-security-updates UNKNOWN "GitHub returned '${API_OUT:-nothing}'" ;;
+  esac
 else
   record dependabot-security-updates UNKNOWN "${API_OUT:-no response}"
 fi
@@ -218,82 +247,159 @@ fi
 # they add up - one may stop force pushes while the other stops deletion.
 # Asking only one reports a protected branch as bare. Counting either as
 # "protected" because it exists reports a bare branch as protected: a classic
-# protection can allow force pushes, and a ruleset can hold nothing but a
-# review rule.
+# protection can allow force pushes, a ruleset can hold nothing but a review
+# rule, and a ruleset can name people who may bypass it.
 #
 # Each route ends up read, absent, plan (GitHub says the plan does not offer
 # it) or unreadable, and only affirmative evidence moves it off unreadable:
-#   classic  200 with both fields -> read
+#   classic  200 with both allow fields -> read
 #            404 "Branch not protected" -> absent
-#   rules    200 with a list -> read (an empty list is a read, not an absence)
+#   rules    200 with a list of rules, every page of it -> read (an empty
+#            list is a read, not an absence)
 #   either   403 on a private repository whose message names the plan -> plan
 # A 403 that does not name the plan is a token that may not look. The
 # protection may be there, so that is unreadable, never a SKIP.
+#
+# What is not read: an organisation's custom roles. GitHub says a role with
+# the "bypass branch protections" permission is exempt from a classic
+# protection's restrictions, and this script cannot see who holds one.
 plan_refusal() { # $1 status, $2 gh's message
   [ "$PRIVATE" = true ] && [ "$1" = 403 ] || return 1
   case "$2" in *"Upgrade to GitHub"*) return 0 ;; esac
   return 1
 }
-# pair <text> -> PAIR_A, PAIR_B when the text is exactly `a|b`, both non-empty.
-PAIR_A=""; PAIR_B=""
-pair() {
-  PAIR_A=""; PAIR_B=""
-  case "$1" in *'|'*'|'*|'|'*|*'|'|'') return 1 ;; *'|'*) ;; *) return 1 ;; esac
-  PAIR_A="${1%%|*}"; PAIR_B="${1#*|}"
-}
 
-# Classic: are force pushes / deletions ALLOWED? (true means open.)
-C_STATE=unreadable; C_FORCE=""; C_DELETE=""
-api "repos/$REPO/branches/$BRANCH/protection" '[.allow_force_pushes.enabled, .allow_deletions.enabled] | map(if . == null then "none" else tostring end) | join("|")'
+# Classic. allow_force_pushes and allow_deletions say whether each is ALLOWED
+# (true means open). GitHub's settings page lists both under "Rules applied to
+# everyone including administrators", so they count as they stand. lock_branch
+# makes the branch read-only and undeletable, but it sits with the settings an
+# administrator bypasses unless enforce_admins ("Do not allow bypassing the
+# above settings") is on, so a lock counts only with it. A lock or enforce
+# field that is absent counts as false: either can only add protection.
+C_STATE=unreadable; C_FORCE=""; C_DELETE=""; C_LOCK=""; C_ENFORCE=""; C_EXTRA=""
+branch_api "repos/$REPO/branches/$BRANCH/protection" '[.allow_force_pushes.enabled, .allow_deletions.enabled, .lock_branch.enabled, .enforce_admins.enabled] | map(if . == null then "none" else tostring end) | join("|")'
 case "$API_CODE" in
   200)
-    if pair "$API_OUT"; then
-      case "$PAIR_A/$PAIR_B" in
-        true/true|true/false|false/true|false/false)
-          C_STATE="read"; C_FORCE="$PAIR_A"; C_DELETE="$PAIR_B" ;;
-      esac
-    fi ;;
+    IFS='|' read -r C_FORCE C_DELETE C_LOCK C_ENFORCE C_EXTRA <<FIELDS
+$API_OUT
+FIELDS
+    case "$C_FORCE/$C_DELETE" in
+      true/true|true/false|false/true|false/false)
+        [ -n "$C_ENFORCE" ] && [ -z "$C_EXTRA" ] && C_STATE="read" ;;
+    esac ;;
   404) case "$API_OUT" in *"Branch not protected"*) C_STATE=absent ;; esac ;;
   403) plan_refusal "$API_CODE" "$API_OUT" && C_STATE=plan ;;
 esac
 
-# Rules: how many active rules of each blocking type apply to the branch?
-R_STATE=unreadable; R_FORCE=0; R_DELETE=0
-api "repos/$REPO/rules/branches/$BRANCH" 'if type == "array" then [(map(select(.type == "non_fast_forward")) | length), (map(select(.type == "deletion")) | length)] | map(tostring) | join("|") else error("not a list") end'
-case "$API_CODE" in
-  200)
-    if pair "$API_OUT"; then
-      case "$PAIR_A$PAIR_B" in
-        *[!0-9]*) ;;
-        *) R_STATE="read"; R_FORCE="$PAIR_A"; R_DELETE="$PAIR_B" ;;
-      esac
-    fi ;;
-  403) plan_refusal "$API_CODE" "$API_OUT" && R_STATE=plan ;;
-esac
+# Rules: the active rules that apply to the branch, every page of them. Each
+# page comes back as a count of its entries, then one `type ruleset-id` line
+# per blocking rule. An entry that is not a rule, or a blocking rule that does
+# not say which ruleset it is from, fails the read: an answer this script does
+# not understand is not an answer with no blocking rule in it. GitHub sends 30
+# entries a page unless asked, and a first page with no blocking rule says
+# nothing about the next one. Ten pages of a hundred is the cap, so a server
+# that never sends a short page cannot keep this running.
+R_STATE=unreadable; R_RULES=""
+# shellcheck disable=SC2016  # $r is jq's variable, not the shell's
+RULES_JQ='if type == "array" then (map(if type == "object" and (.type | type) == "string" then . else error("an entry that is not a rule") end)) as $r | [($r | length | tostring)] + [$r[] | select(.type == "non_fast_forward" or .type == "deletion") | if (.ruleset_id | type) == "number" then "\(.type) \(.ruleset_id)" else error("a rule with no ruleset") end] | join("\n") else error("not a list") end'
+page=1
+while [ "$page" -le 10 ]; do
+  branch_api "repos/$REPO/rules/branches/$BRANCH?per_page=100&page=$page" "$RULES_JQ"
+  if [ "$API_CODE" != 200 ]; then
+    [ "$page" -eq 1 ] && plan_refusal "$API_CODE" "$API_OUT" && R_STATE=plan
+    break
+  fi
+  count="$(printf '%s\n' "$API_OUT" | head -n 1)"
+  case "$count" in ''|*[!0-9]*) break ;; esac
+  R_RULES="$R_RULES$(printf '%s\n' "$API_OUT" | tail -n +2)
+"
+  if [ "$count" -lt 100 ]; then R_STATE="read"; break; fi
+  page=$((page + 1))
+done
 
-FORCE_BLOCKED=0; DELETE_BLOCKED=0
+# A ruleset can name people, teams, roles or apps that may bypass it, and a
+# rule they can walk past does not stop everyone. So each ruleset holding a
+# blocking rule is read once, and its rules count only when the bypass list is
+# there and nobody on it can push past the rules. `pull_request` is the one
+# bypass that does not matter here: GitHub says such an actor can bypass rules
+# only on pull requests, which is neither a force-push nor a deletion. Any
+# other mode, or none given, counts as a way through.
+# GitHub leaves the list out for someone who may not edit the ruleset (one set
+# above the repository, for example). Absent is not empty: that is unread.
+# bypass_for <ruleset id> -> BYPASS: none, some or unread.
+BYPASS=""; RS_SEEN=""
+bypass_for() {
+  local id="$1" v
+  case "$RS_SEEN " in
+    *" $id="*) v="${RS_SEEN#* "$id"=}"; BYPASS="${v%% *}"; return ;;
+  esac
+  BYPASS=unread
+  api "repos/$REPO/rulesets/$id" 'if (.bypass_actors | type) == "array" then [.bypass_actors[] | select(.bypass_mode != "pull_request")] | length | tostring else error("no bypass list") end'
+  if [ "$API_CODE" = 200 ]; then
+    case "$API_OUT" in
+      0) BYPASS=none ;;
+      ''|*[!0-9]*) ;;
+      *) BYPASS=some ;;
+    esac
+  fi
+  RS_SEEN="$RS_SEEN $id=$BYPASS"
+}
+add_id() { # $1 list, $2 id -> ADDED: the list with the id in it once
+  case " $1 " in *" $2 "*) ADDED="$1" ;; *) ADDED="${1:+$1 }$2" ;; esac
+}
+R_FORCE=0; R_DELETE=0; R_BYPASSED=""; R_UNREAD=""; ADDED=""
+if [ "$R_STATE" = read ]; then
+  while read -r rtype rid; do
+    [ -n "$rtype" ] || continue
+    case "$rid" in ''|*[!0-9]*) R_STATE=unreadable; break ;; esac
+    bypass_for "$rid"
+    case "$BYPASS" in
+      none) case "$rtype" in non_fast_forward) R_FORCE=1 ;; deletion) R_DELETE=1 ;; esac ;;
+      some) add_id "$R_BYPASSED" "$rid"; R_BYPASSED="$ADDED" ;;
+      *)    add_id "$R_UNREAD" "$rid"; R_UNREAD="$ADDED" ;;
+    esac
+  done <<RULES
+$R_RULES
+RULES
+fi
+
+FORCE_BLOCKED=0; DELETE_BLOCKED=0; C_LOCKED=0
 if [ "$C_STATE" = read ]; then
-  [ "$C_FORCE" = false ] && FORCE_BLOCKED=1
-  [ "$C_DELETE" = false ] && DELETE_BLOCKED=1
+  [ "$C_LOCK" = true ] && [ "$C_ENFORCE" = true ] && C_LOCKED=1
+  { [ "$C_FORCE" = false ] || [ "$C_LOCKED" -eq 1 ]; } && FORCE_BLOCKED=1
+  { [ "$C_DELETE" = false ] || [ "$C_LOCKED" -eq 1 ]; } && DELETE_BLOCKED=1
 fi
 if [ "$R_STATE" = read ]; then
-  [ "$R_FORCE" -gt 0 ] && FORCE_BLOCKED=1
-  [ "$R_DELETE" -gt 0 ] && DELETE_BLOCKED=1
+  [ "$R_FORCE" -eq 1 ] && FORCE_BLOCKED=1
+  [ "$R_DELETE" -eq 1 ] && DELETE_BLOCKED=1
 fi
 OPEN=""
 [ "$FORCE_BLOCKED" -eq 1 ] || OPEN="force pushes are allowed"
 [ "$DELETE_BLOCKED" -eq 1 ] || OPEN="${OPEN:+$OPEN, }deletion is allowed"
-PROTECT_FIX="open https://github.com/$REPO/settings/rules and add a ruleset for the default branch that blocks force pushes and deletion"
+# Why a protection that is there did not count, for the OFF line.
+WHY=""
+[ -z "$R_BYPASSED" ] || WHY="; ruleset $R_BYPASSED would block this but has a bypass list, and whoever is on it can still do it"
+if [ "$C_STATE" = read ] && [ "$C_LOCK" = true ] && [ "$C_LOCKED" -eq 0 ]; then
+  WHY="$WHY; the branch is locked, but administrators can bypass the lock"
+fi
+PROTECT_FIX="open https://github.com/$REPO/settings/rules and add a ruleset for the default branch that blocks force pushes and deletion, with its enforcement set to Active and nobody on its bypass list"
 if [ -z "$OPEN" ]; then
   # Both blocked by what could be read. An unreadable route cannot undo that.
   record default-branch-protection ON ""
 elif [ "$C_STATE" = unreadable ] || [ "$R_STATE" = unreadable ]; then
   # The route that could not be read may be the one doing the blocking.
-  record default-branch-protection UNKNOWN "could not read the branch rules for '$BRANCH'"
+  if [ "$BRANCH_OK" -eq 1 ]; then
+    record default-branch-protection UNKNOWN "could not read the branch rules for '$BRANCH'"
+  else
+    record default-branch-protection UNKNOWN "the branch name '$BRANCH' has a character this script will not put in a URL - look at https://github.com/$REPO/settings/branches yourself"
+  fi
+elif [ -n "$R_UNREAD" ]; then
+  # A blocking rule is there, and whether anyone may walk past it is not known.
+  record default-branch-protection UNKNOWN "could not read the bypass list of ruleset $R_UNREAD, so its rules may not bind everyone - look at https://github.com/$REPO/settings/rules yourself"
 elif [ "$C_STATE" = plan ] && [ "$R_STATE" = plan ]; then
   record default-branch-protection SKIP "your GitHub plan does not offer branch protection on a private repository"
 else
-  record default-branch-protection OFF "$PROTECT_FIX (now: $OPEN)"
+  record default-branch-protection OFF "$PROTECT_FIX (now: $OPEN$WHY)"
 fi
 
 onoff delete-branch-on-merge "$DELETE_ON_MERGE" true false \
@@ -325,7 +431,18 @@ fi
 if [ "$LOCAL" -eq 0 ]; then
   record dependabot-config SKIP "a file check: run this from that repository's checkout, or pass --root"
 elif [ -f "$ROOT/.github/dependabot.yml" ] || [ -f "$ROOT/.github/dependabot.yaml" ]; then
-  record dependabot-config ON ""
+  # The file being there does not mean it watches anything, and the template
+  # ships one that watches only its own CI's actions. So ON names what is
+  # watched, and a file with no entry is OFF. Comment lines do not count.
+  DEP_FILE="$ROOT/.github/dependabot.yml"
+  [ -f "$DEP_FILE" ] || DEP_FILE="$ROOT/.github/dependabot.yaml"
+  WATCHES="$(sed -n 's/^[[:space:]]*-\{0,1\}[[:space:]]*package-ecosystem:[[:space:]]*//p' "$DEP_FILE" \
+    | tr -d "\"'\r" | sed 's/[[:space:]]*#.*$//; s/[[:space:]]*$//' | tr '\n' ' ' | sed 's/ *$//')"
+  if [ -n "$WATCHES" ]; then
+    record dependabot-config ON "watches: $WATCHES"
+  else
+    record dependabot-config OFF "$DEP_FILE has no package-ecosystem entry, so it watches nothing - add one (the comments in the template's file show how)"
+  fi
 else
   record dependabot-config OFF "add .github/dependabot.yml (the template ships one; see SETUP.md)"
 fi
@@ -340,7 +457,8 @@ while IFS="$TAB" read -r name st note; do
   esac
   [ "$PORCELAIN" -eq 1 ] && continue
   case "$st" in
-    ON)      printf '  on       %s\n' "$name" ;;
+    ON)      if [ -n "$note" ]; then printf '  on       %s - %s\n' "$name" "$note"
+             else printf '  on       %s\n' "$name"; fi ;;
     SKIP)    printf '  skipped  %s - %s\n' "$name" "$note" ;;
     UNKNOWN) printf '  UNKNOWN  %s - %s\n' "$name" "$note" ;;
     OFF)     printf '  OFF      %s\n             to turn on: %s\n' "$name" "$note" ;;

@@ -267,6 +267,11 @@ run "$D"
 c_has "ingested years ago: says the brain is stale" '## Project brain is stale'
 c_has "stale: shows the recorded ingest date" 'Last ingest: 2020-01-01T00:00:00Z'
 c_has "stale: names the refresh command" 'bash brain/scripts/refresh\.sh'
+# This text lands in the agent's context at the top of every stale session. An
+# imperative there ("schedule that line") reads as an instruction, and creating
+# a scheduled job on someone's computer is theirs to say yes to.
+c_has "stale: tells the agent to ask before scheduling anything" 'Do not create a scheduled job without asking'
+c_hasnot "stale: no bare instruction to schedule it" 'Schedule that line'
 c_rc  "stale: still exits 0" 0
 c_has "stale: the block still closes" '=== END SESSION CONTEXT ==='
 
@@ -278,6 +283,26 @@ run_env "$D" PROJECT_BRAIN_STALE_DAYS=soon
 c_has "a threshold that is not a number falls back to the default" '## Project brain is stale'
 run_env "$D" PROJECT_BRAIN_DISABLE=1
 c_hasnot "the brain's kill switch silences the section" 'Project brain'
+# 08 and 09 are not octal numbers. Read as one, the threshold is an arithmetic
+# error and the staleness line is lost with nothing on screen to say why.
+run_env "$D" PROJECT_BRAIN_STALE_DAYS=08
+c_has "a threshold written 08 is eight days, and the line still prints" '08? or more days ago|8 or more days ago'
+c_hasnot "a threshold written 08 is not an arithmetic error" 'too great for base'
+
+# Both sides of the threshold, an hour or two out. The two ages every other
+# case uses (now, and 2020) are both far from it, so an off-by-one-day in the
+# comparison passed them all.
+hours_ago() { # $1 hours -> a `touch -t` stamp that far back (GNU date, then BSD)
+  date -d "$1 hours ago" '+%Y%m%d%H%M' 2>/dev/null || date -v "-${1}H" '+%Y%m%d%H%M'
+}
+D="$(brain_repo edge)"; needdir "$D"
+echo "2026-01-01T00:00:00Z" > "$D/brain/.last-ingest"
+must touch -t "$(hours_ago 166)" "$D/brain/.last-ingest"
+run "$D"
+c_hasnot "ingested 6 days 22 hours ago: not stale yet" 'Project brain'
+must touch -t "$(hours_ago 170)" "$D/brain/.last-ingest"
+run "$D"
+c_has "ingested 7 days 2 hours ago: stale" '## Project brain is stale'
 
 D="$(brain_repo failed)"; needdir "$D"
 echo "2026-01-01T00:00:00Z" > "$D/brain/.last-ingest"
@@ -289,6 +314,21 @@ c_has "failure marker: says the refresh FAILED" '## Project brain: the last refr
 c_has "failure marker: prints its first line" 'the ingest step failed'
 c_hasnot "failure marker: prints only the first line" 'second line'
 c_has "failure marker: the block still closes" '=== END SESSION CONTEXT ==='
+
+# The marker's text goes straight into the session's context, so it is cut to
+# printable characters and to 200 of them. A terminal escape or a megabyte of
+# output in that file is otherwise the first thing every session reads.
+D="$(brain_repo dirty)"; needdir "$D"
+echo "2026-01-01T00:00:00Z" > "$D/brain/.last-ingest"
+printf '2026-03-01 09:00 - bad \033[31mred\033[0m %s\n' "$(printf 'x%.0s' 1 2 3 4 5 6 7 8 9 10)$(head -c 300 /dev/zero | tr '\0' 'y')" > "$D/brain/.refresh-failed"
+run "$D"
+case "$OUT" in
+  *"$(printf '\033')"*) bad "failure marker: escape characters are stripped" "$(printf '%s' "$OUT" | cat -v | grep bad)" ;;
+  *) ok "failure marker: escape characters are stripped" ;;
+esac
+MLINE="$(printf '%s\n' "$OUT" | grep '2026-03-01 09:00 - bad')"
+if [ "${#MLINE}" -ge 150 ] && [ "${#MLINE}" -le 200 ]; then ok "failure marker: a long line is cut at 200 characters"
+else bad "failure marker: a long line is cut at 200 characters" "length ${#MLINE}"; fi
 
 # A marker left behind in a tree whose brain was never set up means nothing:
 # refresh.sh cannot have written it there.
