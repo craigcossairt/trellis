@@ -1175,7 +1175,7 @@ jobs:
           # are all under test. gh's own jq is not jq: the suite's header says
           # what that leaves unproven. The shapes were read from real
           # responses on 2026-11-13, except a bypass list with somebody on it,
-          # which is from GitHub's API reference. Needs jq and git. 158 cases.
+          # which is from GitHub's API reference. Needs jq and git. 228 cases.
           #
           # Which repository: the one the checkout pushes to, read from its
           # `origin` remote by git. gh is not asked, because in a checkout
@@ -1183,6 +1183,14 @@ jobs:
           # with gh 2.89.0), and the fake answers the same way. Only a
           # github.com address is taken, the address is never printed, and
           # the name GitHub gives back is the one used from then on.
+          #
+          # Which server: github.com, unless GH_HOST names another, which only
+          # --repo allows. With GH_HOST unset and one saved login that is not
+          # github.com, gh sends a request to that login's server (seen with
+          # gh 2.89.0), so the script sets GH_HOST for its own calls and the
+          # fake records what each call was given. The server's name also goes
+          # into each printed fix, so a GH_HOST that is not shaped like a host
+          # name is refused before anything is asked.
           #
           # What "protected" means here: no rule lets anyone force-push to the
           # default branch or delete it. Classic protection and rulesets are
@@ -1204,21 +1212,33 @@ jobs:
           # organisation's custom roles that carry a bypass permission, and a
           # ruleset's pull-request rule as a block on force pushes.
           #
-          # Security updates that are enabled but paused are OFF. The
-          # dependabot-config line reads the file as text: ON names the
-          # ecosystems it watches, and a file with no entry, or with an entry
-          # that lacks a directory or a schedule, is OFF. A branch name
-          # holding a character that changes what a URL means is never sent.
+          # Security updates that are enabled but paused are OFF. A branch
+          # name holding a character that changes what a URL means is never
+          # sent.
           #
-          # Mutation ledger, measured 2026-11-13, 104 mutants each in its own
+          # The dependabot-config line reads the file as text, with awk, which
+          # is not a YAML parser. So it says ON or OFF only for a file in the
+          # plain block layout, and UNKNOWN for anything it does not follow:
+          # the list or an entry on one line, a second document, a tab, an
+          # alias, a tag, a value over two lines, a merge beside a gap. OFF is
+          # a file with no `version: 2`, no entry, or an entry missing a key
+          # GitHub requires (an ecosystem, a directory, a schedule interval of
+          # its own or its group's), each with a value. ON names the
+          # ecosystems the file has entries for. Whether GitHub accepts a
+          # value is not checked: its lists change, and a copy of them here
+          # would go stale without failing.
+          #
+          # Mutation ledger, measured 2026-11-13, 154 mutants each in its own
           # copy beside an unmutated baseline (0 red), predicted -> observed
           # red. Measured on Linux (bash 5.3, GNU awk 5.3, jq 1.8.1, under
-          # WSL). The baseline and the first 15 rows were also measured under
-          # Git for Windows' bash, with the same counts, before that run was
-          # stopped for time: a suite takes a minute on Linux and ten there.
-          # The last row can only be measured on Linux. Git for Windows' awk
-          # drops a carriage return before the program sees the line, so
-          # removing the script's own line for it changes nothing there.
+          # WSL). The unmutated suite also passes there with mawk 1.3.4 as
+          # awk, and under Git for Windows' bash. The carriage-return row can
+          # only be measured on Linux: Git for Windows' awk drops a carriage
+          # return before the program sees the line, so removing the script's
+          # own line for it changes nothing there.
+          # Not every line of the reader has a row. Left out: the two tests
+          # that a key had no value of its own before the lines under it are
+          # read, and `...` as the end of a document.
           #
           #   alerts endpoint error read as ON                2 -> 2
           #   unreadable on/off field read as OFF             4 -> 4
@@ -1246,24 +1266,21 @@ jobs:
           #   an unreadable route undoes a proven ON          1 -> 1
           #   classic answer missing its fields accepted      1 -> 1
           #   plan refusal on one route read as SKIP          1 -> 1
-          #   a ruleset nobody can bypass blocks nothing      35 -> 35
+          #   a ruleset nobody can bypass blocks nothing      44 -> 44
           #   classic protection contributes nothing          5 -> 5
           #   plan refusal on both routes read as OFF         1 -> 1
           #   any alerts 404 read as off                      1 -> 1
           #   security updates endpoint error read as ON      1 -> 1
           #   a write spelled --method=PUT and -XPUT          1 -> 1
           #   a setting changed through gh repo edit          1 -> 1
-          #   --root: remote read from the starting folder    10 -> 10
+          #   --root: remote read from the starting folder    11 -> 11
           #   branch name sent whatever it holds              1 -> 1
           #   a slash in a branch name refused                1 -> 1
-          #   a dependabot file with no entry counts as ON    2 -> 2
-          #   comment lines read as part of the file          1 -> 1
+          #   a dependabot file with no entry counts as ON    3 -> 3
+          #   comment lines read as part of the file          4 -> 4
           #   what the file watches left out of the report    1 -> 1
-          #   what the file watches not recorded              6 -> 6
-          #   quotes kept around an ecosystem name            5 -> 5
           #   paused security updates read as ON              2 -> 2
           #   enabled, no word on paused, read as ON          1 -> 1
-          #   disabled security updates no longer OFF         2 -> 2
           #   the paused field is never read                  3 -> 3
           #   a branch lock is ignored                        1 -> 1
           #   a lock counts though admins can bypass it       2 -> 2
@@ -1298,7 +1315,7 @@ jobs:
           #   fetch address read, not the push address        1 -> 1
           #   any https host taken for github.com             5 -> 5
           #   a host that only ends in github.com taken       1 -> 1
-          #   an SSH alias taken for github.com               1 -> 1
+          #   an SSH alias taken for github.com               2 -> 2
           #   an ssh:// address on any host taken             1 -> 1
           #   the .git ending kept in the name                6 -> 6
           #   a trailing slash kept in the name               1 -> 1
@@ -1307,23 +1324,76 @@ jobs:
           #   the old name kept after a rename                1 -> 1
           #   the name GitHub gives back not checked          1 -> 1
           #   an answer naming no repository accepted         2 -> 2
-          #   gh asked which repository this is               140 -> 140
-          #   an entry with no schedule counts                7 -> 7
-          #   an entry with no directory counts               2 -> 2
-          #   an entry naming no ecosystem passed over        1 -> 1
+          #   gh asked which repository this is               205 -> 205
+          #   an entry with no directory counts               9 -> 9
           #   one entry's keys carry over to the next         2 -> 2
-          #   the end of the list never noticed               3 -> 3
-          #   the word interval counts anywhere on a line     1 -> 1
-          #   anchor no longer makes a gap UNKNOWN            1 -> 1
-          #   an anchor makes a complete file UNKNOWN         1 -> 1
           #   a file that could not be read reported OFF      1 -> 1
-          #   a group's schedule not honoured                 1 -> 1
-          #   a list of directories not accepted              2 -> 2
-          #   entries looked for two spaces in only           2 -> 2
-          #   ecosystem must be the entry's first key         2 -> 2
-          #   key after a flush-left list read as an entry    2 -> 2
-          #   trailing comment read as part of the name       1 -> 1
           #   a carriage return kept on the line              2 -> 2
+          #   what the file has entries for not recorded      8 -> 8
+          #   quotes kept around a value                      9 -> 9
+          #   disabled security updates no longer OFF         2 -> 2
+          #   GH_HOST set but not handed to gh                2 -> 2
+          #   server is github.com whatever GH_HOST says      4 -> 4
+          #   a printed fix does not name the server          3 -> 3
+          #   the settings address is always github.com       1 -> 1
+          #   GH_HOST used whatever it holds                  2 -> 2
+          #   a GH_HOST starting with a dash is used          1 -> 1
+          #   the --repo hint leaves --root out               1 -> 1
+          #   an entry with no schedule counts                16 -> 16
+          #   an entry naming no ecosystem passed over        1 -> 1
+          #   a file with no version line counts              3 -> 3
+          #   any version counts                              1 -> 1
+          #   a version in quotes read as the number          1 -> 1
+          #   ~ and null count as values                      5 -> 5
+          #   an empty pair of quotes counts as a value       1 -> 1
+          #   a key in quotes is not read                     2 -> 2
+          #   an anchor before a value not stepped over       1 -> 1
+          #   a comment after a value read as part of it      2 -> 2
+          #   a comment in a value's place read as one        1 -> 1
+          #   what follows a closing quote ignored            1 -> 1
+          #   a backslash inside quotes not noticed           1 -> 1
+          #   an alias read as a plain value                  1 -> 1
+          #   a tag read as a plain value                     1 -> 1
+          #   a one-line list or map read as plain            6 -> 6
+          #   an empty one-line directories list counts       1 -> 1
+          #   a list inside a one-line list not noticed       1 -> 1
+          #   a one-line directories list not read            1 -> 1
+          #   a block list of directories not read            3 -> 3
+          #   directories as one value passed over            1 -> 1
+          #   any key in a one-line schedule counts           1 -> 1
+          #   a one-line interval needs no value              1 -> 1
+          #   a one-line schedule not read                    3 -> 3
+          #   an interval beside the entry's keys counts      3 -> 3
+          #   an interval under another key counts            1 -> 1
+          #   an interval at any depth in schedule counts     1 -> 1
+          #   a value on two lines taken from its first       1 -> 1
+          #   entries flush with updates: not read            2 -> 2
+          #   a list at its key's depth read as keys          3 -> 3
+          #   a key between dash and keys read as a key       1 -> 1
+          #   keys after the dash's line passed over          1 -> 1
+          #   a stray line under updates: passed over         1 -> 1
+          #   a tab in the indentation not named              1 -> 1
+          #   a second document read as part of the first     1 -> 1
+          #   a file opening with --- not read                1 -> 1
+          #   a second updates: read on                       1 -> 1
+          #   a one-line updates list read as empty           2 -> 2
+          #   updates: [] not followed                        1 -> 1
+          #   a file indented as a whole read as empty        1 -> 1
+          #   an entry's group not looked at                  7 -> 7
+          #   a group with no schedule covers its entries     5 -> 5
+          #   one group not told from the next                1 -> 1
+          #   a group's one-line schedule not read            1 -> 1
+          #   an interval at any depth in a group counts      1 -> 1
+          #   a groups block of unnamed groups passed over    1 -> 1
+          #   groups on one line passed over                  1 -> 1
+          #   a second groups block read on                   1 -> 1
+          #   a merge at the top of the file not noticed      1 -> 1
+          #   a merge in an entry not noticed                 1 -> 1
+          #   a merge in a schedule not noticed               1 -> 1
+          #   a merge no longer makes a gap UNKNOWN           3 -> 3
+          #   a merge makes a complete file UNKNOWN           1 -> 1
+          #   a merge beside no entry read as OFF             1 -> 1
+          #   what was not followed left out of verdict       31 -> 31
           bash bin/tests/test-check-repo-settings.sh
 
       - name: Suite - brain refresh (optional project memory)
@@ -1334,19 +1404,37 @@ jobs:
           # accident, must not index a corpus the ingest refused, and must
           # leave brain/.refresh-failed behind on either failure, because that
           # marker is all the session-start hook has to report. Hermetic: a
-          # temp copy of brain/ and a fake indexer. 22 cases.
+          # temp copy of brain/ and a fake indexer. 48 cases.
           #
           # Exit 127 ("command not found") gets a hint in the marker, because
           # on a schedule it is nearly always PATH and the same command then
           # works by hand. The hint must fit the 200 characters the
           # session-start hook prints, and must not show up on other failures.
           #
-          # Mutation ledger, measured 2026-11-13, each mutant in its own copy
-          # beside an unmutated baseline (0 red), predicted -> observed red:
+          # install-cron.sh puts that line in a crontab (macOS and Linux).
+          # Installing a crontab replaces the whole table, so every way it can
+          # go wrong ends with somebody else's jobs gone. It runs the job once
+          # the way cron will, with nothing inherited from the terminal, reads
+          # the crontab once and stops if it cannot, writes it back with only
+          # this folder's line replaced, and believes the write only after
+          # reading it back. A single quote, a percent sign or a line break in
+          # PATH or in the folder's path is refused: none can be written into
+          # a cron line safely. The crontab in the suite is a stand-in, first
+          # on PATH, and the section stops before its first case if that
+          # stand-in is not the one the shell would run. No real crontab is
+          # read or written, by the suite or by the ledger's runs.
           #
-          #   setup guard removed (runs with no .last-ingest) 4 -> 4
+          # Mutation ledger, measured 2026-11-13 on Linux (bash 5.3, under
+          # WSL), each mutant in its own copy beside an unmutated baseline
+          # (0 red), predicted -> observed red. The unmutated suite also
+          # passes under Git for Windows' bash. Not run: macOS, and a real
+          # cron. Not in the table: the check that a crontab command exists,
+          # which cannot be tested without taking the stand-in off PATH.
+          #
+          # refresh.sh:
+          #   setup guard removed (runs with no .last-ingest) 5 -> 5
           #   ingest failure ignored                          3 -> 3
-          #   index failure ignored                           6 -> 6
+          #   index failure ignored                           9 -> 9
           #   marker never cleared by a clean run             1 -> 1
           #   marker not written                              5 -> 5
           #   CDPATH guard dropped from self-location         1 -> 1
@@ -1354,6 +1442,34 @@ jobs:
           #   every failure blames PATH                       1 -> 1
           #   hint long enough to pass 200 characters         1 -> 1
           #   command no longer ends the marker               1 -> 1
+          #
+          # install-cron.sh:
+          #   the trial run skipped                           5 -> 5
+          #   the trial run inherits the terminal             1 -> 1
+          #   a failed trial does not say nothing went in     1 -> 1
+          #   a failed read taken for no crontab yet          3 -> 3
+          #   a failed read tried again                       1 -> 1
+          #   an unreadable crontab reported without why      1 -> 1
+          #   only this folder's line: stops under bash -e    1 -> 1
+          #   counting no other lines stops under bash -e     2 -> 2
+          #   reading back no others stops under bash -e      2 -> 2
+          #   another project's refresh line taken out        1 -> 1
+          #   this folder's old line left in                  3 -> 3
+          #   the other lines not written back                3 -> 3
+          #   the new line put first                          2 -> 2
+          #   the schedule not daily at 9:00                  1 -> 1
+          #   the job line does not carry PATH                2 -> 2
+          #   a refused table not noticed                     1 -> 1
+          #   the write believed without a read-back          2 -> 2
+          #   own line not counted in the read-back           1 -> 1
+          #   other lines not counted in the read-back        1 -> 1
+          #   a single quote written into the job line        1 -> 1
+          #   a percent sign written into the job line        2 -> 2
+          #   a line break written into the job line          1 -> 1
+          #   the project folder's path not checked           1 -> 1
+          #   a very long line gets no warning                1 -> 1
+          #   every line gets the warning                     1 -> 1
+          #   CDPATH guard dropped from self-location         1 -> 1
           bash bin/tests/test-brain-refresh.sh
 
       # node is preinstalled on ubuntu-latest, but its version is the image's

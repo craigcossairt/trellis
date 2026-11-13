@@ -26,20 +26,27 @@
 #                                      protection and rulesets are both read,
 #                                      and they add up. A protection that
 #                                      allows force pushes, a ruleset that only
-#                                      asks for a review, and a ruleset with
-#                                      somebody on its bypass list are reported
-#                                      OFF: none of them stops everyone.
+#                                      asks for a review, and a rule that
+#                                      somebody can push past (they are on the
+#                                      bypass list of every ruleset holding
+#                                      it, for more than pull requests) are
+#                                      reported OFF: none stops everyone.
 #   delete-branch-on-merge             merged branches are removed for you
 #   workflow-token-read-only           CI's built-in token cannot write by default
 #   private-vulnerability-reporting    a private way to report a security bug
 #                                      (public repositories only)
-#   dependabot-config                  .github/dependabot.yml has at least one
-#                                      entry, every entry has the keys GitHub
-#                                      requires (a directory, and a schedule
-#                                      or a group that has one), and the ON
-#                                      line names what it watches. A local
-#                                      file check, read as text: GitHub's own
-#                                      verdict on the file is not asked for
+#   dependabot-config                  .github/dependabot.yml has `version: 2`
+#                                      and at least one entry, and every entry
+#                                      has the keys GitHub requires, each with
+#                                      a value: an ecosystem, a directory, and
+#                                      a schedule interval (its own, or its
+#                                      multi-ecosystem group's). A local file
+#                                      check, read as text. Only the plain
+#                                      block layout is read; any other is
+#                                      UNKNOWN. Whether GitHub accepts a
+#                                      VALUE is not checked (a misspelt
+#                                      ecosystem still reads ON), so the ON
+#                                      line says "entries for", not "watches"
 #
 # States: ON, OFF, SKIP (does not apply, or your GitHub plan does not offer it),
 # UNKNOWN (could not be read). A refusal counts as SKIP only when GitHub says
@@ -63,6 +70,10 @@
 # names another one; the local file check is then skipped unless --root says
 # where that repository's checkout is. --root alone checks the repository
 # that checkout pushes to, wherever the script was started from.
+#
+# The server asked is github.com. GH_HOST names another (GitHub Enterprise),
+# and then --repo is needed: an origin on github.com is never looked up
+# anywhere else.
 #
 # --porcelain prints `check<TAB>state<TAB>note`, one line per check.
 # Needs the GitHub CLI (`gh`), signed in.
@@ -139,14 +150,14 @@ if [ -z "$REPO" ]; then
   esac
   REPO="${REPO%/}"; REPO="${REPO%.git}"
   if [ -z "$REPO" ]; then
-    echo "check-repo-settings: could not work out which GitHub repository this checkout pushes to: it has no 'origin' remote, or that remote is not a github.com address. Nothing was checked. Name the repository yourself: --repo OWNER/NAME" >&2
+    echo "check-repo-settings: could not work out which GitHub repository this checkout pushes to: it has no 'origin' remote, or that remote is not a github.com address. Nothing was checked. Name the repository yourself, and say where its checkout is so the dependabot.yml check still runs: --repo OWNER/NAME --root '$ROOT'" >&2
     exit 2
   fi
   # gh sends its requests to $GH_HOST when that is set, and the address just
   # read is on github.com.
   case "${GH_HOST:-github.com}" in
     github.com) ;;
-    *) echo "check-repo-settings: GH_HOST points gh at '$GH_HOST', and this checkout's origin is on github.com. Nothing was checked. Unset GH_HOST, or name the repository yourself: --repo OWNER/NAME" >&2
+    *) echo "check-repo-settings: GH_HOST points gh at '$GH_HOST', and this checkout's origin is on github.com. Nothing was checked. Unset GH_HOST, or name the repository on that server yourself: --repo OWNER/NAME --root '$ROOT'" >&2
        exit 2 ;;
   esac
 fi
@@ -156,6 +167,20 @@ case "$REPO" in
   */*) ;;
   *) echo "check-repo-settings: '$REPO' is not an OWNER/NAME repository name" >&2; exit 2 ;;
 esac
+
+# Which server. With GH_HOST unset gh picks one by itself, and with one saved
+# login that is not github.com it picks that login's server (seen with gh
+# 2.89.0): the repository named above would be looked up somewhere else. So gh
+# is told on every call. It is github.com unless GH_HOST already names another
+# server, which the origin path above refuses and only --repo allows. The same
+# name goes into each printed command and address, so a fix that is pasted
+# later goes to the server the reading came from.
+SERVER="${GH_HOST:-github.com}"
+case "$SERVER" in
+  -*|*[!A-Za-z0-9.:-]*) echo "check-repo-settings: GH_HOST is set to something that is not a host name - nothing was checked." >&2; exit 2 ;;
+esac
+export GH_HOST="$SERVER"
+GH_API="gh api --hostname $SERVER"
 
 # api <path> [jq] -> API_OUT, API_CODE (200 on success, else the HTTP status gh
 # reported, or 0 when gh failed without naming one).
@@ -243,7 +268,7 @@ case "$API_CODE" in
   200) record dependabot-alerts ON "" ;;
   404)
     case "$API_OUT" in
-      *"alerts are disabled"*) record dependabot-alerts OFF "gh api -X PUT repos/$REPO/vulnerability-alerts" ;;
+      *"alerts are disabled"*) record dependabot-alerts OFF "$GH_API -X PUT repos/$REPO/vulnerability-alerts" ;;
       *) record dependabot-alerts UNKNOWN "${API_OUT:-no response}" ;;
     esac ;;
   *)   record dependabot-alerts UNKNOWN "${API_OUT:-no response}" ;;
@@ -261,7 +286,7 @@ if [ "$API_CODE" = 200 ]; then
   case "$API_OUT" in
     'true|false') record dependabot-security-updates ON "" ;;
     'true|true')  record dependabot-security-updates OFF "merge or close one of Dependabot's open pull requests and GitHub resumes them (they are enabled but paused: GitHub pauses them when its pull requests sit untouched for 90 days)" ;;
-    'false|'*)    record dependabot-security-updates OFF "gh api -X PUT repos/$REPO/automated-security-fixes" ;;
+    'false|'*)    record dependabot-security-updates OFF "$GH_API -X PUT repos/$REPO/automated-security-fixes" ;;
     *)            record dependabot-security-updates UNKNOWN "GitHub returned '${API_OUT:-nothing}'" ;;
   esac
 else
@@ -277,9 +302,9 @@ if [ "$PRIVATE" = true ] && [ "$SS" = none ]; then
   record push-protection SKIP "private repository: needs a paid GitHub plan"
 else
   onoff secret-scanning "$SS" enabled disabled \
-    "gh api -X PATCH repos/$REPO -f 'security_and_analysis[secret_scanning][status]=enabled'"
+    "$GH_API -X PATCH repos/$REPO -f 'security_and_analysis[secret_scanning][status]=enabled'"
   onoff push-protection "$PP" enabled disabled \
-    "gh api -X PATCH repos/$REPO -f 'security_and_analysis[secret_scanning_push_protection][status]=enabled'"
+    "$GH_API -X PATCH repos/$REPO -f 'security_and_analysis[secret_scanning_push_protection][status]=enabled'"
 fi
 
 # --- default branch -----------------------------------------------------------
@@ -469,7 +494,7 @@ tell "$D_ST" "$D_IDS" "deletion is" "deletion"
 if [ "$C_STATE" = read ] && [ "$C_LOCK" = true ] && [ "$C_LOCKED" -eq 0 ]; then
   WHY="$WHY; the branch is locked, but administrators can bypass the lock"
 fi
-PROTECT_FIX="open https://github.com/$REPO/settings/rules and add a ruleset for the default branch that blocks force pushes and deletion, with its enforcement set to Active and nobody on its bypass list"
+PROTECT_FIX="open https://$SERVER/$REPO/settings/rules and add a ruleset for the default branch that blocks force pushes and deletion, with its enforcement set to Active and nobody on its bypass list"
 if [ "$F_ST" = blocked ] && [ "$D_ST" = blocked ]; then
   # Both blocked by what could be read. An unreadable route cannot undo that.
   record default-branch-protection ON ""
@@ -478,7 +503,7 @@ elif [ "$C_STATE" = unreadable ] || [ "$R_STATE" = unreadable ]; then
   if [ "$BRANCH_OK" -eq 1 ]; then
     record default-branch-protection UNKNOWN "could not read the branch rules for '$BRANCH'"
   else
-    record default-branch-protection UNKNOWN "the branch name '$BRANCH' has a character this script will not put in a URL - look at https://github.com/$REPO/settings/branches yourself"
+    record default-branch-protection UNKNOWN "the branch name '$BRANCH' has a character this script will not put in a URL - look at https://$SERVER/$REPO/settings/branches yourself"
   fi
 elif [ "$C_STATE" = plan ] && [ "$R_STATE" = plan ]; then
   record default-branch-protection SKIP "your GitHub plan does not offer branch protection on a private repository"
@@ -487,17 +512,17 @@ elif [ -n "$OPEN" ]; then
   record default-branch-protection OFF "$PROTECT_FIX (now: $OPEN$WHY${HOLE:+; $HOLE})"
 else
   # Nothing is certainly open, and at least one question could not be settled.
-  record default-branch-protection UNKNOWN "$HOLE - look at https://github.com/$REPO/settings/rules yourself"
+  record default-branch-protection UNKNOWN "$HOLE - look at https://$SERVER/$REPO/settings/rules yourself"
 fi
 
 onoff delete-branch-on-merge "$DELETE_ON_MERGE" true false \
-  "gh api -X PATCH repos/$REPO -F delete_branch_on_merge=true"
+  "$GH_API -X PATCH repos/$REPO -F delete_branch_on_merge=true"
 
 # --- workflow token -----------------------------------------------------------
 api "repos/$REPO/actions/permissions/workflow" '.default_workflow_permissions'
 if [ "$API_CODE" = 200 ]; then
   onoff workflow-token-read-only "$API_OUT" read write \
-    "gh api -X PUT repos/$REPO/actions/permissions/workflow -f default_workflow_permissions=read"
+    "$GH_API -X PUT repos/$REPO/actions/permissions/workflow -f default_workflow_permissions=read"
 else
   record workflow-token-read-only UNKNOWN "${API_OUT:-no response}"
 fi
@@ -509,7 +534,7 @@ else
   api "repos/$REPO/private-vulnerability-reporting" '.enabled'
   if [ "$API_CODE" = 200 ]; then
     onoff private-vulnerability-reporting "$API_OUT" true false \
-      "gh api -X PUT repos/$REPO/private-vulnerability-reporting"
+      "$GH_API -X PUT repos/$REPO/private-vulnerability-reporting"
   else
     record private-vulnerability-reporting UNKNOWN "${API_OUT:-no response}"
   fi
@@ -520,76 +545,265 @@ if [ "$LOCAL" -eq 0 ]; then
   record dependabot-config SKIP "a file check: run this from that repository's checkout, or pass --root"
 elif [ -f "$ROOT/.github/dependabot.yml" ] || [ -f "$ROOT/.github/dependabot.yaml" ]; then
   # The file being there does not mean it watches anything, and the template
-  # ships one that watches only its own CI's actions. So ON names what is
-  # watched, and a file with no entry is OFF. So is one with an entry GitHub
-  # would refuse: it requires a directory and a schedule interval on each (an
-  # entry in a multi-ecosystem group takes the group's schedule), and an entry
-  # without them opens no pull request.
-  # The file is read as text, not parsed as YAML. An entry is a `-` item
-  # under `updates:`, and its keys are looked for on the lines down to the
-  # next item at that depth. Comment lines do not count. A YAML anchor is not
-  # followed, so an entry that looks incomplete in a file that uses one is
-  # UNKNOWN rather than OFF. The third line awk prints is 0 or 1, and anything
-  # else there means the file was not read at all.
+  # ships one that watches only its own CI's actions. So ON names the
+  # ecosystems the file has entries for, and a file with no entry is OFF. So
+  # is one GitHub would refuse for a missing key: it requires `version: 2`,
+  # and on every entry a package-ecosystem, a directory (or directories) and a
+  # schedule interval. An entry in a multi-ecosystem group takes the group's
+  # schedule.
+  #
+  # The file is read as text by the awk program below, which is not a YAML
+  # parser. The rule that keeps it honest: it says ON or OFF only for a file
+  # in the plain block layout, and anything it does not follow makes the whole
+  # answer UNKNOWN, with the first thing it tripped on named. What it follows:
+  #   - top-level keys flush left, one per line
+  #   - `updates:` as a block list, each entry a `- key: value` line followed
+  #     by its other keys at the same depth
+  #   - a value on the key's own line, plain or in quotes, with an optional
+  #     comment after it
+  #   - `directories:` as a block list or a one-line [list]
+  #   - `schedule:` as a block or a one-line {map}, with `interval` directly
+  #     in it
+  #   - `multi-ecosystem-groups:` as a block of named groups
+  # What makes it UNKNOWN: the list or an entry written on one line, a second
+  # document, a tab in the indentation, an alias (*name) as the value of a
+  # required key, a required value in any other form (a tag, a block of text,
+  # a value that runs on to a second line, a backslash inside quotes), a
+  # version in quotes, an entry in a group the file does not define or whose
+  # group shows no schedule (GitHub's rule for those two was not established),
+  # and any line under `updates:` it cannot place. Inside
+  # `multi-ecosystem-groups:` a line it cannot place is passed over instead:
+  # the group then has no schedule as far as it can see, and an entry in it is
+  # UNKNOWN. A merge (<<) is not followed either, so a file that uses one and
+  # looks incomplete is UNKNOWN, since the merge may supply what is missing.
+  # What it does not check: whether a value is one GitHub accepts.
+  # awk prints four lines: the ecosystems, what is missing, 0 or 1 for a
+  # merge, and what it could not follow. Anything else on the third line means
+  # the file was not read at all.
   DEP_FILE="$ROOT/.github/dependabot.yml"
   [ -f "$DEP_FILE" ] || DEP_FILE="$ROOT/.github/dependabot.yaml"
   DEP_READ="$(awk -v q="'" '
     function lacks(what) { problems = problems (problems == "" ? "" : "; ") what }
+    function odd(what) { if (unsure == "") unsure = what }
+    function isnull(v) { return (v == "" || v == "~" || v == "null" || v == "Null" || v == "NULL") }
+    function usable(v) { return (KIND == "quoted" && v != "") || (KIND == "plain" && !isnull(v)) }
+    function plainish() { return (KIND == "empty" || KIND == "plain" || KIND == "quoted") }
+    # val: v is what scalar() just returned. 1 when it is a value, 0 when it
+    # is empty or null. In any other form it is not followed, and says so.
+    function val(v, what) {
+      if (usable(v)) return 1
+      if (!plainish()) odd(what)
+      return 0
+    }
+    # keyval: t starts with a key and a colon -> K and V, and 1. Otherwise 0.
+    function keyval(t,    c, e, rest) {
+      c = substr(t, 1, 1)
+      if (c == "\"" || c == q) {
+        e = index(substr(t, 2), c)
+        if (e == 0) return 0
+        K = substr(t, 2, e - 1); rest = substr(t, e + 2)
+      } else {
+        if (!match(t, /^[A-Za-z0-9_<][A-Za-z0-9_.<-]*/)) return 0
+        K = substr(t, 1, RLENGTH); rest = substr(t, RLENGTH + 1)
+      }
+      if (!match(rest, /^[ \t]*:([ \t]|$)/)) return 0
+      V = substr(rest, RLENGTH + 1)
+      return 1
+    }
+    # scalar: v without its quotes, its anchor or a comment after it. KIND is
+    # what it was: empty, plain, quoted, flow ([ or {), alias, or other.
+    function scalar(v,    c, e) {
+      sub(/^[ \t]+/, "", v)
+      sub(/^&[A-Za-z0-9_-]+([ \t]+|$)/, "", v)
+      c = substr(v, 1, 1)
+      if (c == "\"" || c == q) {
+        e = index(substr(v, 2), c)
+        if (e == 0 || substr(v, e + 2) !~ /^([ \t]+#.*|[ \t]*)$/ || index(v, "\\")) { KIND = "other"; return "" }
+        KIND = "quoted"; return substr(v, 2, e - 1)
+      }
+      sub(/[ \t]+#.*$/, "", v); sub(/^#.*$/, "", v); sub(/[ \t]+$/, "", v)
+      if (v == "") { KIND = "empty"; return "" }
+      if (c == "[" || c == "{") KIND = "flow"
+      else if (c == "*") KIND = "alias"
+      else if (index("|>!%@&?", c)) KIND = "other"
+      else KIND = "plain"
+      return v
+    }
+    # flowlist: 1 for a one-line [list] with something in it, 0 for an empty
+    # one, -1 for anything else.
+    function flowlist(v,    inner) {
+      if (v !~ /^\[.*\]$/) return -1
+      inner = substr(v, 2, length(v) - 2)
+      if (inner ~ /[][{}]/) return -1
+      return (inner ~ /[^ \t,]/) ? 1 : 0
+    }
+    # flowinterval: 1 for a one-line {map} holding interval with a value, 0
+    # for one without, -1 for anything else.
+    function flowinterval(v,    inner, parts, n, i, p, found) {
+      if (v !~ /^\{.*\}$/) return -1
+      inner = substr(v, 2, length(v) - 2)
+      if (inner ~ /[][{}*&]/) return -1
+      n = split(inner, parts, ",")
+      found = 0
+      for (i = 1; i <= n; i++) {
+        p = parts[i]; sub(/^[ \t]+/, "", p)
+        if (p == "") continue
+        if (!keyval(p)) return -1
+        if (K == "interval" && val(scalar(V), "an interval that is not a plain value")) found = 1
+      }
+      return found
+    }
     function flush() {
       if (!initem) return
-      n++
-      if (eco == "") lacks("entry " n " names no package-ecosystem")
+      n_entries++
+      if (eco == "") lacks("entry " n_entries " names no package-ecosystem")
       else {
         names = names (names == "" ? "" : " ") eco
         if (!dir) lacks("the entry for " eco " has no directory")
-        if (!sched) lacks("the entry for " eco " has no schedule interval")
+        if (!sched) {
+          if (grp != "") { np++; pg[np] = grp; pe[np] = eco }
+          else lacks("the entry for " eco " has no schedule interval")
+        }
       }
-      initem = 0; eco = ""; dir = 0; sched = 0
+      initem = 0; eco = ""; dir = 0; sched = 0; grp = ""; curkey = ""
+    }
+    # One key of an entry, on its own line.
+    function entrykey(t,    v, r) {
+      if (!keyval(t)) { odd("a line in an entry that is not a plain key"); curkey = ""; return }
+      curkey = K; v = scalar(V); curempty = (KIND == "empty"); nestind = -1
+      if (K == "<<") anchor = 1
+      else if (K == "package-ecosystem") { if (val(v, "a package-ecosystem that is not a plain value")) eco = v }
+      else if (K == "directory") { if (val(v, "a directory that is not a plain value")) dir = 1 }
+      else if (K == "directories") {
+        if (KIND == "flow") { r = flowlist(v); if (r < 0) odd("a directories list it cannot follow"); else if (r) dir = 1 }
+        else if (KIND != "empty") odd("directories written as something other than a list")
+      } else if (K == "schedule") {
+        if (KIND == "flow") { r = flowinterval(v); if (r < 0) odd("a one-line schedule it cannot follow"); else if (r) sched = 1 }
+        else if (!plainish()) odd("a schedule that is not written out")
+      } else if (K == "multi-ecosystem-group") { if (val(v, "a multi-ecosystem-group that is not a plain value")) grp = v }
+    }
+    # A line that belongs to the key above it.
+    function nested(    v) {
+      if (curkey == "") return
+      if (curkey == "package-ecosystem" || curkey == "directory" || curkey == "multi-ecosystem-group") {
+        odd("a " curkey " written over more than one line"); return
+      }
+      if (curkey == "directories") {
+        if (nestind < 0) nestind = ind
+        if (!curempty || ind != nestind || !dash) { odd("a directories list it cannot follow"); return }
+        v = scalar(substr(text, 2))
+        if (val(v, "a directories list it cannot follow")) dir = 1
+        return
+      }
+      if (curkey == "schedule") {
+        if (nestind < 0) nestind = ind
+        if (!curempty || ind != nestind || !keyval(text)) { odd("a schedule it cannot follow"); return }
+        if (K == "<<") { anchor = 1; return }
+        if (K == "interval") { v = scalar(V); if (val(v, "an interval that is not a plain value")) sched = 1 }
+      }
+    }
+    # A line inside updates:.
+    function upline(    rest, n) {
+      if (itemind < 0 && dash) itemind = ind
+      if (ind == itemind && dash) {
+        flush(); initem = 1
+        rest = substr(text, 2)
+        match(rest, /^ */); n = RLENGTH
+        keycol = ind + 1 + n
+        rest = substr(rest, n + 1)
+        if (rest == "" || rest ~ /^#/) { odd("an entry whose keys start on the line after its dash"); return }
+        entrykey(rest); return
+      }
+      if (itemind < 0 || ind <= itemind) { odd("a line under updates: that is not part of a list entry"); return }
+      if (ind == keycol) { if (dash && curempty && curkey != "") nested(); else entrykey(text); return }
+      if (ind > keycol) { nested(); return }
+      odd("a line indented between an entry and its keys")
+    }
+    # A line inside multi-ecosystem-groups:. All that is wanted from it is
+    # which groups have a schedule with an interval directly in it. A group
+    # this does not follow never gets one, and an entry in a group with none is
+    # UNKNOWN at the end, so most lines it cannot place are passed over.
+    function grline(    v) {
+      if (g1 < 0) g1 = ind
+      if (ind <= g1) {
+        if (ind < g1 || !keyval(text)) { odd("a multi-ecosystem-groups: block that is not a block of named groups"); cg = ""; return }
+        cg = K; g2 = -1; gkey = ""
+        return
+      }
+      if (cg == "") return
+      if (g2 < 0) g2 = ind
+      if (ind <= g2) {
+        gkey = ""
+        if (ind < g2 || !keyval(text)) return
+        gkey = K; v = scalar(V); gempty = (KIND == "empty"); g3 = -1
+        if (K == "schedule" && KIND == "flow" && flowinterval(v) > 0) gsched[cg] = 1
+        return
+      }
+      if (gkey != "schedule") return
+      if (g3 < 0) g3 = ind
+      if (!gempty || ind != g3 || !keyval(text)) return
+      if (K == "interval") { v = scalar(V); if (val(v, "an interval that is not a plain value")) gsched[cg] = 1 }
     }
     {
       line = $0
       sub(/\r$/, "", line)
       if (line ~ /^[ \t]*(#|$)/) next
-      if (line ~ /<<[ \t]*:/ || line ~ /[:-][ \t]+\*[A-Za-z0-9_-]/) anchor = 1
+      if (line ~ /^(---|\.\.\.)([ \t]|$)/) {
+        if (line ~ /^---[ \t]*(#.*)?$/ && !content && !docstart) { docstart = 1; next }
+        odd("more than one YAML document"); next
+      }
+      content = 1
       match(line, /^ */); ind = RLENGTH
-      dash = (substr(line, ind + 1, 1) == "-")
-      if (where == 0) {
-        if (line ~ /^ *updates[ \t]*:[ \t]*(#.*)?$/) { where = 1; depth = -1 }
+      text = substr(line, ind + 1)
+      if (substr(text, 1, 1) == "\t") { odd("a tab in its indentation"); next }
+      dash = (text ~ /^-([ \t]|$)/)
+      if (ind == 0 && !(dash && top == "updates")) {
+        if (!keyval(text)) { odd("a top-level line that is not a plain key"); top = "other"; next }
+        v = scalar(V)
+        if (K == "<<") { anchor = 1; top = "other" }
+        else if (K == "updates") {
+          if (seenup++) odd("updates: written twice")
+          if (KIND != "empty" && v != "[]") odd("the updates: list written on one line")
+          top = "updates"; itemind = -1
+        } else if (K == "multi-ecosystem-groups") {
+          if (seengr++) odd("multi-ecosystem-groups: written twice")
+          if (KIND != "empty") odd("multi-ecosystem-groups: written on one line")
+          top = "groups"; g1 = -1; cg = ""
+        } else {
+          if (K == "version") { if (KIND == "plain") ver = v; else odd("a version that is not a plain number") }
+          top = "other"
+        }
         next
       }
-      if (where == 2) next
-      if (depth < 0) { if (dash) depth = ind; else { where = 2; next } }
-      if (ind < depth || (ind == depth && !dash)) { flush(); where = 2; next }
-      if (ind == depth) { flush(); initem = 1 }
-      key = line
-      sub(/^ *(-[ \t]*)?/, "", key)
-      if (key ~ /^package-ecosystem[ \t]*:/) {
-        eco = key
-        sub(/^package-ecosystem[ \t]*:[ \t]*/, "", eco)
-        sub(/[ \t]+#.*$/, "", eco)
-        gsub("[\"" q "]", "", eco)
-        sub(/[ \t]+$/, "", eco)
-      }
-      if (key ~ /^(directory|directories)[ \t]*:/) dir = 1
-      if (key ~ /^multi-ecosystem-group[ \t]*:/) sched = 1
-      if (key ~ /(^|[{,][ \t]*)interval[ \t]*:/) sched = 1
+      if (top == "") { odd("a line before the first key"); next }
+      if (top == "updates") upline()
+      else if (top == "groups") grline()
     }
-    END { flush(); print names; print problems; print anchor + 0 }
+    END {
+      flush()
+      for (i = 1; i <= np; i++) {
+        if (!(pg[i] in gsched)) odd("an entry (" pe[i] ") in a multi-ecosystem group, " pg[i] ", for which the file shows no schedule interval")
+      }
+      if (ver != "2") lacks("the file has no version: 2 line")
+      print names; print problems; print anchor + 0; print unsure
+    }
   ' "$DEP_FILE" 2>/dev/null)"
-  WATCHES=""; DEP_LACKS=""; DEP_ANCHOR=""
-  { IFS= read -r WATCHES; IFS= read -r DEP_LACKS; IFS= read -r DEP_ANCHOR; } <<DEP
+  WATCHES=""; DEP_LACKS=""; DEP_ANCHOR=""; DEP_ODD=""
+  { IFS= read -r WATCHES; IFS= read -r DEP_LACKS; IFS= read -r DEP_ANCHOR; IFS= read -r DEP_ODD; } <<DEP
 $DEP_READ
 DEP
   case "$DEP_ANCHOR" in
     0|1)
-      if [ -n "$DEP_LACKS" ] && [ "$DEP_ANCHOR" = 1 ]; then
-        record dependabot-config UNKNOWN "$DEP_LACKS, as far as this script reads the file - but the file uses a YAML anchor, which it does not follow, so the entry may be complete"
+      if [ -n "$DEP_ODD" ]; then
+        record dependabot-config UNKNOWN "this script reads only a plainly laid out file, and $DEP_FILE has $DEP_ODD. That is neither on nor off. On GitHub, Insights > Dependency graph > Dependabot lists the update jobs GitHub runs from the file"
+      elif [ "$DEP_ANCHOR" = 1 ] && { [ -n "$DEP_LACKS" ] || [ -z "$WATCHES" ]; }; then
+        record dependabot-config UNKNOWN "${DEP_LACKS:-no entry was found}, as far as this script reads the file - but the file uses a YAML merge (<<), which it does not follow, so the file may be complete"
       elif [ -n "$DEP_LACKS" ]; then
-        record dependabot-config OFF "$DEP_FILE: $DEP_LACKS. GitHub requires a directory and a schedule interval on every entry - add what is missing (the template's file shows a whole entry)"
+        record dependabot-config OFF "$DEP_FILE: $DEP_LACKS. GitHub requires each of these - add what is missing (the template's file shows a whole entry)"
       elif [ -n "$WATCHES" ]; then
-        record dependabot-config ON "watches: $WATCHES"
+        record dependabot-config ON "entries for: $WATCHES"
       else
-        record dependabot-config OFF "$DEP_FILE has no package-ecosystem entry, so it watches nothing - add one (the comments in the template's file show how)"
+        record dependabot-config OFF "$DEP_FILE has no package-ecosystem entry, so nothing is watched - add one (the comments in the template's file show how)"
       fi ;;
     *) record dependabot-config UNKNOWN "could not read $DEP_FILE" ;;
   esac

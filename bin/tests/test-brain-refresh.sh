@@ -15,6 +15,28 @@
 #      schedule visible (the session-start hook prints it).
 #   5. It finds its own brain/ when run by a relative path with CDPATH set.
 #
+# And brain/scripts/install-cron.sh, which puts that line in a crontab.
+# Installing a crontab replaces the whole table, so the ways it can go wrong
+# all end with somebody else's jobs gone:
+#
+#   6. It writes only after the job ran clean once in cron's own bare
+#      environment, with nothing inherited from the terminal, and only after
+#      the crontab was read. A crontab that cannot be read is never written
+#      over, and a failed read is not retried.
+#   7. Every other line survives, in order, however often it is run, and this
+#      folder's line is there exactly once. A crontab that held only this
+#      folder's line ends with that line, not with nothing.
+#   8. It believes the write only after reading it back: a crontab that
+#      accepts a table and keeps nothing, or keeps this folder's line and
+#      drops another, is exit 2, not exit 0.
+#   9. What cannot be written into a cron line safely is refused before
+#      anything is run: a single quote, a percent sign or a line break, in
+#      PATH or in the project folder's own path.
+#
+# The crontab here is a stand-in, first on PATH. The section stops before its
+# first case if that stand-in is not the `crontab` the shell would run, so a
+# real crontab is never read or written by this suite.
+#
 # Hermetic: a temp copy of brain/, a fake QMD named through BRAIN_QMD, no
 # network. The key-shaped string in case 2 is built at run time, so this file
 # holds nothing a secret scanner would stop on.
@@ -123,6 +145,174 @@ OUT=$(cd "$P" && CDPATH=. QMD_CALLS="$P/calls" BRAIN_QMD="$TMP/fake-qmd" bash br
 if [ "$RC" = 0 ] && [ "$(cat "$P/calls")" = update ] && [ -f "$P/brain/raw/docs/decision.md" ]; then
   ok "it still finds its own brain/"
 else bad "it still finds its own brain/" "rc=$RC :: $OUT"; fi
+
+echo "== install-cron.sh: the schedule goes in without a crontab being lost"
+# $CRON/mode: none (no crontab yet), has, fail (it cannot be read), flaky (the
+# first read fails and later ones work), writefail (a new table is refused),
+# lossy (a new table is accepted and nothing is kept), lastonly (a new table
+# is accepted and only its last line is kept).
+CRON="$TMP/cron"; export CRON
+must mkdir -p "$CRON/bin"
+cat > "$CRON/bin/crontab" <<'FAKE'
+#!/usr/bin/env bash
+mode="$(cat "$CRON/mode")"
+case "${1:-}" in
+  -l)
+    echo x >> "$CRON/reads"
+    case "$mode" in
+      none)  echo "no crontab for someone" >&2; exit 1 ;;
+      fail)  echo "crontab: cannot open your crontab: Permission denied" >&2; exit 1 ;;
+      flaky) echo has > "$CRON/mode"; echo "crontab: temporary failure" >&2; exit 1 ;;
+      *)     cat "$CRON/store"; exit 0 ;;
+    esac ;;
+  -)
+    echo x >> "$CRON/writes"
+    case "$mode" in
+      writefail) cat > /dev/null; echo "crontab: errors in crontab file" >&2; exit 1 ;;
+      lossy)     cat > /dev/null; : > "$CRON/store"; exit 0 ;;
+      lastonly)  tail -n 1 > "$CRON/store"; echo has > "$CRON/mode"; exit 0 ;;
+      *)         cat > "$CRON/store"; echo has > "$CRON/mode"; exit 0 ;;
+    esac ;;
+esac
+exit 64
+FAKE
+chmod +x "$CRON/bin/crontab"
+if [ "$(PATH="$CRON/bin:$PATH" command -v crontab)" != "$CRON/bin/crontab" ]; then
+  echo "the stand-in crontab is not the one that would run; stopping before a real crontab is touched" >&2
+  exit 1
+fi
+
+OTHER='5 4 * * * /usr/local/bin/backup'
+cronproject() { # $1 what the project's QMD exits with in the trial run, $2 the stand-in's mode
+  project setup
+  must mkdir -p "$P/brain/bin"
+  # The trial run inherits nothing, so the fake indexer is the project's own
+  # wrapper rather than one named through BRAIN_QMD.
+  printf '#!/usr/bin/env bash\necho "$*" >> "%s/trial-calls"\nexit %s\n' "$P" "${1:-0}" > "$P/brain/bin/qmd"
+  cp "$ROOT/brain/scripts/install-cron.sh" "$P/brain/scripts/" 2>/dev/null
+  echo "${2:-none}" > "$CRON/mode"; : > "$CRON/store"; : > "$CRON/writes"; : > "$CRON/reads"
+}
+install() { RC=0; OUT=$(PATH="$CRON/bin:$PATH" bash "$@" "$P/brain/scripts/install-cron.sh" 2>&1) || RC=$?; }
+writes() { wc -l < "$CRON/writes" | tr -d ' '; }
+reads() { wc -l < "$CRON/reads" | tr -d ' '; }
+lines() { grep -c . "$CRON/store"; }
+mine() { grep -cF "cd '$P' && bash brain/scripts/refresh.sh" "$CRON/store"; }
+
+cronproject; install
+if [ "$RC" = 0 ] && [ "$(lines)" = 1 ] && [ "$(mine)" = 1 ]; then ok "no crontab yet: exit 0, and the crontab is this one line"
+else bad "no crontab yet: exit 0, and the crontab is this one line" "rc=$RC :: $OUT :: $(cat "$CRON/store")"; fi
+case "$(cat "$CRON/store")" in
+  "0 9 * * * export PATH='"*"$CRON/bin"*"'; cd '$P' && bash brain/scripts/refresh.sh >/dev/null 2>&1") ok "the line runs daily at 9:00, carries the caller's PATH, and changes into the project" ;;
+  *) bad "the line runs daily at 9:00, carries the caller's PATH, and changes into the project" "$(cat "$CRON/store")" ;;
+esac
+if [ "$(cat "$P/trial-calls" 2>/dev/null)" = update ]; then ok "the job was run once, for real, before it was installed"
+else bad "the job was run once, for real, before it was installed" "$(cat "$P/trial-calls" 2>&1)"; fi
+
+cronproject 0 has; printf '%s\n' "$OTHER" '' '# weekly' '0 1 * * 0 /home/me/weekly.sh' > "$CRON/store"; install
+if [ "$RC" = 0 ] && [ "$(head -n 4 "$CRON/store" | tr '\n' '|')" = "$OTHER||# weekly|0 1 * * 0 /home/me/weekly.sh|" ] && [ "$(mine)" = 1 ]; then
+  ok "other jobs are kept as they were, in order, and this one is added"
+else bad "other jobs are kept as they were, in order, and this one is added" "rc=$RC :: $(cat "$CRON/store")"; fi
+install; install
+if [ "$RC" = 0 ] && [ "$(mine)" = 1 ] && [ "$(lines)" = 4 ]; then ok "run twice more: still one line for this folder, and the others untouched"
+else bad "run twice more: still one line for this folder, and the others untouched" "rc=$RC mine=$(mine) lines=$(lines)"; fi
+
+# The crontab holds nothing but this folder's old line. Taking that line out
+# leaves an empty table, and the new line still has to go in.
+cronproject 0 has; install; install
+if [ "$RC" = 0 ] && [ "$(lines)" = 1 ] && [ "$(mine)" = 1 ]; then ok "a crontab that held only this folder's line: replaced, not emptied"
+else bad "a crontab that held only this folder's line: replaced, not emptied" "rc=$RC :: $(cat "$CRON/store")"; fi
+install -e
+if [ "$RC" = 0 ] && [ "$(lines)" = 1 ] && [ "$(mine)" = 1 ]; then ok "and the same when the shell is told to stop at any failed command (bash -e)"
+else bad "and the same when the shell is told to stop at any failed command (bash -e)" "rc=$RC :: $OUT :: $(cat "$CRON/store")"; fi
+cronproject; install -e
+if [ "$RC" = 0 ] && [ "$(mine)" = 1 ]; then ok "no crontab yet, under bash -e: installed"
+else bad "no crontab yet, under bash -e: installed" "rc=$RC :: $OUT"; fi
+
+cronproject 0 has
+printf '%s\n' "0 9 * * * export PATH='/usr/bin'; cd '/other/project' && bash brain/scripts/refresh.sh >/dev/null 2>&1" > "$CRON/store"; install
+if [ "$RC" = 0 ] && [ "$(grep -c 'brain/scripts/refresh.sh' "$CRON/store")" = 2 ] && [ "$(mine)" = 1 ]; then ok "another project's refresh line is kept"
+else bad "another project's refresh line is kept" "rc=$RC :: $(cat "$CRON/store")"; fi
+
+cronproject 0 fail; echo "$OTHER" > "$CRON/store"; install
+if [ "$RC" = 1 ] && [ "$(writes)" = 0 ] && [ "$(cat "$CRON/store")" = "$OTHER" ]; then ok "the crontab cannot be read: exit 1, nothing written"
+else bad "the crontab cannot be read: exit 1, nothing written" "rc=$RC writes=$(writes) :: $OUT"; fi
+case "$OUT" in
+  *"Permission denied"*"othing was changed"*) ok "and it says why, and that nothing was changed" ;;
+  *) bad "and it says why, and that nothing was changed" "$OUT" ;;
+esac
+
+cronproject 0 flaky; echo "$OTHER" > "$CRON/store"; install
+if [ "$RC" = 1 ] && [ "$(writes)" = 0 ] && [ "$(reads)" = 1 ]; then ok "a read that fails is not tried again and then written over"
+else bad "a read that fails is not tried again and then written over" "rc=$RC writes=$(writes) reads=$(reads) :: $OUT"; fi
+
+cronproject 3 has; echo "$OTHER" > "$CRON/store"; install
+if [ "$RC" = 1 ] && [ "$(writes)" = 0 ] && [ "$(reads)" = 0 ]; then ok "the trial run fails: exit 1, and the crontab is not touched"
+else bad "the trial run fails: exit 1, and the crontab is not touched" "rc=$RC writes=$(writes) reads=$(reads) :: $OUT"; fi
+case "$OUT" in
+  *"othing was installed"*) ok "and it says nothing was installed" ;;
+  *) bad "and it says nothing was installed" "$OUT" ;;
+esac
+
+# Cron starts the job with none of this terminal's settings. An indexer that
+# works only because of one of them must not get the job installed.
+cronproject 3 has; echo "$OTHER" > "$CRON/store"; RC=0
+OUT=$(QMD_CALLS="$P/calls" BRAIN_QMD="$TMP/fake-qmd" PATH="$CRON/bin:$PATH" bash "$P/brain/scripts/install-cron.sh" 2>&1) || RC=$?
+if [ "$RC" = 1 ] && [ "$(writes)" = 0 ]; then ok "the job works only with a setting this terminal has: nothing is installed"
+else bad "the job works only with a setting this terminal has: nothing is installed" "rc=$RC writes=$(writes) :: $OUT"; fi
+
+cronproject; rm -f "$P/brain/.last-ingest"; install
+if [ "$RC" = 1 ] && [ "$(writes)" = 0 ]; then ok "a brain that is not set up yet: nothing is installed"
+else bad "a brain that is not set up yet: nothing is installed" "rc=$RC writes=$(writes) :: $OUT"; fi
+
+cronproject 0 writefail; install
+if [ "$RC" = 1 ] && [ "$(mine)" = 0 ]; then ok "the new table is refused: exit 1"
+else bad "the new table is refused: exit 1" "rc=$RC :: $OUT"; fi
+
+# The write is believed only after it is read back.
+cronproject 0 lossy; install
+if [ "$RC" = 2 ]; then ok "the table is accepted and nothing is kept: exit 2, not 0"
+else bad "the table is accepted and nothing is kept: exit 2, not 0" "rc=$RC :: $OUT"; fi
+
+cronproject 0 lastonly; echo "$OTHER" > "$CRON/store"; install
+if [ "$RC" = 2 ] && [ "$(mine)" = 1 ]; then ok "this folder's line is kept and another line is dropped: exit 2, not 0"
+else bad "this folder's line is kept and another line is dropped: exit 2, not 0" "rc=$RC :: $OUT :: $(cat "$CRON/store")"; fi
+
+# A single quote would end the quoting in the job line, cron reads % as the
+# end of the command, and a line break would make two entries of one. None can
+# be written safely, so none is. The quotes here are balanced on purpose: the
+# job would run, with a PATH that is not the one it was given.
+cronproject; RC=0; OUT=$(PATH="$CRON/bin:$PATH:/opt/a'b'c" bash "$P/brain/scripts/install-cron.sh" 2>&1) || RC=$?
+if [ "$RC" = 1 ] && [ "$(writes)" = 0 ] && [ "$(reads)" = 0 ]; then ok "a single quote in PATH: refused before anything is run"
+else bad "a single quote in PATH: refused before anything is run" "rc=$RC :: $OUT"; fi
+cronproject; RC=0; OUT=$(PATH="$CRON/bin:$PATH:/opt/100%" bash "$P/brain/scripts/install-cron.sh" 2>&1) || RC=$?
+if [ "$RC" = 1 ] && [ "$(writes)" = 0 ] && [ "$(reads)" = 0 ]; then ok "a percent sign in PATH: refused before anything is run"
+else bad "a percent sign in PATH: refused before anything is run" "rc=$RC :: $OUT"; fi
+cronproject; RC=0; OUT=$(PATH="$CRON/bin:$PATH:/opt/a
+b" bash "$P/brain/scripts/install-cron.sh" 2>&1) || RC=$?
+if [ "$RC" = 1 ] && [ "$(writes)" = 0 ] && [ "$(reads)" = 0 ]; then ok "a line break in PATH: refused before anything is run"
+else bad "a line break in PATH: refused before anything is run" "rc=$RC :: $OUT :: $(cat "$CRON/store")"; fi
+cronproject; mv "$P" "$TMP/p100%$N"; P="$TMP/p100%$N"; install
+if [ "$RC" = 1 ] && [ "$(writes)" = 0 ] && [ "$(reads)" = 0 ] && printf '%s' "$OUT" | grep -q 'project folder'; then ok "a percent sign in the project folder's path: refused, and it says which"
+else bad "a percent sign in the project folder's path: refused, and it says which" "rc=$RC :: $OUT"; fi
+
+cronproject; RC=0
+OUT=$(PATH="$CRON/bin:$PATH$(printf ':/opt/padding-%s' 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 51 52 53 54 55 56 57 58 59 60)" bash "$P/brain/scripts/install-cron.sh" 2>&1) || RC=$?
+case "$RC/$OUT" in
+  0/*"characters"*"not checked"*) ok "a very long job line is installed, with a warning that says what is not known" ;;
+  *) bad "a very long job line is installed, with a warning that says what is not known" "rc=$RC :: $OUT" ;;
+esac
+
+cronproject; RC=0; OUT=$(PATH="$CRON/bin:/usr/bin:/bin" bash "$P/brain/scripts/install-cron.sh" 2>&1) || RC=$?
+case "$RC/$OUT" in
+  0/*"Note:"*) bad "a job line of ordinary length gets no warning" "$OUT" ;;
+  0/*) ok "a job line of ordinary length gets no warning" ;;
+  *) bad "a job line of ordinary length gets no warning" "rc=$RC :: $OUT" ;;
+esac
+
+cronproject; RC=0
+OUT=$(cd "$P/.." && CDPATH=. PATH="$CRON/bin:$PATH" bash "$(basename "$P")/brain/scripts/install-cron.sh" 2>&1) || RC=$?
+if [ "$RC" = 0 ] && [ "$(mine)" = 1 ]; then ok "run by a relative path with CDPATH set: the line names the project's full path"
+else bad "run by a relative path with CDPATH set: the line names the project's full path" "rc=$RC :: $OUT :: $(cat "$CRON/store")"; fi
 
 echo
 echo "passed: $PASS   failed: $FAIL"

@@ -182,16 +182,21 @@ Never present the three outcomes as a menu.
   shipped, and say which it was.
 
   Then propose the daily refresh. Say what it is: a scheduled job on their
-  computer that runs one command a day. On a yes, run the lines under
-  **Keeping it current** in `brain/README.md` for their operating system, as
-  written and in order. Do not improvise a different schedule line: the ones
-  there carry the `PATH` a scheduler does not have, and a line without it
-  works by hand and fails on its first scheduled run.
+  computer that runs one command a day. On a yes, do what **Keeping it current** in
+  `brain/README.md` says for their operating system: on macOS and Linux run
+  `bash brain/scripts/install-cron.sh`, on Windows run the PowerShell lines as
+  written and in order. Do not write a crontab line or a task of your own:
+  the script carries the `PATH` a scheduler does not have, and it will not
+  write over a crontab it could not read. A line without that `PATH` works
+  by hand and fails on its first scheduled run.
   1. `bash brain/scripts/refresh.sh` by hand, ending `brain refresh: done.`
-  2. The run that proves the scheduler's own environment works: step 1 of the
-     cron lines, or the started task on Windows. It counts only when
-     `brain/log.md` gained a new `refresh - ok` line from that run.
-  3. Read the entry back and show it to them.
+  2. The run that proves the scheduler's own environment works. The script
+     does it before it installs anything and stops if it fails; on Windows
+     it is the started task. It counts only when `brain/log.md` gained a
+     new `refresh - ok` line from that run.
+  3. Read the entry back (`crontab -l`, or the task's result) and show it to
+     them. If the script exits 2, the crontab was written and did not read
+     back as written: show them `crontab -l` and stop.
 
   Report the schedule as working only after step 2. If it fails, say so, show
   what it printed, and ask whether to leave the job or remove it. If they say
@@ -224,7 +229,11 @@ Run `bash bin/check-repo-settings.sh`. It only reads.
   buying a plan.
 
 Then `.github/dependabot.yml`. The script's `dependabot-config` line names
-what the file watches today. Read the repo for the package managers it uses
+the ecosystems the file has entries for today. It checks that each entry has
+the keys GitHub requires, not that their values are ones GitHub accepts, so
+copy names from GitHub's own list and not from memory. If the line is
+`UNKNOWN`, the file is laid out in a way the script does not read: say so,
+and do not rewrite their file to suit the script. Read the repo for the package managers it uses
 (`package.json`, `pyproject.toml`, `pubspec.yaml`, `Cargo.toml`, `go.mod`,
 `Gemfile`), and for each one the file does not watch, propose the entry and
 say what it brings: a pull request, at most weekly, when one of those packages

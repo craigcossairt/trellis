@@ -224,9 +224,9 @@ that rather than from how busy you feel.
 - [ ] **If you set it up, schedule its refresh.** The index only knows what it was last fed, so
       one built today and never refreshed is answering from today's project in three months.
       The whole job is one command, `bash brain/scripts/refresh.sh`, run once a day by your
-      computer's own scheduler. `brain/README.md` § Keeping it current has lines to paste for
-      macOS, Linux and Windows, and a check that the scheduled run will work before you rely
-      on it. It has to run on your computer: the index is not in git, so a job running in the
+      computer's own scheduler. `brain/README.md` § Keeping it current has one command for
+      macOS and Linux and lines to paste for Windows, and each checks that the scheduled run
+      will work before you rely on it. It has to run on your computer: the index is not in git, so a job running in the
       cloud has nothing to refresh. A scheduled run that fails leaves a note, and your next AI
       session shows it at the top. A schedule that never starts leaves no note, so that case
       shows up as a "stale" line once the index is a week old. Both lines need a tool that
@@ -271,7 +271,9 @@ tells you which are off. It only reads. It changes nothing.
       knows nothing about your app's packages until you tell it. The comments at the top of the
       file show how. Copy the whole shipped entry: GitHub requires a `directory` and a
       `schedule` on each one, and the script reports the file as off when an entry is
-      missing either. Two things come with keeping the file. GitHub opens a pull request, at
+      missing either. It checks that those keys are there, not that GitHub accepts what you
+      wrote in them, and it reads only the plain layout the shipped file uses (anything else
+      is `UNKNOWN`). Two things come with keeping the file. GitHub opens a pull request, at
       most weekly, when one of those actions has a newer release. And that pull request edits
       `.github/workflows/hooks-ci.yml`, a file the template also updates, so a later
       `/trellis-sync` shows it as changed on both sides and asks which version to keep. Delete
