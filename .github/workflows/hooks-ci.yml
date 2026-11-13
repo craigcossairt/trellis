@@ -1030,13 +1030,24 @@ jobs:
           #   stale line tells the agent to schedule it     2 -> 2
           #
           # Through the Cursor/Grok adapter (bin/run-claude-hook.sh), measured
-          # 2026-11-13 over 59 cases, predicted -> observed red. Neither tool
-          # reads this hook's plain stdout, so a reply in the wrong shape is a
-          # session that opens without the block and says nothing:
-          #   grok reply back to raw stdout                 2 -> 2
-          #   cursor key renamed                            1 -> 1
-          #   grok text not JSON-escaped                    1 -> 1
-          #   grok message nested, not top-level            1 -> 1
+          # 2026-11-13 over 66 cases, each mutant in its own copy beside an
+          # unmutated baseline (0 red), predicted -> observed red. Neither
+          # tool reads this hook's plain stdout, so a reply in the wrong shape
+          # is a session that opens without the block and says nothing. The
+          # replies are read with jq, as the tool's own parser would, and a
+          # stub hook with known bytes covers the path a machine without jq
+          # takes. Needs jq:
+          #   grok reply back to raw stdout                 4 -> 4
+          #   cursor reply back to raw stdout               4 -> 4
+          #   cursor key renamed                            3 -> 3
+          #   grok text not JSON-escaped                    3 -> 3
+          #   grok message nested, not top-level            3 -> 3
+          #   no-jq path keeps tabs and carriage returns    1 -> 1
+          #   no-jq path stops escaping quotes              1 -> 1
+          #   no-jq path stops escaping backslashes         1 -> 1
+          #   jq never used (always the flattening path)    1 -> 1
+          #   cursor prompt hook answers nothing            1 -> 1
+          #   grok prompt hook prints the hook's text again 1 -> 1
           bash bin/tests/test-session-start.sh
 
       - name: CDPATH-guarded self-location
@@ -1718,6 +1729,28 @@ jobs:
               fail=1
             fi
           done
+          # Three settings a file can lose and still parse. Without failClosed
+          # the tool lets an edit through when the sensitive-file check cannot
+          # start. A Grok UserPromptSubmit entry is a hook whose output Grok
+          # discards (CLI 1.0.77): wired, running, and adding nothing, which
+          # reads as project memory working. Four bad copies were made by hand
+          # on 2026-11-13 (failClosed removed from each file, set false, a Grok
+          # prompt hook added) and this step went red on each, 4 of 4, and
+          # stayed green with either adapter's file deleted.
+          pin() { # $1 file, $2 jq test that must hold, $3 what it means
+            [ -f "$1" ] || return 0
+            jq -e "$2" "$1" >/dev/null 2>&1 && { echo "ok $1: $3"; return 0; }
+            echo "::error file=$1::this must hold and does not: $3"
+            fail=1
+          }
+          pin .cursor/hooks.json \
+            '[.hooks.preToolUse[] | select(.command | contains("block-sensitive-files")) | .failClosed] == [true]' \
+            'the sensitive-file check sets failClosed'
+          pin .grok/hooks/hooks.json \
+            '[.hooks.PreToolUse[].hooks[] | select(.command | contains("block-sensitive-files")) | .failClosed] == [true]' \
+            'the sensitive-file check sets failClosed'
+          pin .grok/hooks/hooks.json '.hooks | has("UserPromptSubmit") | not' \
+            'no UserPromptSubmit hook is wired (Grok discards its output)'
           exit $fail
 
       - name: Claude hook timeouts are in seconds

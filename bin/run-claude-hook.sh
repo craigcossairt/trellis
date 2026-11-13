@@ -19,12 +19,16 @@
 #    takes {"additional_context": ...}; Grok reads only a top-level
 #    {"systemMessage": ...} from a SessionStart reply. Printed raw, the block
 #    reaches nobody and nothing says so.
-# 3. Windows: invoke this script with Git Bash's FULL path in the hook JSON (see
-#    .grok/hooks/hooks.json and .cursor/hooks.json) - a bare `bash` can resolve to
-#    WSL, where HOME and every path are wrong.
+# 3. Windows: a bare `bash` in the hook JSON is WSL's or nothing, so the tool
+#    must be told to use Git Bash. docs/harness-support.md ("Windows") has the
+#    exact lines for each tool.
 #
-# Missing targets fail OPEN (never brick a session because a path moved) - except
-# the blocking hook's verdict itself, which the canonical script fails CLOSED.
+# Where this fails OPEN, on purpose and worth knowing: a missing target allows
+# (never brick a session because a path moved), and so does any exit from the
+# sensitive-file hook other than 2 - the same rule Claude Code applies to a
+# hook, so a hook that crashes (exit 1, 127, a kill) lets the edit through. The
+# hook itself answers 2 for a payload it cannot read. A tool's `failClosed`
+# covers only this script failing to start or to answer, not that case.
 set -uo pipefail
 
 HARNESS="${1:-}"
@@ -58,10 +62,12 @@ allow_json() {
 
 json_string() {
   # JSON-escape $1 via jq when available; otherwise flatten to one safe line.
+  # Every control character becomes a space there, not only the line break: a
+  # raw tab or carriage return inside a JSON string is a reply no parser reads.
   if command -v jq >/dev/null 2>&1; then
     printf '%s' "$1" | jq -Rs .
   else
-    printf '"%s"' "$(printf '%s' "$1" | tr '\n' ' ' | sed 's/\\/\\\\/g; s/"/\\"/g')"
+    printf '"%s"' "$(printf '%s' "$1" | tr '\000-\037' ' ' | sed 's/\\/\\\\/g; s/"/\\"/g')"
   fi
 }
 
@@ -109,13 +115,10 @@ case "$HOOK_ID" in
     # Neither tool adds this to the prompt today. Cursor's beforeSubmitPrompt
     # schema is {"continue": bool} and cannot inject context, so always let the
     # prompt through. Grok discards an allowing UserPromptSubmit hook's stdout
-    # (its hooks guide, CLI 1.0.77), which is why .grok/hooks/hooks.json no
-    # longer wires this id. The Grok branch stays for a version that keeps it.
-    if [ "$HARNESS" = "cursor" ]; then
-      printf '{"continue":true}'
-    else
-      [ -n "$OUT" ] && printf '%s\n' "$OUT"
-    fi
+    # (its hooks guide, CLI 1.0.77), so .grok/hooks/hooks.json does not wire
+    # this id and nothing is printed for it: a branch nothing runs and no test
+    # covers is one nobody can tell from a working one.
+    [ "$HARNESS" = "cursor" ] && printf '{"continue":true}'
     exit 0
     ;;
   session-start)

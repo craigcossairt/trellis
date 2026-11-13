@@ -92,19 +92,26 @@ fit your project. `docs/harness-support.md` lists the coverage and limits.
       `.codex/README.md` for Windows paths and the `TRELLIS_BASH` override.
 - [ ] **Claude Code:** nothing to do. It reads `.claude/settings.json` on its own.
 - [ ] **Cursor:** trust the workspace when it asks. **On Windows, before your first edit**,
-      open `.cursor/hooks.json` and replace each `bash` with the full path to Git Bash,
-      `"C:/Program Files/Git/bin/bash.exe"`. Left as it is, the secrets check may not be able
-      to start, and it is set to refuse an edit it could not check. That looks like every edit
-      failing.
+      point it at Git Bash. In `.cursor/hooks.json`, each of the four `command` values starts
+      with the word `bash`. Swap that one word for `C:\\PROGRA~1\\Git\\bin\\bash.exe`, so
+      the first one reads
+      `"command": "C:\\PROGRA~1\\Git\\bin\\bash.exe bin/run-claude-hook.sh cursor session-start",`
+      and leave the long comment at the top of the file alone. Left as `bash`, the hooks run
+      inside WSL if you have it and cannot start at all if you do not, and the secrets check
+      is set to refuse an edit it could not check. That looks like every edit failing. If
+      people on macOS or Linux share this repository, do not commit that edit: the Windows
+      section of `docs/harness-support.md` has the other way, and a line to paste that shows
+      whether the command works on your machine.
 - [ ] **Grok Build:** run `/hooks-trust` the first time you open the project. **On Windows**,
-      make the same `bash` replacement in `.grok/hooks/hooks.json`, for the same reason. Grok
-      also reads the Claude and Cursor hook files by default, so expect four harmless "hook
-      load error" lines for the Cursor file. `docs/harness-support.md` has the details.
+      set the environment variable `GROK_SHELL=bash` so Grok runs the hooks under Git Bash.
+      There is no file to edit. Grok also reads the Claude and Cursor hook files by default,
+      so expect four harmless "hook load error" lines for the Cursor file.
+      `docs/harness-support.md` has the details.
 - [ ] **Muse Code, Antigravity, Gemini CLI, Copilot:** no in-session hooks are shipped for
       these. They get the rules, and all but Copilot can reach the skills; the Git push gate
       and CI still work. If Antigravity is your tool, read its note in
       `docs/harness-support.md` first: it loads only the first 24,000 bytes of `AGENTS.md`,
-      and this file ships longer than that.
+      and `AGENTS.md` ships longer than that.
 - [ ] One limit, in every tool: the secrets rail checks the file an **edit tool** names. A
       shell command that writes a file does not pass through it. It stops the common accident;
       it is not a wall.

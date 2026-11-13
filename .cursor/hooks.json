@@ -1,5 +1,5 @@
 {
-  "$schema_comment": "Cursor hooks. Canonical guardrail logic lives in .claude/hooks/ and brain/hooks/; bin/run-claude-hook.sh only adapts payload and verdict shapes - never fork hook logic into a Cursor-only copy. Trust the workspace so project hooks load; check the Hooks output channel if nothing fires. WINDOWS: replace `bash` with Git Bash's full path (e.g. \"C:/Program Files/Git/bin/bash.exe\"). Note: Cursor cannot inject prompt context from beforeSubmitPrompt yet, so brain enrichment is best-effort there - agents should query the brain MCP or search it directly on substantive prompts.",
+  "$schema_comment": "Cursor hooks. Canonical guardrail logic lives in .claude/hooks/ and brain/hooks/; bin/run-claude-hook.sh only adapts payload and verdict shapes - never fork hook logic into a Cursor-only copy. Trust the workspace so project hooks load; check the Hooks output channel if nothing fires. WINDOWS: a bare `bash` is WSL's or nothing. Before your first edit, see the Windows section of docs/harness-support.md for the exact command lines, and leave this comment as it is. Note: Cursor cannot inject prompt context from beforeSubmitPrompt yet, so brain enrichment is best-effort there - agents should query the brain MCP or search it directly on substantive prompts.",
   "version": 1,
   "hooks": {
     "sessionStart": [

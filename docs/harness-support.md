@@ -15,7 +15,7 @@ Updated 2026-11-13. This table describes the files shipped here, not every featu
 | | Claude Code | Cursor | Grok Build | Codex | Muse Code | Antigravity | Gemini CLI | Copilot |
 |---|---|---|---|---|---|---|---|---|
 | Reads `AGENTS.md` | yes | yes | yes | yes | yes\* | first 24,000 bytes\* | via `GEMINI.md` | yes |
-| Session-start context | wired | wired | shown to you (see note) | wired | **no** | **no** | **no** | **no** |
+| Session-start context | wired | wired | shown to you\* (see note) | wired | **no** | **no** | **no** | **no** |
 | Sensitive-file check on supported edit tools | wired | wired | wired | `apply_patch` | **no** | **no** | **no** | **no** |
 | Formats on edit | wired | wired | wired | `apply_patch` | **no** | **no** | **no** | **no** |
 | Injects `brain/` context | wired | **no** | **no** | wired | **no** | **no** | **no** | **no** |
@@ -89,20 +89,29 @@ Guardrail parity through `.cursor/hooks.json`, which calls the same canonical sc
 - **Its MCP file is `.cursor/mcp.json`**, not `.mcp.json`. It is ignored by git here for the
   same reason `.mcp.json` is.
 
-Its hook config declares `failClosed: true` on the block hook, so a hook that errors refuses the
-edit rather than waving it through. You must trust the workspace for project hooks to load. On
-Windows, see the Windows section below before your first edit: with a bare `bash` that
-fail-closed setting refuses every edit.
+Its hook config declares `failClosed: true` on the block hook, so a check that cannot start,
+times out or answers nothing refuses the edit rather than waving it through. That covers the
+adapter failing, not the check behind it. Once `bin/run-claude-hook.sh` is running it treats
+only the check's own refusal (exit 2) as a refusal, the rule Claude Code applies to a hook, so
+a check that crashes partway (exit 1, exit 127, a kill) lets the edit through. Run against
+stub checks on 2026-11-13: each of those came back as an allow. The check itself answers 2 for
+a payload it cannot read. The same holds for Grok Build.
+
+You must trust the workspace for project hooks to load. On Windows, see the Windows section
+below before your first edit: a bare `bash` there is WSL's or nothing, and when it is nothing
+that fail-closed setting refuses every edit.
 
 ### Grok Build
 Checked against Grok CLI 1.0.77 on 2026-11-13: its shipped user guide for what it reads, and
 `grok inspect` in this repository for what it loaded. Neither is a live session.
 
 - **Skills and commands arrive through `.agents/skills/`.** `grok inspect` resolves `setup`,
-  `tdd` and the rest to the routers there, and lists the personas in `.claude/agents/`.
+  `tdd` and the rest to the routers there, and lists the personas in `.claude/agents/`. Typing
+  `/setup` in a session was not tried.
 - **Three hooks are wired** in `.grok/hooks/hooks.json` through the shared adapter: session
   start, the sensitive-file check, and format on edit. The check declares `failClosed: true`,
-  so a hook that cannot run refuses the edit. Grok's own default is to let it through.
+  so a hook that cannot run refuses the edit. Grok's own default is to let it through. The
+  limit described under Cursor applies here too: a check that starts and then crashes allows.
 - **Session-start context reaches you, and maybe not the agent.** Grok reads only a top-level
   `systemMessage` from a SessionStart hook and ignores plain output, so the adapter sends
   that. Its guide does not say whether the model receives a `systemMessage` or only you see
@@ -185,19 +194,68 @@ here. Advisory, plus the configured Git push gate and CI.
 
 ## Windows
 
-The Cursor and Grok hook configs invoke `bash`. On Windows a bare `bash` can resolve to the WSL
-stub, where `HOME` and every path are wrong and the hooks fail in confusing ways. Cursor's
-documentation says it runs hook commands through PowerShell there, and on the Windows machine
-this was checked on PowerShell resolved `bash` to that stub and to nothing else. Replace it
-with Git Bash's full path in both files:
+The Cursor and Grok hook configs start each command with `bash`. On Windows that word does
+not mean Git Bash: Git for Windows puts only `Git\cmd` on `PATH`, so a bare `bash` is WSL's
+launcher or nothing. Cursor's documentation says it runs hook commands through PowerShell
+there.
 
-```text
-"C:/Program Files/Git/bin/bash.exe" bin/run-claude-hook.sh cursor session-start
+What that does depends on the machine. On the one this was checked on (2026-11-13, Windows
+PowerShell 5.1, WSL with Ubuntu), PowerShell found only WSL's `bash`, and the hooks ran inside
+Linux: the session block came back and the sensitive-file check refused a `.env` and allowed
+an ordinary file, through the slower path that has no `jq`. On a machine with no WSL
+distribution the launcher has nothing to start (not run here), and because both files mark the
+sensitive-file check `failClosed`, the tool then refuses every edit. That is the safe
+direction, and it looks like the template being broken. Settle it before your first edit.
+
+**Grok Build.** Set the environment variable `GROK_SHELL=bash`. Grok's guide names it as the
+setting for hook files shared with other platforms, and says the command then runs under Git
+Bash. Nothing in the repository changes. From the guide; not run here.
+
+**Cursor, when only Windows machines use the repository.** In `.cursor/hooks.json`, change the
+first word of each of the four `command` values and nothing else in the file. The first one
+becomes:
+
+```json
+"command": "C:\\PROGRA~1\\Git\\bin\\bash.exe bin/run-claude-hook.sh cursor session-start",
 ```
 
-Do this before your first edit. Both files mark the sensitive-file check `failClosed`, so a
-check that cannot start under the wrong `bash` makes the tool refuse every edit. That is the
-safe direction, and it looks like the template being broken.
+`PROGRA~1` is the short name Windows keeps for `Program Files`. It is there so the command
+holds no space and needs no quotes. A quoted path cannot be typed into a JSON string as it
+stands, and PowerShell stops with an error on a command that opens with one. Each `\\` is one
+backslash, written the way JSON asks. Each form below was handed to a fresh shell as one
+command, from this repository's folder, on 2026-11-13:
+
+| The command starts with | PowerShell | `cmd` |
+|---|---|---|
+| `C:\PROGRA~1\Git\bin\bash.exe` | runs under Git Bash | runs under Git Bash |
+| `& 'C:/Program Files/Git/bin/bash.exe'` | runs under Git Bash | fails |
+| `"C:\Program Files\Git\bin\bash.exe"` | fails | runs under Git Bash |
+| `bash` | runs inside WSL | runs inside WSL |
+
+If Git is installed somewhere else, or `dir /x C:\` shows no `PROGRA~1`, use the second form
+with your own path. It needs PowerShell.
+
+To see whether a line works before you rely on it, open PowerShell in the project folder and
+paste it with something on its input (the hook waits for input otherwise):
+
+```powershell
+'{}' | C:\PROGRA~1\Git\bin\bash.exe bin/run-claude-hook.sh cursor session-start
+```
+
+A reply that starts `{"additional_context":"=== SESSION CONTEXT ===\n` came from Git Bash. One
+with spaces where the `\n` should be came from WSL. None of this was run inside Cursor, so
+step 9 of `SETUP.md` is the check that counts.
+
+**Cursor, when macOS or Linux machines share the repository.** That edit puts a Windows path
+in a file everybody runs, and it breaks the hooks for everybody else. Leaving it uncommitted
+does not last either: once the push gate is configured, `bin/verify-green.sh` will not record
+a proof while a tracked file has unstaged changes. What is left is to make `bash` mean Git
+Bash on the Windows machine itself, by putting `C:\Program Files\Git\bin` ahead of
+`C:\Windows\System32` in the system `PATH`. That folder holds `bash.exe`, `sh.exe` and
+`git.exe` and nothing else. With it first in one PowerShell session's `PATH`, the unedited
+`bash bin/run-claude-hook.sh ...` line ran under Git Bash here; the system setting itself was
+not changed to test it. The cost is that typing `bash` no longer opens WSL on that machine
+(`wsl` still does). There is no cleaner answer today.
 
 Claude's `$CLAUDE_PROJECT_DIR` resolves script paths, but does not choose the Bash executable.
 Check its selected shell too. Codex's Windows launcher uses Python through the selected shell; the adapter

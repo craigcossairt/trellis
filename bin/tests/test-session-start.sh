@@ -359,12 +359,25 @@ ADP="$TMP/adapter"; new_repo "$ADP"
 must mkdir -p "$ADP/bin" "$ADP/.claude/hooks"
 must cp "$ADAPTER" "$ADP/bin/run-claude-hook.sh"
 must cp "$HOOK" "$ADP/.claude/hooks/session-start.sh"
+# A commit subject holding the two characters a JSON string must escape. The
+# hook prints recent subjects, so they land inside the reply.
+must git -C "$ADP" commit -q --allow-empty -m 'say "hi" to C:\dir'
 AOUT=""; ARC=0
-adapter() { # $1 harness
-  AOUT="$(cd "$ADP" && printf '{}' | bash bin/run-claude-hook.sh "$1" session-start 2>/dev/null)"
+adapter() { # $1 harness, $2 optional repo (default: the real hook's)
+  AOUT="$(cd "${2:-$ADP}" && printf '{}' | bash bin/run-claude-hook.sh "$1" session-start 2>/dev/null)"
   ARC=$?
 }
 one_line() { [ "$(printf '%s\n' "$AOUT" | wc -l | tr -d ' ')" = 1 ]; }
+# The reply is read by a JSON parser in the tool, so one reads it here. A match
+# on how the text starts and ends passes a reply no parser accepts.
+command -v jq >/dev/null 2>&1 || {
+  echo "FIXTURE FAILED: jq is needed to parse the adapter's replies." >&2
+  echo "  Skipping would report replies nobody parsed as replies that parse." >&2
+  exit 1
+}
+parses() { printf '%s' "$AOUT" | jq -e "$1" >/dev/null 2>&1; } # $1 a jq test that must hold
+c_parses() { if parses "$2"; then ok "$1"; else bad "$1" "$AOUT"; fi; }
+HELD='contains("=== END SESSION CONTEXT ===") and contains("say \"hi\" to C:\\dir")'
 
 adapter grok
 c_eq "grok: the adapter exits 0" "$ARC" 0
@@ -378,14 +391,90 @@ case "$AOUT" in
 esac
 if one_line; then ok "grok: newlines are escaped (one line of JSON)"
 else bad "grok: newlines are escaped (one line of JSON)" "$AOUT"; fi
+c_parses "grok: the reply parses, and systemMessage holds the block and a quoted subject" \
+  ".systemMessage | $HELD"
 
 adapter cursor
+c_eq "cursor: the adapter exits 0" "$ARC" 0
 case "$AOUT" in
   '{"additional_context":"'*'"}') ok "cursor: the reply carries additional_context" ;;
   *) bad "cursor: the reply carries additional_context" "$AOUT" ;;
 esac
 if one_line; then ok "cursor: newlines are escaped (one line of JSON)"
 else bad "cursor: newlines are escaped (one line of JSON)" "$AOUT"; fi
+c_parses "cursor: the reply parses, and additional_context holds the block and a quoted subject" \
+  ".additional_context | $HELD"
+
+# The same adapter over a stub hook whose text is known to the byte: a tab, a
+# carriage return, a line break, a quote and a backslash. With jq the text must
+# come back exactly. Without jq the adapter flattens it by hand, and there a
+# tab or a carriage return left in place is a raw control character inside a
+# JSON string - a reply no parser accepts, on exactly the machines (a bare
+# Windows, a minimal container) where nobody would think to look.
+STUB="$TMP/stub"
+must mkdir -p "$STUB/bin" "$STUB/.claude/hooks"
+must cp "$ADAPTER" "$STUB/bin/run-claude-hook.sh"
+cat > "$STUB/.claude/hooks/session-start.sh" <<'STUBHOOK'
+#!/bin/bash
+printf 'one\ttab\r\nq"uote back\\slash\n'
+STUBHOOK
+
+adapter grok "$STUB"
+# The carriage return is left out of the comparison: a native Windows jq reads
+# its input as text and drops the CR of a CR-LF pair before the adapter's
+# filter sees it. Everything else must come back to the byte.
+c_parses "grok, with jq: the text comes back as written (tab, line break, quote, backslash)" \
+  '(.systemMessage | gsub("\r"; "")) == "one\ttab\nq\"uote back\\slash"'
+
+# The prompt hook through the same adapter. Cursor's schema for it is
+# {"continue": bool} and carries no context, so the adapter always answers
+# with that. Grok discards whatever an allowing prompt hook prints, so nothing
+# is printed for it.
+must mkdir -p "$STUB/brain/hooks"
+cat > "$STUB/brain/hooks/context-enrichment.sh" <<'STUBHOOK'
+#!/bin/bash
+printf 'context from the brain\n'
+STUBHOOK
+AOUT="$(cd "$STUB" && printf '{}' | bash bin/run-claude-hook.sh cursor brain-enrich 2>/dev/null)"
+c_eq "cursor prompt hook: the reply is exactly the continue object" "$AOUT" '{"continue":true}'
+AOUT="$(cd "$STUB" && printf '{}' | bash bin/run-claude-hook.sh grok brain-enrich 2>/dev/null)"
+c_eq "grok prompt hook: nothing is printed" "$AOUT" ''
+
+# A PATH with jq gone and the adapter's other tools still there, built the way
+# test-block-sensitive-files.sh builds its own and verified before use: first
+# by dropping jq's directory, then by a directory of links to just these tools.
+ADAPTER_TOOLS="bash cat mktemp rm tr sed dirname"
+nojq_usable() { # $1 candidate PATH -> jq absent and every tool present
+  PATH="$1" command -v jq >/dev/null 2>&1 && return 1
+  local t
+  for t in $ADAPTER_TOOLS; do
+    PATH="$1" command -v "$t" >/dev/null 2>&1 || return 1
+  done
+  return 0
+}
+NOJQ_PATH=""; cand="$PATH"
+for _ in 1 2 3 4 5; do
+  PATH="$cand" command -v jq >/dev/null 2>&1 || break
+  d="$(CDPATH='' cd -- "$(dirname "$(PATH="$cand" command -v jq)")" >/dev/null && pwd)"
+  cand="$(printf '%s' "$cand" | tr ':' '\n' | grep -vxF "$d" | paste -sd: -)"
+done
+nojq_usable "$cand" && NOJQ_PATH="$cand"
+if [ -z "$NOJQ_PATH" ]; then
+  must mkdir -p "$TMP/nojq-bin"
+  for t in $ADAPTER_TOOLS; do
+    src="$(command -v "$t" 2>/dev/null)" || continue
+    ln -sf "$src" "$TMP/nojq-bin/$t" 2>/dev/null || cp "$src" "$TMP/nojq-bin/$t" 2>/dev/null || true
+  done
+  nojq_usable "$TMP/nojq-bin" && NOJQ_PATH="$TMP/nojq-bin"
+fi
+[ -n "$NOJQ_PATH" ] || {
+  echo "FIXTURE FAILED: could not build a PATH with jq absent and the adapter's tools present." >&2
+  echo "  The no-jq case would have run through jq and passed for the wrong reason." >&2
+  exit 1
+}
+AOUT="$(cd "$STUB" && printf '{}' | PATH="$NOJQ_PATH" bash bin/run-claude-hook.sh cursor session-start 2>/dev/null)"
+c_parses "cursor, without jq: the flattened text is still JSON (each control character a space)" \
+  '.additional_context == "one tab  q\"uote back\\slash"'
 
 echo
 echo "passed: $PASS   failed: $FAIL"

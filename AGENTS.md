@@ -94,11 +94,12 @@ The knowledge in this file and `docs/` is harness-agnostic; each tool gets only 
 | Cursor | `.cursor/rules/project.mdc` (always-on rule) + `.cursor/hooks.json` (guardrail parity) + `.cursor/skills/*` (routers) |
 | Grok Build | `.grok/hooks/hooks.json` + `.agents/skills/*` routers (`.grok/config.toml`: MCP only) |
 | Codex | reads this file natively + `.agents/skills/*` routers + `.codex/hooks.json` |
+| Muse Code, Antigravity | read this file + `.agents/skills/*` routers (per their docs; not run) |
 | Gemini CLI | `GEMINI.md` pointer |
 | GitHub Copilot | `.github/copilot-instructions.md` pointer |
 
 **This table lists what is wired, not what runs. For which features are missing per harness, see
-`docs/harness-support.md`.** Two of the six run no hooks here, and on those every rule here
+`docs/harness-support.md`.** Four of the eight run no hooks here, and on those every rule here
 is advisory - the agent honors it because nothing is enforcing it.
 
 Claude, Cursor, Grok, and Codex all run the SAME canonical hook scripts (via
