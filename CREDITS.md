@@ -21,6 +21,8 @@ renamed loses its parent silently.
 | The correction ladder - fix a repeated agent mistake in code first, then static analysis, then rules, then skills, and prose last | Lauren Tan, "how I shipped 2,500 PRs" (talk, 2026) | `.claude/skills/learn/SKILL.md`, `docs/coding-standards.md` |
 | Coding standards read by a separate reviewer, not the implementer; navigation-miss, tool-economy and bloat captures; merge danger as a one-way or two-way door plus blast radius | Matt Pocock, "fixing the PR bottleneck" (AI Engineer Paris, 2026) and his [skills](https://github.com/mattpocock/skills) `code-review`, `retro` and `pr` | `AGENTS.md` § Working Methodology, `docs/coding-standards.md`, `.claude/skills/learn/SKILL.md`, `.github/pull_request_template.md` |
 | Each proposed test seam carries a one-line note on what it catches and what it misses | Matt Pocock's [skills](https://github.com/mattpocock/skills) `tdd` | `docs/methodology/tdd.md` step 1 |
+| Acceptance criteria that must fail at the starting commit, prefactoring as its own first ticket, and expand / migrate / contract for a wide refactor | Matt Pocock's `to-tickets`, in his [skills](https://github.com/mattpocock/skills) and on [AI Hero](https://www.aihero.dev/) | `.claude/skills/prd-to-issues/SKILL.md`, whose slicing rules already followed his earlier `to-issues` |
+| The test for a line in an always-loaded rules file (the agent cannot find it in the code, and every task needs it), skipping a tool's generated rules file, and measuring what loads before the first prompt | Matt Pocock, [AI Hero](https://www.aihero.dev/) | `docs/methodology/rule-changes.md`, `docs/methodology/session-management.md`, `SETUP.md` step 1 |
 | Session-management habits - rewind over correction, new task new session, compact with direction | [Thariq Shihipar](https://x.com/trq212/status/2044548257058328723) | `docs/methodology/session-management.md` |
 | The "second brain" pattern - a `raw/` corpus indexed for retrieval | Ryan Wiggins' Second Brain pattern, with index/log/lint bookkeeping after Andrej Karpathy's LLM-wiki notes | `brain/` |
 | Codex skill discovery, hook events, patch payloads, and trust setup | OpenAI [skills](https://learn.chatgpt.com/docs/build-skills) and [hooks](https://learn.chatgpt.com/docs/hooks) documentation | `.agents/skills/`, `.codex/`, `SETUP.md` |
@@ -60,7 +62,9 @@ that will tread on this template if you install them, are in
 | [gstack](https://github.com/garrytan/gstack) and [gbrain](https://github.com/garrytan/gbrain) | Garry Tan | Recommended with warnings - both overlap things this template ships |
 | [anydoc](https://github.com/firecrawl/anydoc) | Firecrawl | Recommended, documents to markdown |
 | [Longshot](https://github.com/craigcossairt/Longshot) | this template's author | Recommended, screenshots. Disclosed as the author's own tool where it is listed |
-| [Google Stitch](https://stitch.withgoogle.com/) | Google | Recommended, first-draft visuals for people new to design |
+| [T3 Code](https://github.com/pingdotgg/t3code) | pingdotgg | Recommended, runs several coding agents in one app |
+| [superpowers](https://github.com/obra/superpowers) | Jesse Vincent | Listed with a warning - its session-start instruction competes with this template's protocols |
+| [Google Stitch](https://stitch.google.com/) | Google | Recommended, first-draft visuals for people new to design |
 | [Paper](https://paper.design/) | Paper | Recommended, design and code as one artifact |
 | [grill-design](https://github.com/will-ness-ai/skills) | Will Ness | This template's `/grill-design` skill is adapted from it |
 

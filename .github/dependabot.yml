@@ -1,0 +1,36 @@
+# Dependabot version updates: a weekly pull request when something this
+# repository depends on has a newer release.
+#
+# The template ships one entry, for the GitHub Actions its own CI workflow uses
+# (actions/checkout and friends). Those are pinned by major version and go stale
+# like any other dependency, and nothing else in here would tell you.
+#
+# ADD YOUR OWN ECOSYSTEM. This file knows nothing about your app's packages
+# until you add an entry for them. The setup skill does this for you; by hand,
+# copy the block below and change `package-ecosystem` to what your project uses
+# ("npm", "pip", "pub", "cargo", "gomod", "bundler", "gradle", ...) and
+# `directory` to the folder that holds its manifest (package.json,
+# pyproject.toml, pubspec.yaml, ...).
+#
+# This file is the half that lives in git. The other half is a repository
+# setting: Dependabot alerts and security updates are switched on in GitHub, not
+# here. `bash bin/check-repo-settings.sh` tells you whether they are.
+#
+# Two things to know about the pull requests it opens:
+#   - Treat them like any other update: `/review-dependency-updates` reviews
+#     bot pull requests the same way it reviews your own bumps.
+#   - GitHub runs them without your repository's Actions secrets. If you set up
+#     the LEAKS_LIST secret for the leak check, that check prints its "skipped"
+#     notice on a Dependabot pull request rather than running. Add the same
+#     value as a Dependabot secret if you want it checked there too.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      # One pull request for all action updates, instead of one each.
+      github-actions:
+        patterns:
+          - "*"

@@ -1004,6 +1004,21 @@ jobs:
           #     The two direct-installer cases. Through session-start the
           #     variables are already gone.
           #   both removed                                  6 -> 6 red
+          #
+          # Project-brain section (stale, or its last refresh failed), measured
+          # 2026-11-13 over 53 cases, predicted -> observed red:
+          #   setup guard removed (no .last-ingest needed)  1 -> 1
+          #   kill switch ignored                           1 -> 1
+          #   threshold variable ignored                    2 -> 2
+          #   non-number threshold not defaulted            1 -> 1
+          #   failure marker ignored                        4 -> 4
+          #   whole marker printed, not its first line      1 -> 1
+          #   staleness always fires                        2 -> 2
+          #   staleness never fires                         4 -> 4
+          #   threshold 0 no longer disables                0 -> 1
+          #     Predicted equivalent, on the theory that find would reject
+          #     "-mtime +-1". It does not: find accepts it and matches every
+          #     file, so the guard is load-bearing and its case pins it.
           bash bin/tests/test-session-start.sh
 
       - name: CDPATH-guarded self-location
@@ -1130,6 +1145,60 @@ jobs:
           #   failed marker read treated as not set           1 -> 1
           #   "not set" (exit 1) also reported as FAILED      1 -> 1
           bash bin/tests/test-session-start-main-checkout.sh
+
+      - name: Suite - repo settings check (read-only GitHub settings)
+        if: hashFiles('bin/check-repo-settings.sh') != ''
+        run: |
+          # Reads a repository's GitHub settings and reports which protections
+          # are off. Three exit states: 0 nothing off, 1 at least one off,
+          # 2 could not tell (outranks 1, and every finding still prints).
+          # The property that matters most is one a user cannot see: it never
+          # writes. A fake gh on PATH records any call that carries a method
+          # or a field flag, and a case fails if one was sent. The fake does
+          # not evaluate the --jq expressions; those were exercised by real
+          # runs against two repositories when the script was added. 35 cases.
+          #
+          # Mutation ledger, measured 2026-11-13, predicted -> observed red:
+          #
+          #   alerts endpoint error read as ON                2 -> 2
+          #   unreadable on/off field read as OFF             2 -> 2
+          #   ruleset route dropped (classic only)            7 -> 7
+          #   classic protection route dropped                1 -> 1
+          #   found (1) outranks could-not-tell (2)           1 -> 1
+          #   private repo's absent secret scanning a finding 2 -> 2
+          #   vulnerability reporting checked on private      3 -> 3
+          #   admin check removed                             1 -> 1
+          #   gh presence check removed                       1 -> 1
+          #   plan refusal (403 on both routes) read as OFF   1 -> 1
+          #   a write is sent                                 1 -> 1
+          #   default branch hardcoded to main                1 -> 1
+          #   extra field in the repository line accepted     1 -> 1
+          #   --repo shape validation removed                 1 -> 1
+          #   dependabot config always ON                     1 -> 1
+          #   --repo still reads the local tree               1 -> 1
+          #   403 on one route + empty rules read as SKIP     1 -> 1
+          #   non-numeric rule count accepted                 1 -> 1
+          bash bin/tests/test-check-repo-settings.sh
+
+      - name: Suite - brain refresh (optional project memory)
+        if: hashFiles('brain/scripts/refresh.sh') != ''
+        run: |
+          # refresh.sh is the line a schedule runs, so each way it can fail
+          # happens where nobody is watching. It must not set the brain up by
+          # accident, must not index a corpus the ingest refused, and must
+          # leave brain/.refresh-failed behind on either failure, because that
+          # marker is all the session-start hook has to report. Hermetic: a
+          # temp copy of brain/ and a fake indexer. 18 cases.
+          #
+          # Mutation ledger, measured 2026-11-13, predicted -> observed red:
+          #
+          #   setup guard removed (runs with no .last-ingest) 4 -> 4
+          #   ingest failure ignored                          3 -> 3
+          #   index failure ignored                           3 -> 3
+          #   marker never cleared by a clean run             1 -> 1
+          #   marker not written                              2 -> 2
+          #   CDPATH guard dropped from self-location         1 -> 1
+          bash bin/tests/test-brain-refresh.sh
 
       # node is preinstalled on ubuntu-latest, but its version is the image's
       # choice. The suite uses node:test and the hook uses optional chaining,
@@ -1639,6 +1708,14 @@ jobs:
       - name: Suite - session-start main-checkout section on Git for Windows
         if: hashFiles('bin/check-main-checkouts.sh') != ''
         run: bash bin/tests/test-session-start-main-checkout.sh
+      # Both lean on things that differ on Git for Windows: a fake gh found
+      # through PATH, and file ages read by find. Ledgers on the Linux steps.
+      - name: Suite - repo settings check on Git for Windows
+        if: hashFiles('bin/check-repo-settings.sh') != ''
+        run: bash bin/tests/test-check-repo-settings.sh
+      - name: Suite - brain refresh on Git for Windows
+        if: hashFiles('brain/scripts/refresh.sh') != ''
+        run: bash bin/tests/test-brain-refresh.sh
       # Python suites for the tools above. The CRLF case matters most here: a
       # Windows checkout writes README.md with CRLF, which the catalog check
       # must read as the same text.

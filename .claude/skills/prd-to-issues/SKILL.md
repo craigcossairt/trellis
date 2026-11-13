@@ -35,6 +35,17 @@ Prefer AFK over HITL where possible.
 - Prefer many thin slices over few thick ones
 </vertical-slice-rules>
 
+Two kinds of work are not vertical slices, and each has its own place in the order:
+
+- **Prefactoring goes first, as its own issue.** If a slice is only easy once some existing code
+  is reshaped, make the reshaping an issue that changes no behavior, and have the slice blocked
+  by it. A slice that carries its own refactor is two changes in one diff, and a reviewer can
+  check neither.
+- **A wide refactor is three issues: expand, migrate, contract.** When a change touches every
+  caller of something (a renamed column, a new function signature), add the new form beside the
+  old one, move the callers over, then remove the old form. Each step leaves the project working
+  on its own, so the work can stop after any of them.
+
 ### 4. Quiz the user
 
 Present the proposed breakdown as a numbered list. For each slice, show:
@@ -72,9 +83,11 @@ implementation. Reference specific sections of the parent PRD rather than duplic
 
 ## Acceptance criteria
 
-- [ ] Criterion 1
-- [ ] Criterion 2
-- [ ] Criterion 3
+Each criterion names what you would observe if it were NOT met.
+
+- [ ] Criterion 1 - fails today because: <the observation, at the starting commit>
+- [ ] Criterion 2 - fails today because: <...>
+- [ ] Criterion 3 - fails today because: <...>
 
 ## Blocked by
 
@@ -90,5 +103,18 @@ Reference by number from the parent PRD:
 - User story 7
 
 </issue-template>
+
+### Acceptance criteria that can fail
+
+Before creating each issue, check every criterion against the code as it is now. **A criterion
+that is already true at the starting commit proves nothing when it is true at the end.** "The
+settings page works" passes before anyone touches it. "Saving a display name longer than 40
+characters shows the length error; today it saves silently" can only pass once the work is done.
+
+For each criterion, write down the observation that would show it false, and confirm that
+observation holds at the starting commit: run the command, open the page, or read the code path.
+If you cannot make it fail today, the criterion is either already done (drop it) or too vague to
+check (rewrite it). This matters most for AFK slices, where nobody is watching the run that
+declares the issue finished.
 
 Do NOT close or modify the parent PRD issue.

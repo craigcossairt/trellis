@@ -236,6 +236,76 @@ run "$NOINST"
 c_rc "survives a missing installer" 0
 c_has "still completes with no installer" '=== END SESSION CONTEXT ==='
 
+echo "== H. the project brain: stale, or its last refresh failed =="
+# A scheduled refresh fails where nobody is looking, so this section is the
+# alarm. Ages are set with `touch -t` on the stamp file: the hook reads the
+# file's modification time, never the date written inside it.
+brain_repo() { # $1 name -> a repo with brain/ but no stamp
+  local d="$TMP/brain-$1"
+  rm -rf "$d"; new_repo "$d"
+  must mkdir -p "$d/brain"
+  printf '%s' "$d"
+}
+run_env() { # $1 dir, then VAR=value pairs for the hook's environment
+  local dir="$1"; shift
+  OUT="$(cd "$dir" && env -u CLAUDE_PROJECT_DIR "$@" bash "$HOOK" 2>&1)"
+  RC=$?
+}
+
+D="$(brain_repo never)"; needdir "$D"; run "$D"
+c_hasnot "brain never set up: no brain section" 'Project brain'
+
+D="$(brain_repo fresh)"; needdir "$D"
+echo "2026-01-01T00:00:00Z" > "$D/brain/.last-ingest"
+run "$D"
+c_hasnot "ingested just now: no brain section" 'Project brain'
+
+D="$(brain_repo old)"; needdir "$D"
+echo "2020-01-01T00:00:00Z" > "$D/brain/.last-ingest"
+must touch -t 202001010000 "$D/brain/.last-ingest"
+run "$D"
+c_has "ingested years ago: says the brain is stale" '## Project brain is stale'
+c_has "stale: shows the recorded ingest date" 'Last ingest: 2020-01-01T00:00:00Z'
+c_has "stale: names the refresh command" 'bash brain/scripts/refresh\.sh'
+c_rc  "stale: still exits 0" 0
+c_has "stale: the block still closes" '=== END SESSION CONTEXT ==='
+
+run_env "$D" PROJECT_BRAIN_STALE_DAYS=99999
+c_hasnot "threshold raised past the file's age: not stale" 'Project brain'
+run_env "$D" PROJECT_BRAIN_STALE_DAYS=0
+c_hasnot "threshold 0 turns the staleness line off" 'Project brain'
+run_env "$D" PROJECT_BRAIN_STALE_DAYS=soon
+c_has "a threshold that is not a number falls back to the default" '## Project brain is stale'
+run_env "$D" PROJECT_BRAIN_DISABLE=1
+c_hasnot "the brain's kill switch silences the section" 'Project brain'
+
+D="$(brain_repo failed)"; needdir "$D"
+echo "2026-01-01T00:00:00Z" > "$D/brain/.last-ingest"
+printf '2026-03-01 09:00 - the ingest step failed (exit 1).
+second line
+' > "$D/brain/.refresh-failed"
+run "$D"
+c_has "failure marker: says the refresh FAILED" '## Project brain: the last refresh FAILED'
+c_has "failure marker: prints its first line" 'the ingest step failed'
+c_hasnot "failure marker: prints only the first line" 'second line'
+c_has "failure marker: the block still closes" '=== END SESSION CONTEXT ==='
+
+# A marker left behind in a tree whose brain was never set up means nothing:
+# refresh.sh cannot have written it there.
+D="$(brain_repo orphan)"; needdir "$D"
+echo "stray" > "$D/brain/.refresh-failed"
+run "$D"
+c_hasnot "marker without a set-up brain: no brain section" 'Project brain'
+
+# Both at once: the failure is the cause, so it is the one reported.
+D="$(brain_repo both)"; needdir "$D"
+echo "2020-01-01T00:00:00Z" > "$D/brain/.last-ingest"
+must touch -t 202001010000 "$D/brain/.last-ingest"
+echo "2020-01-02 09:00 - the index step failed (exit 3)." > "$D/brain/.refresh-failed"
+run "$D"
+c_has "stale and failed: reports the failure" 'the last refresh FAILED'
+c_hasnot "stale and failed: not also the staleness line" 'Project brain is stale'
+
 echo
 echo "passed: $PASS   failed: $FAIL"
 [ "$FAIL" -eq 0 ]
