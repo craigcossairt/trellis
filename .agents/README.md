@@ -21,5 +21,5 @@ present. Delete `.agents/` to opt out entirely. That removes the skills from
 every tool named above, not only from Codex.
 
 In Codex, invoke a skill by name, for example `$setup` or `$trellis-survey`, or
-describe the task. In Grok Build the same skill is `/setup`. Run `python3 bin/validate-codex.py` to check wiring; on Windows use
+describe the task. Grok Build lists the same skill as `/setup` (`grok inspect` shows it; typing it in a session was not tried). Run `python3 bin/validate-codex.py` to check wiring; on Windows use
 `python`. This checks files, not whether a running Codex session has loaded them.

@@ -7,7 +7,7 @@ rather than skip them: each one is cheap today and easy to forget later.
 ## Two ways to do this
 
 **Let your AI do it.** Open your AI coding tool in this folder and say *"walk me through
-SETUP.md"* - or use `/setup` in Claude Code or Grok Build, or `$setup` in Codex. It asks you each question in plain conversation,
+SETUP.md"* - or use `/setup` in Claude Code, or `$setup` in Codex (Grok Build lists the same skill as `/setup`; typing it there was not tried). It asks you each question in plain conversation,
 makes the edits for you, and shows you every change before saving it. You will not have to edit
 a config file by hand. It starts by asking how much you have built before, and explains more or
 less depending on your answer. This is the recommended path if you are new to this.
@@ -109,7 +109,8 @@ fit your project. `docs/harness-support.md` lists the coverage and limits.
       so expect four harmless "hook load error" lines for the Cursor file.
       `docs/harness-support.md` has the details.
 - [ ] **Muse Code, Antigravity, Gemini CLI, Copilot:** no in-session hooks are shipped for
-      these. They get the rules, and all but Copilot can reach the skills; the Git push gate
+      these. They get the rules, and all but Copilot can reach the skills, per their own
+      documentation (not run here); the Git push gate
       and CI still work. If Antigravity is your tool, read its note in
       `docs/harness-support.md` first: it loads only the first 24,000 bytes of `AGENTS.md`,
       and `AGENTS.md` ships longer than that.

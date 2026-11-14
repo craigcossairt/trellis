@@ -21,7 +21,7 @@ Updated 2026-11-13. This table describes the files shipped here, not every featu
 | Injects `brain/` context | wired | **no** | **no** | wired | **no** | **no** | **no** | **no** |
 | Skills | yes | via routers | via `.agents/skills` | via `.agents/skills` | via `.agents/skills`\* | via `.agents/skills`\* | via `.agents/skills`\* | **no** |
 | Command protocols | slash commands | via routers | via skill routers | via skill routers | via skill routers\* | via skill routers\* | via skill routers\* | **no** |
-| Shipped `.claude/agents` personas | yes | yes\* | yes | **no** | not checked | **no** | **no** | **no** |
+| Shipped `.claude/agents` personas | yes | yes\* | yes | **no** | not checked | **no**\* | **no** | **no** |
 | Git push gate, after install and configuration | yes | yes | yes | yes | yes | yes | yes | yes |
 | Hooks CI, on GitHub | yes | yes | yes | yes | yes | yes | yes | yes |
 

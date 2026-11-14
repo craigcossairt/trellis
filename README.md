@@ -23,7 +23,7 @@ that prevents that - before the chaos starts.
 
 | Piece | What it does for you |
 |---|---|
-| `AGENTS.md` | One instruction file that every major AI tool reads (Claude Code, Cursor, Grok Build, Codex, Muse Code, Antigravity, Gemini CLI, Copilot). Your conventions, methodology, and project facts live here once - not re-explained every session. |
+| `AGENTS.md` | One instruction file that every major AI tool reads (Claude Code, Cursor, Grok Build, Codex, Muse Code, Antigravity, Gemini CLI, Copilot; Antigravity loads only its first 24,000 bytes, see `docs/harness-support.md`). Your conventions, methodology, and project facts live here once - not re-explained every session. |
 | `SETUP.md` | Day-1 setup, two ways: let your AI interview you and make the edits, or follow the checklist yourself. About 15 minutes for the core steps, plus three short decisions it makes with you instead of leaving to chance: which outside tools fit your project, whether to turn on project memory, and which protections to switch on in your GitHub repository. Explains what each piece is before asking you to touch it. |
 | `bin/trellis-survey.sh` | Read-only check of static wiring and setup: missing scripts, missing skill routers, Git hook installation, and unfinished context files. Runtime activation and trust are checked separately in SETUP.md. |
 | `DESIGN.md` | Design defaults your agent reads before it builds UI: name every value as a token, treat repeats as components, decide every state up front. No colours or type choices - those are yours, and the file has slots for them. Delete or override freely. |
