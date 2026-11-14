@@ -14,8 +14,9 @@
 # prints the directory twice. In this template that broke the sensitive-file
 # hook (it refused EVERY edit, having lost its path helper) and the Cursor/Grok
 # adapter, which the wiring runs as `bash bin/run-claude-hook.sh` - a relative
-# path - and which fails OPEN on a missing target, so it allowed every edit,
-# .env included. A bare cd (not captured) is wrong too: CDPATH can resolve it
+# path - and which at the time failed OPEN on a missing target, so it allowed
+# every edit, .env included (it refuses now when that check is missing). A
+# bare cd (not captured) is wrong too: CDPATH can resolve it
 # to a DIFFERENT directory of the same name, silently.
 #
 # The guarded form, which never consults CDPATH and never echoes:

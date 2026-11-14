@@ -24,12 +24,14 @@
 #    exact lines for each tool.
 #
 # Where this fails open, and where it does not. The session, format and prompt
-# hooks fail OPEN: a target that is missing or a hook that crashes prints
-# nothing and exits 0, because a path that moved must not stop a session from
-# starting. The sensitive-file check fails CLOSED: it allows an edit only when
+# hooks fail OPEN: a target that is missing prints nothing, a hook that
+# crashes has what it printed before it stopped passed on, and both exit 0,
+# because a path that moved must not stop a session from starting. The
+# sensitive-file check fails CLOSED: it allows an edit only when
 # the check finished and said yes (exit 0). A refusal (exit 2), any other exit
 # (a crash, a missing program, a kill) and a check file that is not there all
-# come back as a refusal, and the last two say that the check did not run.
+# come back as a refusal, and the last two say that the check did not run
+# (a crash's message carries the check's stderr, not its stdout).
 # That is stricter than the rule Claude Code applies to its own hooks, where
 # only exit 2 refuses, and it is on purpose: both tools' hook files mark this
 # check `failClosed`, which covers this script failing to start or timing out,
@@ -108,8 +110,11 @@ RAW="$(cat 2>/dev/null || true)"
 
 TMP_OUT="$(mktemp 2>/dev/null || echo "${TMPDIR:-/tmp}/hook-out.$$")"
 TMP_ERR="$(mktemp 2>/dev/null || echo "${TMPDIR:-/tmp}/hook-err.$$")"
+# The hook's own status, not the pipeline's: under pipefail a hook that
+# answers before it has read a large payload leaves the feeding side cut off
+# (exit 141), and that would stand in for the hook's answer.
 printf '%s' "$RAW" | bash "$TARGET" >"$TMP_OUT" 2>"$TMP_ERR"
-RC=$?
+RC=${PIPESTATUS[1]}
 OUT="$(cat "$TMP_OUT" 2>/dev/null || true)"
 ERR="$(cat "$TMP_ERR" 2>/dev/null || true)"
 rm -f "$TMP_OUT" "$TMP_ERR" 2>/dev/null || true

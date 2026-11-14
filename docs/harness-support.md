@@ -95,7 +95,8 @@ run). That covers the adapter failing to run. Once `bin/run-claude-hook.sh` is r
 keeps to the same rule: it allows an edit only when the check finished and said yes (exit 0).
 The check's own refusal (exit 2), a check that crashes partway (exit 1, exit 127, a kill) and
 a check file that is missing all come back as a refusal, and the last two say that the check
-did not run and carry whatever it printed. If every edit is refused that way, the check is
+did not run. For a crash the message carries what the check wrote to its error stream; what it
+wrote to standard output is dropped. If every edit is refused that way, the check is
 what is broken, not your edit: read what the message says the check printed, and restore
 `.claude/hooks/block-sensitive-files.sh` from the template if it is gone. Run against stub
 checks on 2026-11-13; they are cases in `bin/tests/test-session-start.sh`. This is stricter
@@ -103,8 +104,9 @@ than Claude Code, which treats only exit 2 from its own hook as a refusal, so th
 check lets the edit through.
 The check itself answers 2 for a payload it cannot read, and 0 for an empty one. The same
 holds for Grok Build, whose guide adds that a hook printing plain text and exiting 0 is still
-an allow. The session, format and prompt hooks are different: missing or crashed, they do
-nothing and the session carries on.
+an allow. The session, format and prompt hooks are different: a missing one does nothing, a
+crashed one has whatever it printed before it stopped passed on, and either way the session
+carries on.
 
 You must trust the workspace for project hooks to load. On Windows, see the Windows section
 below before your first edit: a bare `bash` there is WSL's or nothing, and when it is nothing
@@ -214,9 +216,9 @@ PowerShell 5.1, WSL with Ubuntu), PowerShell found only WSL's `bash`, and the ho
 Linux: the session block came back and the sensitive-file check refused a `.env` and allowed
 an ordinary file, through the slower path that has no `jq`. That is not the same as working:
 inside Linux the git state in the session block is whatever Linux's git reports, and the
-format hook looks for the edited file by the Windows path the tool sends and for a formatter
-installed in Linux, finds neither, and does nothing without saying so (read from the hook, not
-run). On a machine with no WSL distribution the launcher has nothing to start (not run here),
+format hook looks for the edited file by the Windows path the tool sends, does not find it,
+and stops without saying so (run under WSL on 2026-11-13 by a reviewer). On a machine with
+no WSL distribution the launcher has nothing to start (not run here),
 and because both files mark the sensitive-file check `failClosed`, the tool then refuses every
 edit. That is the safe direction, and it looks like the template being broken. Either way,
 settle it before your first edit.
@@ -265,13 +267,16 @@ paste it with something on its input (the hook waits for input otherwise):
 '{}' | C:\PROGRA~1\Git\bin\bash.exe bin/run-claude-hook.sh cursor session-start
 ```
 
-Any reply that starts `{"additional_context":"=== SESSION CONTEXT ===` means the line works.
-What follows has `\n` between its lines when `jq` is installed and spaces when it is not. Git
-for Windows does not ship `jq`, so spaces are the usual case and are fine. The reply does not
-tell you which Bash answered. For that, run `bash -c 'uname -s'`: `Linux` is WSL, and a name
-starting `MINGW` is Git Bash (here: `Linux` for the bare word, `MINGW64_NT-10.0-26200` for the
-full path). None of this was run inside Cursor, so step 9 of `SETUP.md` is the check that
-counts.
+Any reply that starts `{"additional_context":"=== SESSION CONTEXT ===` means a Bash answered
+and the adapter ran. What follows has `\n` between its lines when `jq` is installed and spaces
+when it is not. Git for Windows does not ship `jq`, so spaces are the usual case and are fine.
+The reply does not tell you which Bash answered, and WSL's can start the same way and still be
+wrong further down (here: an empty `Branch:` and a git error, because Linux's git could not
+follow this checkout's Windows paths). To see which Bash it was, run the first word of your
+line with `-c 'uname -s'` after it, so `bash -c 'uname -s'` for the bare word and
+`C:\PROGRA~1\Git\bin\bash.exe -c 'uname -s'` for the full path: `Linux` is WSL, and anything
+else is Git Bash (here: `Linux` for the bare word, `MINGW64_NT-10.0-26200` for the full
+path). None of this was run inside Cursor, so step 9 of `SETUP.md` is the check that counts.
 
 **Cursor, when macOS or Linux machines share the repository.** That edit puts a Windows path
 in a file everybody runs, and it breaks the hooks for everybody else. Leaving it uncommitted

@@ -177,8 +177,10 @@ what protects you; the check only catches the common case.
       `.github/copilot-instructions.md` (GitHub Copilot). `.agents/` is shared: it holds the
       skill pointers for Codex, Grok Build, Muse Code, Antigravity and Gemini CLI, so delete it
       only if you use none of those. If you keep
-      `.cursor/` or `.grok/`, also keep `bin/run-claude-hook.sh`, which is how those two run the
-      same safety rails.
+      `.cursor/` or `.grok/`, also keep `bin/run-claude-hook.sh` and `.claude/hooks/`: the
+      script is how those two run the safety rails, and the folder is where the rails are.
+      Without `.claude/hooks/block-sensitive-files.sh`, every edit in those two tools is
+      refused.
 - [ ] **The push gate** (`.githooks/`, `bin/verify-green.sh`, `bin/install-git-hooks.sh`) if you
       never want push-time checks. It does nothing until you configure it, so keeping it costs
       you nothing.

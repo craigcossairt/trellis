@@ -1030,7 +1030,7 @@ jobs:
           #   stale line tells the agent to schedule it     2 -> 2
           #
           # Through the Cursor/Grok adapter (bin/run-claude-hook.sh), measured
-          # 2026-11-13 over 98 cases, each mutant in its own copy beside an
+          # 2026-11-13 over 103 cases, each mutant in its own copy beside an
           # unmutated baseline (0 red), predicted -> observed red. Neither
           # tool reads this hook's plain stdout, so a reply in the wrong shape
           # is a session that opens without the block and says nothing. The
@@ -1054,18 +1054,25 @@ jobs:
           # start. Once it is running, what it prints is the answer, so it
           # allows an edit only when the check finished and said yes. A check
           # that is missing, crashes or is killed comes back as a refusal that
-          # says so. The session, format and prompt hooks stay open, and that
-          # is pinned too: a missing path must not stop a session starting.
+          # says so, whatever its exit status was, and that status is the
+          # check's own, not the pipeline's: a check that says yes before it
+          # has read a large payload is still a yes. The session, format and
+          # prompt hooks stay open, and that is pinned too: a missing path
+          # must not stop a session starting.
           # Same run:
-          #   a check that did not finish is allowed        7 -> 7
+          #   a check that did not finish is allowed        8 -> 8
           #   a check that is missing is allowed            4 -> 4
           #   a missing target refuses for every hook       3 -> 3
-          #   the check's yes is not taken as a yes         3 -> 3
-          #   its own refusal reported as a failed run      1 -> 1
+          #   the check's yes is not taken as a yes         5 -> 5
+          #   its own refusal reported as a failed run      2 -> 2
           #   failed-run reply drops what the check said    1 -> 1
           #   a refusal exits 0                             5 -> 5
-          #   a refusal prints no reply                     8 -> 8
+          #   a refusal prints no reply                     10 -> 10
           #   a refusal's reason is not on stderr           1 -> 1
+          #   the pipeline's status taken for the check's   1 -> 1
+          #   only exits 1, 127 and a kill are unfinished   1 -> 1
+          #   a refusal the check gave no reason has none   1 -> 1
+          #   a note from a check that says yes is dropped  1 -> 1
           bash bin/tests/test-session-start.sh
 
       - name: CDPATH-guarded self-location
@@ -1755,12 +1762,16 @@ jobs:
           # reads as project memory working. The test is "there is at least
           # one sensitive-file entry and every one sets failClosed", so a
           # second entry, or another hook with no command key, does not trip
-          # it. Ten copies were made by hand on 2026-11-13 and this step did
-          # what was predicted on each, 10 of 10. Red: failClosed removed from
+          # it. A Grok handler may be written as a program plus an `args`
+          # array (its hooks guide, CLI 1.0.77), so the Grok test reads both.
+          # Thirteen copies were made by hand on 2026-11-13 and this step did
+          # what was predicted on each, 13 of 13. Red: failClosed removed from
           # each file, set false, a Grok prompt hook added, one of two
-          # sensitive-file entries not failClosed, the entry removed. Green:
+          # sensitive-file entries not failClosed, the entry removed, a Grok
+          # entry in the args form with failClosed false or absent. Green:
           # either adapter's file deleted, a second entry that sets it, an
-          # extra entry with no command key.
+          # extra entry with no command key, a Grok entry in the args form
+          # that sets it.
           pin() { # $1 file, $2 jq test that must hold, $3 what it means
             [ -f "$1" ] || return 0
             jq -e "$2" "$1" >/dev/null 2>&1 && { echo "ok $1: $3"; return 0; }
@@ -1771,7 +1782,7 @@ jobs:
             '[.hooks.preToolUse[] | select((.command // "") | contains("block-sensitive-files")) | .failClosed] | length > 0 and all(. == true)' \
             'the sensitive-file check sets failClosed'
           pin .grok/hooks/hooks.json \
-            '[.hooks.PreToolUse[].hooks[] | select((.command // "") | contains("block-sensitive-files")) | .failClosed] | length > 0 and all(. == true)' \
+            '[.hooks.PreToolUse[].hooks[] | select(([.command // "", (.args // [])[]] | map(tostring) | join(" ")) | contains("block-sensitive-files")) | .failClosed] | length > 0 and all(. == true)' \
             'the sensitive-file check sets failClosed'
           pin .grok/hooks/hooks.json '.hooks | has("UserPromptSubmit") | not' \
             'no UserPromptSubmit hook is wired (Grok discards its output)'

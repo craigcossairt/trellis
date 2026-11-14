@@ -537,6 +537,35 @@ check_stub 'kill -9 $$'
 guard cursor
 c_parses "cursor: a check that is killed -> deny" '.permission == "deny"'
 
+# Any exit but 0 and 2 is a check that did not finish, not only the ones a
+# crash usually gives.
+check_stub 'exit 3'
+guard cursor
+c_parses "cursor: a check that ends with an exit nobody listed (3) -> deny" \
+  '.permission == "deny" and (.user_message | contains("did not finish (exit 3)"))'
+
+check_stub 'exit 2'
+guard grok
+c_parses "grok: a check that says no and gives no reason -> deny, with a reason all the same" \
+  '.decision == "deny" and (.reason | contains("Blocked by hook"))'
+
+check_stub 'echo "note from the check" >&2; exit 0'
+guard cursor
+c_parses "cursor: a check that says yes and writes a note -> allow" '.permission == "allow"'
+case "$AERR" in
+  *"note from the check"*) ok "cursor: and the note is passed on, on stderr" ;;
+  *) bad "cursor: and the note is passed on, on stderr" "$AERR" ;;
+esac
+
+# A check that answers before it has read its input. The adapter feeds the
+# payload through a pipe, and with a payload larger than the pipe holds the
+# feeding side is cut off (exit 141). That is not the check's answer.
+printf '#!/bin/bash\nexit 0\n' > "$STUB/.claude/hooks/block-sensitive-files.sh"
+BIG="$(head -c 300000 /dev/zero | tr '\0' 'a')"
+AOUT="$(cd "$STUB" && printf '{"file_path":"src/a.ts","content":"%s"}' "$BIG" | bash bin/run-claude-hook.sh cursor block-sensitive-files 2>"$TMP/guard.err")"
+ARC=$?
+c_parses "cursor: a check that says yes before reading a large payload -> allow" '.permission == "allow"'
+
 must rm -f "$STUB/.claude/hooks/block-sensitive-files.sh"
 guard cursor
 c_parses "cursor: the check's file is missing -> deny, and the reply says it is missing" \
