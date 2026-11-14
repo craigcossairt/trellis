@@ -44,7 +44,8 @@
 # else. Pinned here: a required key in the wrong place or with no value is
 # not there; a layout the reader does not follow (the list or an entry on one
 # line, a second document, a tab, an alias, a tag, a merge, a value over two
-# lines, a key written twice, a byte that is not text) is UNKNOWN and never
+# lines, a key written twice, a byte that is not text, a line of more than
+# 1024 bytes) is UNKNOWN and never
 # OFF; and the plain layouts it must read, quoted keys included, are read.
 # NOT checked, by this suite or the script: whether a value is one GitHub
 # accepts. A misspelt ecosystem name or interval still reads ON, which is why
@@ -830,6 +831,17 @@ healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: *n' "$W" "$I"; unread "a
 healthy; dep 'version: 2' 'y: &n a' 'updates:' "$E" "$DR" '    x: *n b' "$W" "$I"; unread "words after an alias"
 healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: |' '      a' "$W" "$I"; unread "a block of text (|) under a key the script does not read"
 healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: >' '      a' "$W" "$I"; unread "a folded block of text (>)"
+# The mark alone, with no text under it, is an empty value to a YAML parser:
+# the directory is not there. The two files above have text under the mark,
+# and the rule for lines under a key that has a value refuses them whether
+# or not the mark is known; these two have only the mark to go by.
+healthy; dep 'version: 2' 'updates:' "$E" '    directory: |' "$W" "$I"; unread "a block-text mark (|) with nothing under it"
+healthy; dep 'version: 2' 'updates:' "$E" '    directory: >' "$W" "$I"; unread "a folded-text mark (>) with nothing under it"
+# After a key the script does not read, the mark alone is all there is to
+# refuse: a parser reads these two files whole, and the script still does
+# not follow block text.
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: |' "$W" "$I"; unread "a block-text mark (|) with nothing under it, after a key the script does not read"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: >' "$W" "$I"; unread "a folded-text mark (>) with nothing under it, after a key the script does not read"
 healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: !!str a' "$W" "$I"; unread "a tag in front of a plain value"
 healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: @a' "$W" "$I"; unread "a value that starts with @"
 healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: %a' "$W" "$I"; unread "a value that starts with %"
@@ -867,8 +879,10 @@ healthy; dep 'version: 2' 'updates:' "$E" "$DR" "    x: a:${TB}b" "$W" "$I"; unr
 healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: "a""b"' "$W" "$I"; unread "two double quotes in a row inside double quotes"
 healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    commit-message:' '      "x":a' "$W" "$I"; unread "a key in quotes with nothing between its colon and the value"
 healthy; dep 'version: 2' 'updates:' "$E" "$DR" "    x: [a,${TB}b]" "$W" "$I"; unread "a tab between the values of a one-line list"
-# A tab is not indentation in YAML, in front of a comment or on an empty
-# line no more than in front of a key, and not after the dash of a list item.
+# libyaml takes no tab where the text of a line starts: in front of a key,
+# in front of a comment, alone on a line, and after the dash of a list item.
+# The YAML 1.2 specification is wider in places (its example 6.3 has a tab
+# after a dash). The reader goes by libyaml, and UNKNOWN is always allowed.
 healthy; dep 'version: 2' 'updates:' "$E" "$DR" "    ${TB}# a note" "$W" "$I"; unread "a tab in front of a comment on a line of its own"
 healthy; dep 'version: 2' 'updates:' "$E" "$DR" "    ${TB}" "$W" "$I"; unread "a line that holds only spaces and a tab"
 healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    labels:' "      - ${TB}deps" "$W" "$I"; unread "a tab after the dash and space of a list item"
@@ -889,6 +903,66 @@ PT='    patterns: ["*"]'
 healthy; dep 'version: 2' "$GW" "$GI" "$GS" "$GV" "$GI" '    x: y' 'updates:' "$D" '    directory: /' "$PT" "$IN"; unread "a group written twice, the second one with no schedule"
 healthy; dep 'version: 2' "$GW" "$GI" "$GS" "$GV" "$GS" 'updates:' "$D" '    directory: /' "$PT" "$IN"; unread "schedule written twice in one group, the second one empty"
 healthy; dep 'version: 2' "$GW" "$GI" "$GS" "$GV" '      interval:' 'updates:' "$D" '    directory: /' "$PT" "$IN"; unread "interval written twice in the schedule of a group, the second one empty"
+
+# In a group, a line where its keys stand has to be a plain key. A key
+# written twice keeps the last, so a second schedule the reader cannot read
+# takes back the one it did read. An anchor on the key is enough for that.
+healthy; dep 'version: 2' "$GW" "$GI" "$GS" "$GV" '    &s schedule:' 'updates:' "$D" '    directory: /' "$PT" "$IN"; unread "the schedule of a group written again with an anchor on the key"
+case "$(note dependabot-config)" in
+  *"a line in a group that is not a plain key"*) ok "and the line says a group holds a line that is not a plain key" ;;
+  *) bad "and the line says a group holds a line that is not a plain key" "$(note dependabot-config)" ;;
+esac
+healthy; dep 'version: 2' "$GW" "$GI" "$GS" "$GV" '      &i interval:' 'updates:' "$D" '    directory: /' "$PT" "$IN"; unread "the interval of a group written again with an anchor on the key"
+case "$(note dependabot-config)" in
+  *"a schedule of a group it cannot follow"*) ok "and the line says it is the schedule of a group" ;;
+  *) bad "and the line says it is the schedule of a group" "$(note dependabot-config)" ;;
+esac
+healthy; dep 'version: 2' "$GW" "$GI" "$GS" "$GV" '    word' 'updates:' "$D" '    directory: /' "$PT" "$IN"; unread "a word alone among the keys of a group"
+healthy; dep 'version: 2' "$GW" "$GI" "$GS" "$GV" '   x: y' 'updates:' "$D" '    directory: /' "$PT" "$IN"; unread "a line set between the name of a group and its keys"
+healthy; dep 'version: 2' "$GW" "$GI" "$GS" "$GV" '        day: monday' 'updates:' "$D" '    directory: /' "$PT" "$IN"; unread "a key set under the interval of a group"
+healthy; dep 'version: 2' "$GW" "$GI" '    schedule: {interval: weekly}' '      x: y' 'updates:' "$D" '    directory: /' "$PT" "$IN"; unread "a line set under the one-line schedule of a group"
+
+# The name of a group with a value on its own line takes no lines under it.
+# To a YAML parser they are an error, and the schedule they seem to spell is
+# not one.
+healthy; dep 'version: 2' "$GW" '  infra: word' "$GS" "$GV" 'updates:' "$D" '    directory: /' "$PT" "$IN"; unread "keys set under a group that has a value on its own line"
+case "$(note dependabot-config)" in
+  *"under a group that has a value"*) ok "and the line says the group has a value" ;;
+  *) bad "and the line says the group has a value" "$(note dependabot-config)" ;;
+esac
+
+# A key with a value on its own line takes no lines under it, at any depth
+# the reader follows. To a YAML parser a key set there is an error and a
+# word set there is more of the value, so the lines are not what they look
+# like. updates: [] is such a key: entries set under it are not entries.
+healthy; dep 'version: 2' 'x: y' '  z: w' 'updates:' "$E" "$DR" "$W" "$I"; unread "a key set under a top-level key that has a value"
+case "$(note dependabot-config)" in
+  *"lines under a key that has a value"*) ok "and the line says the key has a value" ;;
+  *) bad "and the line says the key has a value" "$(note dependabot-config)" ;;
+esac
+healthy; dep 'version: 2' 'updates: []' "$E" "$DR" "$W" "$I"; unread "entries set under an updates list written as []"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: y' '      z: w' "$W" "$I"; unread "a key set under a key of an entry that has a value"
+healthy; dep 'version: 2' "$GW" "$GI" '    labels: word' '      x: y' "$GS" "$GV" 'updates:' "$D" '    directory: /' "$PT" "$IN"; unread "a key set under a key of a group that has a value"
+
+# A one-line schedule is split at its commas. A comma inside quotes cuts a
+# value in two, and what stands after it can look like a key of its own. A
+# YAML parser reads each of these files whole and finds no interval in the
+# schedule (in the third, a cron interval and no cronjob).
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    schedule: {x: "a, interval: weekly"}'; unread "an interval inside a quoted value of a one-line schedule"
+case "$(note dependabot-config)" in
+  *"a one-line schedule it cannot follow"*) ok "and the line says it is the one-line schedule that is not followed" ;;
+  *) bad "and the line says it is the one-line schedule that is not followed" "$(note dependabot-config)" ;;
+esac
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" "    schedule: {x: 'a, interval: weekly'}"; unread "an interval inside a value in single quotes of a one-line schedule"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    schedule: {interval: cron, x: "a, cronjob: b"}'; unread "a cronjob inside a quoted value of a one-line schedule"
+healthy; dep 'version: 2' "$GW" "$GI" '    schedule: {x: "a, interval: weekly"}' 'updates:' "$D" '    directory: /' "$PT" "$IN"; unread "an interval inside a quoted value of the one-line schedule of a group"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    schedule: {x: "a", interval: weekly}'; run --porcelain
+expect "a quoted value beside the interval of a one-line schedule -> ON" 0 dependabot-config ON
+# A bracket inside quotes is still a bracket to the reader of a one-line
+# schedule, and it does not follow a schedule that holds one: UNKNOWN, though
+# a YAML parser reads this file whole. Since every value has to be empty,
+# plain or in quotes that close, this is all the bracket test still decides.
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    schedule: {interval: weekly, x: "a[b"}'; unread "a bracket inside quotes in a one-line schedule"
 
 # Bytes. awk splits lines at a line feed and nowhere else. YAML also ends a
 # line at a carriage return alone and, for libyaml, at three more
@@ -924,6 +998,18 @@ healthy; depb "${HD}${DL}    x: a\355\240\200b\n${TL}"; unread "half of a UTF-16
 healthy; depb "${HD}${DL}    x: a\360\200\200\200b\n${TL}"; unread "four bytes for a character that fits in three (F0 80 80 80)"
 healthy; depb "${HD}${DL}    x: a\364\220\200\200b\n${TL}"; unread "a character past the end of Unicode (F4 90 80 80)"
 healthy; depb "${HD}${DL}    x: a\365\200\200\200b\n${TL}"; unread "a first byte no character has (F5)"
+
+# A key longer than 1024 characters is not one YAML reads: libyaml refuses
+# the file. No line of 1024 bytes or fewer can hold one, so a longer line
+# is not read at all, whatever it holds.
+LK="$(printf '%1025s' '' | tr ' ' a)"
+LV="$(printf '%1017s' '' | tr ' ' a)"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" "    $LK: b" "$W" "$I"; unread "a key of 1025 characters"
+case "$(note dependabot-config)" in
+  *"line 5 "*"1024"*) ok "and the line is named, with the length it may have" ;;
+  *) bad "and the line is named, with the length it may have" "$(note dependabot-config)" ;;
+esac
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" "    x: a$LV" "$W" "$I"; unread "a line of 1025 bytes"
 
 echo "== dependabot.yml: plain layouts that are read"
 healthy; dep 'version: 2' 'updates:' '  - "package-ecosystem": "npm"' "    'directory': '/'" '    "schedule":' '      "interval": "weekly"'; run --porcelain
@@ -964,6 +1050,27 @@ healthy; depb "${HD}${DL}    # \303\251 \340\240\200 \342\254\206\357\270\217 \3
 expect "characters above ASCII of every length -> ON" 0 dependabot-config ON
 healthy; depb "${HD}${DL}    x: a\357\273\277b\n${TL}"; run --porcelain
 expect "a byte-order mark in the middle of the file, which libyaml reads as a character -> ON" 0 dependabot-config ON
+
+# A group may hold other keys than its schedule, with lines of their own
+# under them, and a comment.
+healthy; dep 'version: 2' "$GW" "$GI" '    # one group' '    labels:' '      - infra' '    assignees: ["someone"]' "$GS" "$GV" '      day: monday' \
+  'updates:' "$D" '    directory: /' "$PT" "$IN"
+run --porcelain
+expect "a group with a list and other keys beside its schedule -> ON" 0 dependabot-config ON
+
+# An anchor or a comment after a key is not a value, so a block may follow.
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: &a # note' '      z: w' "$W" "$I"; run --porcelain
+expect "an anchor and a comment after a key, and a block under it -> ON" 0 dependabot-config ON
+# An anchor or a comment after the name of a group is not a value.
+healthy; dep 'version: 2' "$GW" '  infra: &g # the infra group' "$GS" "$GV" 'updates:' "$D" '    directory: /' "$PT" "$IN"; run --porcelain
+expect "a group with an anchor and a comment after its name -> ON" 0 dependabot-config ON
+# A group with a value and no lines under it does not stop the next group.
+healthy; dep 'version: 2' "$GW" '  other: {}' "$GI" "$GS" "$GV" 'updates:' "$D" '    directory: /' "$PT" "$IN"; run --porcelain
+expect "a one-line group with nothing under it, then the group in use -> ON" 0 dependabot-config ON
+
+# The longest line that is read: 1024 bytes.
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" "    x: $LV" "$W" "$I"; run --porcelain
+expect "a line of 1024 bytes -> ON" 0 dependabot-config ON
 
 # The same key in two entries, in two groups and in two schedules is not a
 # key written twice.

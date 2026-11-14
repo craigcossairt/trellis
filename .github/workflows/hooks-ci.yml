@@ -1175,7 +1175,7 @@ jobs:
           # are all under test. gh's own jq is not jq: the suite's header says
           # what that leaves unproven. The shapes were read from real
           # responses on 2026-11-13, except a bypass list with somebody on it,
-          # which is from GitHub's API reference. Needs jq and git. 406 cases.
+          # which is from GitHub's API reference. Needs jq and git. 440 cases.
           #
           # Which repository: the one the checkout pushes to, read from its
           # `origin` remote by git. gh is not asked, because in a checkout
@@ -1221,12 +1221,19 @@ jobs:
           # plain block layout, and UNKNOWN for anything it does not follow:
           # a byte that is not text (a control character, a line break that
           # is not a line feed, text that is not UTF-8), the list or an
-          # entry on one line, a second document, a tab in front of a key, a
-          # value or a comment, alone on a line or after a list dash, a key
+          # entry on one line, a second document, a tab where the text of a
+          # line starts (after its spaces, or as the whole line) or after a
+          # list dash, a key
           # written twice in one entry, schedule or group, a group written
-          # twice, an
+          # twice, a line longer than 1024 bytes (YAML takes no key longer
+          # than 1024 characters), in a multi-ecosystem-groups block a line
+          # that is not a plain key where a key of a group or of its
+          # schedule is due, lines under a key that has a value on its own
+          # line (at the top level, in an entry, in a group and under the
+          # name of a group; `updates: []` with entries under it is one), an
           # alias, a tag, a value over two lines, a merge beside a gap, a
-          # one-line list or map that is not flat, an entry in a group the
+          # one-line list or map that is not flat, a comma inside quotes in
+          # a one-line list or schedule, an entry in a group the
           # file does not define, a version written with anything but digits
           # or with a zero in front (2.0, 2., +2, 02), `version:` twice or
           # carried on to a second line, words after `...` on its line, and
@@ -1248,20 +1255,29 @@ jobs:
           # GitHub accepts a value is not checked: its lists change, and a
           # copy of them here would go stale without failing. Nor is the
           # nesting: the reader takes one line at a time, so a file GitHub
-          # refuses for its indentation can still read ON.
+          # refuses for its indentation can still read ON. It places the
+          # lines under the keys it reads and refuses what it cannot place
+          # there. Under any other key that has nothing after it on its own
+          # line (commit-message, labels, a key of a group that is not its
+          # schedule) the lines of the block are not placed at all.
           #
           # The reader was also run against libyaml (PyYAML's CSafeLoader) on
-          # generated files, each a plain entry with one line of random marks in
-          # it, among them tabs, a carriage return, a control character, U+0085,
-          # U+2028 and characters above ASCII: 12200 files, half with GNU awk
-          # and half with mawk. None read ON through a line libyaml refuses. One
-          # read ON that libyaml refuses for the nesting, a word on a line of
-          # its own among keys, every line of it being one libyaml reads when
-          # the line stands alone. On the first 6100 of those files the reader
-          # of the commit before read 842 ON that libyaml does not read whole.
-          # That run is not part of CI; the cases here are.
+          # generated files with a piece of random marks in each, among them
+          # tabs, a carriage return, a control character, U+0085, U+2028 and
+          # characters above ASCII, half with GNU awk and half with mawk: 12200
+          # files with the piece in a plain entry, 12000 with it in a groups
+          # block, and 12000 with it in a one-line schedule or list or as the
+          # value of a key the reader reads. None read ON through a line libyaml
+          # refuses, and none where libyaml does not find a key the reader
+          # counted. Three read ON that libyaml refuses for the nesting, each in
+          # the block under a key the reader does not read that has nothing
+          # after it on its line (1 of the entry files, 2 of the group files).
+          # On the first 6000 group files the reader of the commit before read
+          # 449 ON that libyaml does not read whole, and on the first 6000 of
+          # the one-line files 40. That run is not part of CI; the cases here
+          # are.
           #
-          # Mutation ledger, measured 2026-11-14, 301 mutants each in its own
+          # Mutation ledger, measured 2026-11-14, 321 mutants each in its own
           # copy beside an unmutated baseline (0 red), predicted -> observed
           # red. Measured on Linux (bash 5.3, GNU awk 5.3, jq 1.8.1, under
           # WSL). The unmutated suite also passes there with mawk 1.3.4 as
@@ -1269,14 +1285,30 @@ jobs:
           # only be measured on Linux: Git for Windows' awk drops a carriage
           # return before the program sees the line, so removing the script's
           # own line for it changes nothing there.
-          # All 301 mutants were run on the script as it is here. Nine rows were
-          # predicted low, by one to three cases: each of those mutants fails
-          # more cases than the count written beforehand, and is caught either
-          # way. Their rows show both numbers.
+          # All 321 mutants were run on the script as it is here. 10 rows were
+          # predicted wrong (4 low and 6 high): each of those mutants fails a
+          # different number of cases than the count written beforehand, and is
+          # caught either way. Their rows show both numbers. Five of the 440
+          # cases were added after that run had begun. It showed three mutants
+          # the suite no longer caught, each because a rule new in this round
+          # refuses first the one file that used to catch it: the bracket test
+          # of a one-line schedule, and the marks | and > in the list of
+          # characters a value may not start with. One case was written for the
+          # bracket and four for the marks, each run on its own against every
+          # mutant with its prediction written first, and the eight rows they
+          # fail under were then run against the whole suite. The counts here
+          # are of all 440. Two of the four (a mark after `directory:` with
+          # nothing under it) were predicted to catch the two mark mutants and
+          # do not: after a key the script reads, a second check refuses the
+          # mark. The other two (a mark after a key it does not read) do.
           # Not every line of the reader has a row. Left out: the two tests
           # that a key had no value of its own before the lines under it are
           # read, and the two that a one-line list or map closes on the line
-          # it opens on.
+          # it opens on. Nor has every edge of the byte pass a case: a
+          # reviewer changed five of its ranges at their ends (U+0080 and
+          # U+009F let through, E0 9F and F0 8F let through, C1 starting a
+          # character), `\r$` to `\r+$`, and an empty answer taken as
+          # text, and the suite stayed green for all seven.
           #
           #   alerts endpoint error read as ON                2 -> 2
           #   unreadable on/off field read as OFF             4 -> 4
@@ -1304,7 +1336,7 @@ jobs:
           #   an unreadable route undoes a proven ON          1 -> 1
           #   classic answer missing its fields accepted      1 -> 1
           #   plan refusal on one route read as SKIP          1 -> 1
-          #   a ruleset nobody can bypass blocks nothing      73 -> 73
+          #   a ruleset nobody can bypass blocks nothing      79 -> 79
           #   classic protection contributes nothing          5 -> 5
           #   plan refusal on both routes read as OFF         1 -> 1
           #   any alerts 404 read as off                      1 -> 1
@@ -1315,7 +1347,7 @@ jobs:
           #   branch name sent whatever it holds              1 -> 1
           #   a slash in a branch name refused                1 -> 1
           #   a dependabot file with no entry counts as ON    3 -> 3
-          #   comment lines read as part of the file          5 -> 5
+          #   comment lines read as part of the file          5 -> 6
           #   what the file watches left out of the report    1 -> 1
           #   paused security updates read as ON              2 -> 2
           #   enabled, no word on paused, read as ON          1 -> 1
@@ -1362,7 +1394,7 @@ jobs:
           #   the old name kept after a rename                1 -> 1
           #   the name GitHub gives back not checked          1 -> 1
           #   an answer naming no repository accepted         2 -> 2
-          #   gh asked which repository this is               383 -> 383
+          #   gh asked which repository this is               417 -> 417
           #   an entry with no directory counts               12 -> 12
           #   one entry's keys carry over to the next         2 -> 2
           #   a file that could not be read reported OFF      1 -> 1
@@ -1385,14 +1417,14 @@ jobs:
           #   ~ and null count as values                      7 -> 7
           #   an empty pair of quotes counts as a value       2 -> 2
           #   a key in quotes is not read                     2 -> 2
-          #   an anchor before a value not stepped over       1 -> 1
+          #   an anchor before a value not stepped over       4 -> 5
           #   a comment after a value read as part of it      2 -> 2
-          #   a comment in a value's place read as one        1 -> 1
+          #   a comment in a value's place read as one        3 -> 3
           #   what follows a closing quote ignored            1 -> 1
           #   a backslash inside quotes not noticed           1 -> 1
           #   an alias read as a plain value                  3 -> 3
           #   a tag read as a plain value                     1 -> 1
-          #   a one-line list or map read as plain            28 -> 30
+          #   a one-line list or map read as plain            39 -> 39
           #   a one-line list holding nothing counts          5 -> 5
           #   brackets inside a one-line list not noticed     1 -> 1
           #   a one-line directories list not read            2 -> 2
@@ -1400,7 +1432,7 @@ jobs:
           #   directories as one value passed over            1 -> 1
           #   any key in a one-line schedule counts           1 -> 1
           #   a one-line interval needs no value              1 -> 1
-          #   a one-line schedule not read                    5 -> 5
+          #   a one-line schedule not read                    6 -> 6
           #   an interval beside the entry's keys counts      3 -> 3
           #   an interval under another key counts            1 -> 1
           #   an interval at any depth in schedule counts     1 -> 1
@@ -1417,11 +1449,11 @@ jobs:
           #   a one-line updates list read as empty           1 -> 1
           #   updates: [] not followed                        1 -> 1
           #   a file indented as a whole read as empty        1 -> 1
-          #   an entry's group not looked at                  16 -> 16
-          #   a group with no schedule covers its entries     3 -> 3
-          #   one group not told from the next                1 -> 2
+          #   an entry's group not looked at                  20 -> 19
+          #   a group with no schedule covers its entries     4 -> 3
+          #   one group not told from the next                3 -> 3
           #   a group's one-line schedule not read            3 -> 3
-          #   an interval at any depth in a group counts      1 -> 1
+          #   an interval at any depth in a group counts      2 -> 2
           #   a groups block of unnamed groups passed over    1 -> 1
           #   groups on one line passed over                  1 -> 1
           #   a second groups block read on                   1 -> 1
@@ -1431,8 +1463,8 @@ jobs:
           #   a merge no longer makes a gap UNKNOWN           3 -> 3
           #   a merge makes a complete file UNKNOWN           1 -> 1
           #   a merge beside no entry read as OFF             1 -> 1
-          #   what was not followed left out of verdict       158 -> 158
-          #   a map inside a one-line schedule not noticed    1 -> 1
+          #   what was not followed left out of verdict       186 -> 186
+          #   a bracket in a one-line schedule is not noticed 2 -> 1
           #   a byte-order mark not stepped over              1 -> 1
           #   the mark stepped over on any line               1 -> 1
           #   the mark stepped over anywhere in line one      1 -> 1
@@ -1440,10 +1472,10 @@ jobs:
           #   an empty list element not followed              1 -> 1
           #   an unread directories list taken as a list      2 -> 2
           #   an unread patterns list taken as a list         1 -> 1
-          #   an unread one-line schedule taken as one        2 -> 3
-          #   an alias in a one-line schedule read on         1 -> 1
+          #   an unread one-line schedule taken as one        8 -> 8
+          #   a one-line schedule's values are not looked at  6 -> 6
           #   a grouped entry needs no patterns               5 -> 5
-          #   a one-line patterns list not read               5 -> 6
+          #   a one-line patterns list not read               9 -> 9
           #   a block list of patterns not read               1 -> 1
           #   patterns as one value passed over               1 -> 1
           #   an entry's cron interval needs no cronjob       7 -> 7
@@ -1466,7 +1498,7 @@ jobs:
           #   own schedule: the group is not looked up        2 -> 2
           #   own schedule: the group's is still needed       1 -> 1
           #   an undefined group taken as having no schedule  2 -> 2
-          #   the groups the file defines not recorded        18 -> 18
+          #   the groups the file defines not recorded        21 -> 21
           #   what follows the end mark passed over           1 -> 1
           #   the end-of-document mark not known              3 -> 3
           #   a version not a whole number read as it stands  5 -> 5
@@ -1477,7 +1509,7 @@ jobs:
           #   a whole number other than 2 not read            2 -> 2
           #   version: written twice not noticed              3 -> 3
           #   a version of two digits not read                1 -> 1
-          #   a line in a form not followed is not counted    67 -> 67
+          #   a line in a form not followed is not counted    69 -> 67
           #   the last such line is named, not the first      1 -> 1
           #   a backslash in double quotes not looked for     2 -> 2
           #   a backslash refused in single quotes too        1 -> 1
@@ -1499,14 +1531,14 @@ jobs:
           #   an anchor on an alias passed                    1 -> 1
           #   an alias followed to any name                   2 -> 2
           #   a comment after an alias kept in its name       1 -> 1
-          #   an anchor not stepped over                      3 -> 3
+          #   an anchor not stepped over                      5 -> 5
           #   what follows a key in quotes not looked at      1 -> 1
           #   a second key after a value in quotes passed     1 -> 1
           #   what follows a closing quote not looked at      4 -> 4
           #   what follows a closing bracket not looked at    1 -> 1
           #   a value may start with !                        2 -> 2
-          #   a value may start with |                        1 -> 1
-          #   a value may start with >                        1 -> 1
+          #   a value may start with |                        3 -> 1
+          #   a value may start with >                        3 -> 1
           #   a value may start with %                        1 -> 1
           #   a value may start with @                        2 -> 2
           #   a value may start with a comma                  1 -> 1
@@ -1520,11 +1552,8 @@ jobs:
           #   a dash, ? or colon may never start a value      1 -> 1
           #   a comment does not end a plain value            2 -> 2
           #   a second key on a line passed                   3 -> 3
-          #   a colon at a line's end is not a key's colon    1 -> 2
+          #   a colon at a line's end is not a key's colon    2 -> 2
           #   only the first dash of a line stepped over      1 -> 1
-          #   a version line does not hold what is under it   1 -> 1
-          #   a line set under version passed                 1 -> 1
-          #   a line under another top-level key refused      4 -> 4
           #   only a space comes before a comment in a list   2 -> 2
           #   a tab before a comment or alone is passed over  2 -> 2
           #   a tab after a dash stepped over with the spaces 2 -> 2
@@ -1544,18 +1573,18 @@ jobs:
           #   two double quotes in a row skipped like single  1 -> 1
           #   a tab between values in a list is skipped       1 -> 1
           #   a key written twice in one entry passed         3 -> 3
-          #   an entry's keys not forgotten at the next       13 -> 14
+          #   an entry's keys not forgotten at the next       14 -> 14
           #   a key written twice in one schedule passed      1 -> 1
-          #   a schedule's keys not forgotten at the next     4 -> 7
+          #   a schedule's keys not forgotten at the next     7 -> 7
           #   a key twice in a one-line schedule passed       1 -> 1
           #   a group written twice passed                    1 -> 1
           #   a key written twice in one group passed         1 -> 1
           #   a key twice in a group's schedule passed        1 -> 1
-          #   the byte check left out of the verdict          21 -> 21
+          #   the byte check left out of the verdict          24 -> 24
           #   listed characters looked for, not well-formed   15 -> 15
           #   well-formed characters still refused are passed 6 -> 6
           #   a carriage return at a line's end is not text   2 -> 2
-          #   a tab is not text                               1 -> 2
+          #   a tab is not text                               2 -> 2
           #   control characters below a space are text       4 -> 4
           #   DEL is text                                     1 -> 1
           #   a two-byte character is not text                1 -> 1
@@ -1567,7 +1596,7 @@ jobs:
           #   a character that starts with ED is not text     1 -> 1
           #   any byte may follow F0                          1 -> 1
           #   a character that starts with F0 is not text     1 -> 1
-          #   F4 and F5 may start a character like F1         1 -> 2
+          #   F4 and F5 may start a character like F1         2 -> 2
           #   a character that starts with F1-F3 is not text  1 -> 1
           #   any byte may follow F4                          1 -> 1
           #   a character that starts with F4 is not text     1 -> 1
@@ -1579,6 +1608,29 @@ jobs:
           #   U+FFFE passed                                   1 -> 1
           #   the line named is always the first              1 -> 1
           #   ED may start a three-byte character like E1     1 -> 1
+          #   a group's line that is no plain key passed over 4 -> 4
+          #   a line between a group's name and keys is a key 1 -> 1
+          #   a group's line not asked whether it is a key    3 -> 3
+          #   a group schedule's line it cannot follow passed 4 -> 4
+          #   a line under a group's one-line schedule a key  1 -> 1
+          #   a group schedule's line not asked if it is key  1 -> 1
+          #   a line of any length is read                    3 -> 3
+          #   a line of 1025 bytes is read                    1 -> 1
+          #   a line of 1024 bytes is not read                1 -> 1
+          #   a long line reported as a byte that is not text 1 -> 1
+          #   the byte pass does not say a line is long       1 -> 1
+          #   lines under a group that has a value are read   2 -> 2
+          #   anchor or comment after a group's name a value  1 -> 1
+          #   a group with a value stops the groups after it  1 -> 1
+          #   lines under a group with a value passed unsaid  1 -> 1
+          #   lines under a top key with a value are read     4 -> 4
+          #   an anchor or comment after a top key is a value 2 -> 3
+          #   lines under an entry's key with a value passed  1 -> 1
+          #   lines under an entry's empty key are refused    8 -> 10
+          #   lines under a group's key with a value passed   1 -> 1
+          #   lines under a group's empty key are refused     1 -> 1
+          #   only an alias stops a one-line schedule         5 -> 5
+          #   an alias in a one-line schedule is read on      1 -> 1
           bash bin/tests/test-check-repo-settings.sh
 
       - name: Suite - brain refresh (optional project memory)
