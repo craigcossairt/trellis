@@ -25,16 +25,18 @@
 #      terminal. If it does not exit 0, nothing is installed.
 #   3. Reads your crontab. If it cannot be read, nothing is written.
 #   4. Writes it back with this folder's line added, or replaced if one was
-#      there. Every other line is kept, in order, byte for byte.
-#   5. Reads it back. The write counts only if what comes back is the table
-#      that was written.
+#      there. Every other line is kept, in order, byte for byte. (Empty
+#      lines at the very end of the table are the one thing dropped.)
+#   5. Reads it back. The write counts only if that read works and what
+#      comes back is the table that was written.
 #
 # Which line is this folder's: one this script wrote. That is a schedule, then
 # exactly the job, with whatever PATH it carried. Change the time in
 # `crontab -e` and it is still recognised, and the next run of this script
 # puts it back to 9:00. A line of your own that runs the refresh some other
 # way is not recognised and is left alone, and so is any line that starts
-# with #.
+# with #, and any line that sets a variable (NAME = value), whatever the
+# value is.
 #
 # Run it again after installing bun or node somewhere new, so the job carries
 # the new PATH. To remove the job: `crontab -e`, and delete the line that
@@ -82,17 +84,22 @@ LINE="0 9 * * * $JOB"
 # schedule (five fields, or one @word), then exactly the job, with whatever
 # PATH it carried. This folder's name turning up in a line is not enough. A
 # job that mentions the command in a message, or runs something before or
-# after it, is somebody else's. So is a line that starts with #: a copy of the
-# job that somebody commented out is a comment, and stays.
+# after it, is somebody else's. And what stands before the job has to be made
+# of what a schedule is made of: digits, letters, and * / , - @. That leaves
+# out a line that starts with #, so a copy of the job that somebody commented
+# out stays a comment. It leaves out `NAME = value` too, which is how a
+# crontab sets a variable: the value can be this very job, and five words of
+# it standing where the times go are not times.
 is_mine() { # $1 one crontab line
   local line rest carried
   line="${1#"${1%%[![:space:]]*}"}"
+  line="${line%"${line##*[![:space:]]}"}"
   case "$line" in
-    '#'*) return 1 ;;
     @*) read -r _ rest <<< "$line" ;;
     *)  read -r _ _ _ _ _ rest <<< "$line" ;;
   esac
   case "$rest" in "$JOBHEAD"*"$JOBTAIL") ;; *) return 1 ;; esac
+  case "${line%"$rest"}" in *[!0-9A-Za-z*/,@[:space:]-]*) return 1 ;; esac
   carried="${rest#"$JOBHEAD"}"; carried="${carried%"$JOBTAIL"}"
   case "$carried" in *"'"*) return 1 ;; esac
   return 0
@@ -157,9 +164,10 @@ fi
 # --- 5. read it back -------------------------------------------------------------
 # What comes back has to be what was written, whole. Counting lines is not
 # enough: a table with the right number of lines can still be another table.
-# A read that fails here gives nothing, which is not what was written either.
-now="$(crontab -l 2>/dev/null)" || true
-if [ "$now" != "$new" ]; then
+# A read that fails is not a read, whatever it printed on the way.
+rc=0
+now="$(crontab -l 2>/dev/null)" || rc=$?
+if [ "$rc" -ne 0 ] || [ "$now" != "$new" ]; then
   say "a new table was written, and what crontab holds now is not that table. Run 'crontab -l' and check it: it should end with this folder's line and hold your $others other line(s) as they were."
   exit 2
 fi

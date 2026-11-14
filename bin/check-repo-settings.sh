@@ -570,14 +570,16 @@ elif [ -f "$ROOT/.github/dependabot.yml" ] || [ -f "$ROOT/.github/dependabot.yam
   #     `cronjob`) directly in it
   #   - `multi-ecosystem-groups:` as a block of named groups
   #   - a byte-order mark at the very start of the file, `---` before the
-  #     first key and `...` after the last line
+  #     first key and `...` after the last line, alone or with a comment
   # What makes it UNKNOWN: the list or an entry written on one line, a second
   # document, a tab in the indentation, an alias (*name) as the value of a
   # required key or anywhere in a one-line schedule, a required value in any
   # other form (a tag, a block of text,
   # a value that runs on to a second line, a backslash inside quotes), a
   # [list] or {map} that runs over several lines, a comma inside quotes in a
-  # one-line list, a version in quotes, an entry in a group the file does not
+  # one-line list, a version in quotes or written 2.0 (the documentation
+  # gives 2, Dependabot's own parser compares the number, and which of the
+  # two GitHub goes by was not established), an entry in a group the file does not
   # define, or one that needs its group's schedule when the group shows none
   # (GitHub's rule for those two was not established), and any line under
   # `updates:` it cannot place. Inside
@@ -788,7 +790,7 @@ elif [ -f "$ROOT/.github/dependabot.yml" ] || [ -f "$ROOT/.github/dependabot.yam
       if (NR == 1) sub(/^\357\273\277/, "", line)
       if (line ~ /^[ \t]*(#|$)/) next
       if (ended) { odd("more than one YAML document"); next }
-      if (line ~ /^\.\.\.([ \t]|$)/) { ended = 1; next }
+      if (line ~ /^\.\.\.([ \t]+#.*|[ \t]*)$/) { ended = 1; next }
       if (line ~ /^---([ \t]|$)/) {
         if (line ~ /^---[ \t]*(#.*)?$/ && !content && !docstart) { docstart = 1; next }
         odd("more than one YAML document"); next
@@ -811,7 +813,11 @@ elif [ -f "$ROOT/.github/dependabot.yml" ] || [ -f "$ROOT/.github/dependabot.yam
           if (KIND != "empty") odd("multi-ecosystem-groups: written on one line")
           top = "groups"; g1 = -1; cg = ""
         } else {
-          if (K == "version") { if (KIND == "plain") ver = v; else odd("a version that is not a plain number") }
+          if (K == "version") {
+            if (KIND != "plain") odd("a version that is not a plain number")
+            else if (v ~ /^2\.0+$/) odd("a version written " v " where the documentation gives 2")
+            else ver = v
+          }
           top = "other"
         }
         next

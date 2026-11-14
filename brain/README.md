@@ -69,8 +69,10 @@ That adds one line to your crontab: the refresh, daily at 9:00. What it does, in
    does not exit 0, it stops and nothing is installed.
 3. Reads your crontab. If it cannot be read, it stops and nothing is written.
 4. Writes the crontab back with this folder's line added, or replaced if one was there.
-   Every other line is kept as it was, byte for byte.
-5. Reads it back, and reports success only if what comes back is the table it wrote.
+   Every other line is kept as it was, byte for byte. Empty lines at the very end of the
+   table are the one thing dropped.
+5. Reads it back, and reports success only if that read works and what comes back is the
+   table it wrote.
 
 It says which step stopped it and why. Run it again after installing bun or node somewhere
 new, so the job carries the new `PATH`. To remove the job, run `crontab -e` and delete the
@@ -81,7 +83,9 @@ Which line counts as this folder's: one the script wrote, meaning a schedule fol
 exactly its job. If you change the time with `crontab -e` the line is still recognised, and
 the next run of the script puts it back to 9:00 and says it replaced a line. A line of your
 own that runs the refresh some other way, or only mentions it, is not touched. Nor is a
-line that starts with `#`, so a copy of the job you commented out stays as a comment.
+line that starts with `#`, so a copy of the job you commented out stays as a comment. A
+line that sets a variable (`NAME = value`) is never taken for the job either, whatever
+its value is.
 
 Installing a crontab replaces the whole table, which is why this is a script with tests and
 not a few lines to paste. Two earlier versions of this page were lines to paste, and review
@@ -107,6 +111,11 @@ each of which it reports instead of guessing:
   checked here either. The trial run cannot show it, because it runs from your terminal,
   which has its own permission. If the project is in one of those folders and nothing new
   appears in `brain/log.md` after 9:00, that is the first thing to look at.
+- On Debian and Ubuntu, `crontab -l` leaves out the three-line header cron keeps at the
+  top of the table, unless `CRONTAB_NOHEADER=N` is set. With that set the script exits 2
+  after a good write, because the table it reads back has the header in it, and each run
+  adds those three lines to the table as comments. Unset it for the run. This is from
+  reading cron's source (Debian's, Apple's, FreeBSD's and cronie's), not from a run.
 
 ### Windows (Task Scheduler)
 

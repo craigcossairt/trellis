@@ -676,6 +676,12 @@ healthy; dep 'version: 2' 'updates:' "$E" '    directory: /' "$W" "$I" '...'; ru
 expect "a file that ends with the end-of-document mark -> ON" 0 dependabot-config ON
 healthy; dep 'version: 2' 'updates:' "$E" '    directory: /' "$W" "$I" '...' 'version: 2'; run --porcelain
 expect "more after the end-of-document mark -> UNKNOWN" 2 dependabot-config UNKNOWN
+healthy; dep 'version: 2' 'updates:' "$E" '    directory: /' "$W" "$I" '... unexpected'; run --porcelain
+expect "words on the same line as the end-of-document mark -> UNKNOWN" 2 dependabot-config UNKNOWN
+healthy; dep 'version: 2' 'updates:' "$E" '    directory: /' "$W" "$I" '... # the end'; run --porcelain
+expect "a comment after the end-of-document mark -> ON" 0 dependabot-config ON
+healthy; dep 'version: 2' 'updates:' "$E" '    directory: /' "$W" "$I" '...   '; run --porcelain
+expect "spaces after the end-of-document mark -> ON" 0 dependabot-config ON
 
 echo "== dependabot.yml: a layout the script does not read is UNKNOWN, never on or off"
 # Each of these is YAML GitHub may well accept. The reader follows the plain
@@ -715,6 +721,7 @@ healthy; dep 'version: 2' 'updates:' "$E" '    directories: /a' "$W" "$I"; unrea
 healthy; dep 'version: 2' 'updates:' "$E" '    directory: /' "$W" '      every:' '        interval: weekly'; unread "an interval nested deeper inside schedule"
 healthy; dep 'version: 2' 'x-weekly: &weekly' '  interval: weekly' 'updates:' "$E" '    directory: /' "$W" '      <<: *weekly'; unread "a schedule that takes its interval from a YAML merge"
 healthy; dep 'version: "2"' 'updates:' "$E" '    directory: /' "$W" "$I"; unread "a version in quotes"
+healthy; dep 'version: 2.0' 'updates:' "$E" '    directory: /' "$W" "$I"; unread "a version written 2.0"
 healthy; dep '  version: 2' '  updates:' "  $E" '      directory: /' "  $W" "  $I"; unread "the whole file indented"
 healthy; dep 'version: 2' 'updates:' '  npm:' '    directory: /' "$W" "$I"; unread "updates: holding named keys, not a list"
 G='    multi-ecosystem-group: infra'
