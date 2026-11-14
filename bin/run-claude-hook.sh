@@ -24,8 +24,9 @@
 #    exact lines for each tool.
 #
 # Where this fails open, and where it does not. The session, format and prompt
-# hooks fail OPEN: a target that is missing prints nothing, a hook that
-# crashes has what it printed before it stopped passed on, and both exit 0,
+# hooks fail OPEN: a target that is missing prints nothing, a session or
+# format hook that crashes has what it printed before it stopped passed on
+# (the prompt hook's output is never passed on), and all of them exit 0,
 # because a path that moved must not stop a session from starting. The
 # sensitive-file check fails CLOSED: it allows an edit only when
 # the check finished and said yes (exit 0). A refusal (exit 2), any other exit

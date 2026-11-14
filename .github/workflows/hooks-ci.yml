@@ -1030,7 +1030,7 @@ jobs:
           #   stale line tells the agent to schedule it     2 -> 2
           #
           # Through the Cursor/Grok adapter (bin/run-claude-hook.sh), measured
-          # 2026-11-13 over 103 cases, each mutant in its own copy beside an
+          # 2026-11-13 over 106 cases, each mutant in its own copy beside an
           # unmutated baseline (0 red), predicted -> observed red. Neither
           # tool reads this hook's plain stdout, so a reply in the wrong shape
           # is a session that opens without the block and says nothing. The
@@ -1038,15 +1038,15 @@ jobs:
           # stub hook with known bytes covers the path a machine without jq
           # takes. Needs jq:
           #   grok reply back to raw stdout                 4 -> 4
-          #   cursor reply back to raw stdout               4 -> 4
-          #   cursor key renamed                            3 -> 3
+          #   cursor reply back to raw stdout               5 -> 5
+          #   cursor key renamed                            4 -> 4
           #   grok text not JSON-escaped                    3 -> 3
           #   grok message nested, not top-level            3 -> 3
           #   no-jq path keeps tabs and carriage returns    1 -> 1
           #   no-jq path stops escaping quotes              1 -> 1
           #   no-jq path stops escaping backslashes         1 -> 1
           #   jq never used (always the flattening path)    1 -> 1
-          #   cursor prompt hook answers nothing            1 -> 1
+          #   cursor prompt hook answers nothing            2 -> 2
           #   grok prompt hook prints the hook's text again 1 -> 1
           #
           # The sensitive-file check through the same adapter. Both tools'
@@ -1058,7 +1058,9 @@ jobs:
           # check's own, not the pipeline's: a check that says yes before it
           # has read a large payload is still a yes. The session, format and
           # prompt hooks stay open, and that is pinned too: a missing path
-          # must not stop a session starting.
+          # must not stop a session starting. A session or format hook that
+          # crashes has what it printed passed on, and a prompt hook's output
+          # never is.
           # Same run:
           #   a check that did not finish is allowed        8 -> 8
           #   a check that is missing is allowed            4 -> 4
@@ -1073,6 +1075,9 @@ jobs:
           #   only exits 1, 127 and a kill are unfinished   1 -> 1
           #   a refusal the check gave no reason has none   1 -> 1
           #   a note from a check that says yes is dropped  1 -> 1
+          #   a crashed session hook's output is dropped    1 -> 1
+          #   a crashed format hook's output is dropped     1 -> 1
+          #   a crashed prompt hook's output is passed on   1 -> 1
           bash bin/tests/test-session-start.sh
 
       - name: CDPATH-guarded self-location

@@ -104,9 +104,10 @@ than Claude Code, which treats only exit 2 from its own hook as a refusal, so th
 check lets the edit through.
 The check itself answers 2 for a payload it cannot read, and 0 for an empty one. The same
 holds for Grok Build, whose guide adds that a hook printing plain text and exiting 0 is still
-an allow. The session, format and prompt hooks are different: a missing one does nothing, a
-crashed one has whatever it printed before it stopped passed on, and either way the session
-carries on.
+an allow. The session, format and prompt hooks are different: a missing one does nothing, and
+a crashed one does not stop the session. A crashed session or format hook has whatever it
+printed before it stopped passed on. The prompt hook's output is never passed on, crashed or
+not.
 
 You must trust the workspace for project hooks to load. On Windows, see the Windows section
 below before your first edit: a bare `bash` there is WSL's or nothing, and when it is nothing
@@ -272,11 +273,13 @@ and the adapter ran. What follows has `\n` between its lines when `jq` is instal
 when it is not. Git for Windows does not ship `jq`, so spaces are the usual case and are fine.
 The reply does not tell you which Bash answered, and WSL's can start the same way and still be
 wrong further down (here: an empty `Branch:` and a git error, because Linux's git could not
-follow this checkout's Windows paths). To see which Bash it was, run the first word of your
-line with `-c 'uname -s'` after it, so `bash -c 'uname -s'` for the bare word and
-`C:\PROGRA~1\Git\bin\bash.exe -c 'uname -s'` for the full path: `Linux` is WSL, and anything
-else is Git Bash (here: `Linux` for the bare word, `MINGW64_NT-10.0-26200` for the full
-path). None of this was run inside Cursor, so step 9 of `SETUP.md` is the check that counts.
+follow this checkout's Windows paths). To see which Bash it was, run the program your line
+starts with, with `-c 'uname -s'` after it: `bash -c 'uname -s'` for the bare word,
+`C:\PROGRA~1\Git\bin\bash.exe -c 'uname -s'` for the full path, and for the `&` form the `&` and
+the quoted path together, `& 'C:/Program Files/Git/bin/bash.exe' -c 'uname -s'`. `Linux` is
+WSL, and anything else is Git Bash (here: `Linux` for the bare word, `MINGW64_NT-10.0-26200`
+for the other two). None of this was run inside Cursor, so step 9 of `SETUP.md` is the check
+that counts.
 
 **Cursor, when macOS or Linux machines share the repository.** That edit puts a Windows path
 in a file everybody runs, and it breaks the hooks for everybody else. Leaving it uncommitted

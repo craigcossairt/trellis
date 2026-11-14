@@ -588,6 +588,24 @@ STUBHOOK
 adapter cursor "$STUB"
 c_eq "cursor: a session hook that crashes -> the adapter still exits 0" "$ARC" 0
 c_eq "cursor: and nothing is printed" "$AOUT" ''
+# A hook that prints and then crashes. What it printed is passed on for the
+# session and format hooks, and never for the prompt hook.
+cat > "$STUB/.claude/hooks/session-start.sh" <<'STUBHOOK'
+#!/bin/bash
+echo "half a block"
+exit 3
+STUBHOOK
+adapter cursor "$STUB"
+c_eq "cursor: a session hook that prints and then crashes -> exit 0, and what it printed" \
+  "$ARC|$AOUT" '0|{"additional_context":"half a block"}'
+printf '#!/bin/bash\necho "half formatted"\nexit 3\n' > "$STUB/.claude/hooks/format-on-edit.sh"
+AOUT="$(cd "$STUB" && printf '{}' | bash bin/run-claude-hook.sh cursor format-on-edit 2>/dev/null)"; ARC=$?
+c_eq "cursor: a format hook that prints and then crashes -> exit 0, and what it printed" "$ARC|$AOUT" '0|half formatted'
+must rm -f "$STUB/.claude/hooks/format-on-edit.sh"
+printf '#!/bin/bash\necho "half a context"\necho "and a complaint" >&2\nexit 3\n' > "$STUB/brain/hooks/context-enrichment.sh"
+AOUT="$(cd "$STUB" && printf '{}' | bash bin/run-claude-hook.sh cursor brain-enrich 2>"$TMP/prompt.err")"; ARC=$?
+c_eq "cursor: a prompt hook that prints and then crashes -> exit 0, the continue object, and nothing it printed" \
+  "$ARC|$AOUT|$(cat "$TMP/prompt.err")" '0|{"continue":true}|'
 must rm -f "$STUB/.claude/hooks/session-start.sh"
 adapter grok "$STUB"
 c_eq "grok: a session hook that is missing -> the adapter exits 0" "$ARC" 0
