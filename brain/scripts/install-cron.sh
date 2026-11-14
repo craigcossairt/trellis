@@ -33,7 +33,9 @@
 # Which line is this folder's: one this script wrote. That is a schedule, then
 # exactly the job, with whatever PATH it carried. Change the time in
 # `crontab -e` and it is still recognised, and the next run of this script
-# puts it back to 9:00. A line of your own that runs the refresh some other
+# puts it back to 9:00. (A time written with any other character is not
+# recognised: that line stays and a second one is added.) A line of your own
+# that runs the refresh some other
 # way is not recognised and is left alone, and so is any line that starts
 # with #, and any line that sets a variable (NAME = value), whatever the
 # value is.
@@ -85,7 +87,7 @@ LINE="0 9 * * * $JOB"
 # PATH it carried. This folder's name turning up in a line is not enough. A
 # job that mentions the command in a message, or runs something before or
 # after it, is somebody else's. And what stands before the job has to be made
-# of what a schedule is made of: digits, letters, and * / , - @. That leaves
+# of what a schedule is made of: digits, letters, and * / , - @ ~. That leaves
 # out a line that starts with #, so a copy of the job that somebody commented
 # out stays a comment. It leaves out `NAME = value` too, which is how a
 # crontab sets a variable: the value can be this very job, and five words of
@@ -99,7 +101,7 @@ is_mine() { # $1 one crontab line
     *)  read -r _ _ _ _ _ rest <<< "$line" ;;
   esac
   case "$rest" in "$JOBHEAD"*"$JOBTAIL") ;; *) return 1 ;; esac
-  case "${line%"$rest"}" in *[!0-9A-Za-z*/,@[:space:]-]*) return 1 ;; esac
+  case "${line%"$rest"}" in *[!0-9A-Za-z*/,@~[:space:]-]*) return 1 ;; esac
   carried="${rest#"$JOBHEAD"}"; carried="${carried%"$JOBTAIL"}"
   case "$carried" in *"'"*) return 1 ;; esac
   return 0

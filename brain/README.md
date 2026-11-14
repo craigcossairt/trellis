@@ -81,7 +81,10 @@ skips that day.
 
 Which line counts as this folder's: one the script wrote, meaning a schedule followed by
 exactly its job. If you change the time with `crontab -e` the line is still recognised, and
-the next run of the script puts it back to 9:00 and says it replaced a line. A line of your
+the next run of the script puts it back to 9:00 and says it replaced a line. That holds for a
+time made of digits, letters and `* / , - @ ~`, which is everything the crontab manuals
+describe. A time written with anything else is not recognised: that line stays, a second one
+is added at 9:00, and the script does not say so. A line of your
 own that runs the refresh some other way, or only mentions it, is not touched. Nor is a
 line that starts with `#`, so a copy of the job you commented out stays as a comment. A
 line that sets a variable (`NAME = value`) is never taken for the job either, whatever

@@ -305,6 +305,10 @@ printf '%s\n' "*/30 9 * * mon,fri export PATH='/old/bin'; cd '$P' && bash brain/
 if [ "$RC" = 0 ] && [ "$(lines)" = 1 ] && [ "$(mine)" = 1 ] && ! grep -q '/old/bin' "$CRON/store"; then ok "and one with a step, a list and day names in its schedule"
 else bad "and one with a step, a list and day names in its schedule" "rc=$RC :: $(cat "$CRON/store")"; fi
 cronproject 0 has
+printf '%s\n' "6~15 9 * * * export PATH='/old/bin'; cd '$P' && bash brain/scripts/refresh.sh >/dev/null 2>&1" > "$CRON/store"; install
+if [ "$RC" = 0 ] && [ "$(lines)" = 1 ] && [ "$(mine)" = 1 ] && ! grep -q '/old/bin' "$CRON/store"; then ok "and one with a random minute in its schedule (6~15)"
+else bad "and one with a random minute in its schedule (6~15)" "rc=$RC :: $(cat "$CRON/store")"; fi
+cronproject 0 has
 printf '%s  \n' "0 8 * * * export PATH='/old/bin'; cd '$P' && bash brain/scripts/refresh.sh >/dev/null 2>&1" > "$CRON/store"; install
 if [ "$RC" = 0 ] && [ "$(lines)" = 1 ] && [ "$(mine)" = 1 ] && ! grep -q '/old/bin' "$CRON/store"; then ok "and one with spaces after it"
 else bad "and one with spaces after it" "rc=$RC :: $(cat "$CRON/store")"; fi

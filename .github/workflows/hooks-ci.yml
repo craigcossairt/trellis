@@ -1175,7 +1175,7 @@ jobs:
           # are all under test. gh's own jq is not jq: the suite's header says
           # what that leaves unproven. The shapes were read from real
           # responses on 2026-11-13, except a bypass list with somebody on it,
-          # which is from GitHub's API reference. Needs jq and git. 273 cases.
+          # which is from GitHub's API reference. Needs jq and git. 276 cases.
           #
           # Which repository: the one the checkout pushes to, read from its
           # `origin` remote by git. gh is not asked, because in a checkout
@@ -1222,8 +1222,9 @@ jobs:
           # the list or an entry on one line, a second document, a tab, an
           # alias, a tag, a value over two lines, a merge beside a gap, a
           # one-line list or map that is not flat, an entry in a group the
-          # file does not define, a version written 2.0, words after `...`
-          # on its line. OFF is a file with no `version: 2`, no
+          # file does not define, a version not written as a whole number
+          # (2.0, 2., +2), words after `...` on its line. OFF is a file with
+          # no `version: 2`, no
           # entry, or an entry missing a key GitHub requires, each with a
           # value: an ecosystem, a directory, a schedule interval of its own
           # or its group's, `patterns` when it is in a group, and a `cronjob`
@@ -1233,7 +1234,7 @@ jobs:
           # GitHub accepts a value is not checked: its lists change, and a
           # copy of them here would go stale without failing.
           #
-          # Mutation ledger, measured 2026-11-13, 195 mutants each in its own
+          # Mutation ledger, measured 2026-11-13, 197 mutants each in its own
           # copy beside an unmutated baseline (0 red), predicted -> observed
           # red. Measured on Linux (bash 5.3, GNU awk 5.3, jq 1.8.1, under
           # WSL). The unmutated suite also passes there with mawk 1.3.4 as
@@ -1330,7 +1331,7 @@ jobs:
           #   the old name kept after a rename                1 -> 1
           #   the name GitHub gives back not checked          1 -> 1
           #   an answer naming no repository accepted         2 -> 2
-          #   gh asked which repository this is               250 -> 250
+          #   gh asked which repository this is               253 -> 253
           #   an entry with no directory counts               12 -> 12
           #   one entry's keys carry over to the next         2 -> 2
           #   a file that could not be read reported OFF      1 -> 1
@@ -1347,8 +1348,8 @@ jobs:
           #   the --repo hint leaves --root out               1 -> 1
           #   an entry with no schedule counts                16 -> 16
           #   an entry naming no ecosystem passed over        1 -> 1
-          #   a file with no version line counts              4 -> 4
-          #   any version counts                              2 -> 2
+          #   a file with no version line counts              3 -> 3
+          #   any version counts                              1 -> 1
           #   a version in quotes read as the number          1 -> 1
           #   ~ and null count as values                      7 -> 7
           #   an empty pair of quotes counts as a value       2 -> 2
@@ -1399,7 +1400,7 @@ jobs:
           #   a merge no longer makes a gap UNKNOWN           3 -> 3
           #   a merge makes a complete file UNKNOWN           1 -> 1
           #   a merge beside no entry read as OFF             1 -> 1
-          #   what was not followed left out of verdict       43 -> 43
+          #   what was not followed left out of verdict       47 -> 47
           #   a map inside a one-line schedule not noticed    1 -> 1
           #   a byte-order mark not stepped over              1 -> 1
           #   the mark stepped over on any line               1 -> 1
@@ -1437,10 +1438,12 @@ jobs:
           #   the groups the file defines not recorded        17 -> 17
           #   what follows the end mark passed over           1 -> 1
           #   the end-of-document mark not known              3 -> 3
-          #   a version written 2.0 read as no version        1 -> 1
+          #   a version not a whole number read as it stands  5 -> 5
           #   anything may follow the end mark on its line    1 -> 1
           #   a comment after the end mark not allowed        1 -> 1
           #   spaces after the end mark not allowed           1 -> 1
+          #   a whole number starting with 0 is a version     1 -> 1
+          #   a whole number other than 2 not read            1 -> 1
           bash bin/tests/test-check-repo-settings.sh
 
       - name: Suite - brain refresh (optional project memory)
@@ -1451,7 +1454,7 @@ jobs:
           # accident, must not index a corpus the ingest refused, and must
           # leave brain/.refresh-failed behind on either failure, because that
           # marker is all the session-start hook has to report. Hermetic: a
-          # temp copy of brain/ and a fake indexer. 70 cases.
+          # temp copy of brain/ and a fake indexer. 71 cases.
           #
           # Exit 127 ("command not found") gets a hint in the marker, because
           # on a schedule it is nearly always PATH and the same command then
@@ -1468,6 +1471,7 @@ jobs:
           # the write only when the read-back works and the table it reads
           # back is the table it wrote. A line is this folder's only when it
           # is the line the script writes: a schedule, then exactly its job.
+          # (A schedule is digits, letters and * / , - @ ~ and nothing else.)
           # One that mentions the refresh, or runs something besides it, is
           # somebody else's, and so is a commented-out copy of the job and a
           # line that sets a variable to it. No line is picked out with grep,
@@ -1510,12 +1514,12 @@ jobs:
           #   the read's exit status not looked at            4 -> 4
           #   a failed read tried again                       1 -> 1
           #   an unreadable crontab reported without why      1 -> 1
-          #   no line taken for this folder's                 9 -> 9
+          #   no line taken for this folder's                 10 -> 10
           #   a line that only ends like the job taken        1 -> 1
           #   a quote in the PATH a line carries not noticed  1 -> 1
           #   an @ schedule read as five words                2 -> 2
-          #   a schedule read as one word                     7 -> 7
-          #   a schedule read as six words                    8 -> 8
+          #   a schedule read as one word                     8 -> 8
+          #   a schedule read as six words                    9 -> 9
           #   spaces before an @ schedule hide it             1 -> 1
           #   spaces after a line not trimmed                 1 -> 1
           #   what stands before the job not looked at        4 -> 4
@@ -1524,9 +1528,10 @@ jobs:
           #   a letter not a schedule character               3 -> 3
           #   an @ not a schedule character                   2 -> 2
           #   a - not a schedule character                    2 -> 2
-          #   a digit not a schedule character                7 -> 7
-          #   a * not a schedule character                    7 -> 7
-          #   a space not a schedule character                9 -> 9
+          #   a digit not a schedule character                8 -> 8
+          #   a * not a schedule character                    8 -> 8
+          #   a space not a schedule character                10 -> 10
+          #   a ~ not a schedule character                    1 -> 1
           #   the other lines not written back                17 -> 17
           #   the new line put first                          5 -> 5
           #   no crontab read as one empty line               1 -> 1

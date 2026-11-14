@@ -484,7 +484,7 @@ expect "a file that starts with a byte-order mark -> ON" 0 dependabot-config ON
 healthy; printf 'version: 2\n'"${BOM}"'updates:\n  - package-ecosystem: "npm"\n    directory: "/"\n    schedule:\n      interval: weekly\n' > "$PROJ/.github/dependabot.yml"; run --porcelain
 expect "the same bytes at the start of a later line are not passed over -> UNKNOWN" 2 dependabot-config UNKNOWN
 healthy; printf 'version: '"${BOM}"'2\nupdates:\n  - package-ecosystem: "npm"\n    directory: "/"\n    schedule:\n      interval: weekly\n' > "$PROJ/.github/dependabot.yml"; run --porcelain
-expect "nor in the middle of the first line -> OFF" 1 dependabot-config OFF
+expect "nor in the middle of the first line -> UNKNOWN" 2 dependabot-config UNKNOWN
 
 echo "== dependabot.yml: a required key in the wrong place, or with no value, is not there"
 E='  - package-ecosystem: npm'
@@ -722,6 +722,9 @@ healthy; dep 'version: 2' 'updates:' "$E" '    directory: /' "$W" '      every:'
 healthy; dep 'version: 2' 'x-weekly: &weekly' '  interval: weekly' 'updates:' "$E" '    directory: /' "$W" '      <<: *weekly'; unread "a schedule that takes its interval from a YAML merge"
 healthy; dep 'version: "2"' 'updates:' "$E" '    directory: /' "$W" "$I"; unread "a version in quotes"
 healthy; dep 'version: 2.0' 'updates:' "$E" '    directory: /' "$W" "$I"; unread "a version written 2.0"
+healthy; dep 'version: 2.' 'updates:' "$E" '    directory: /' "$W" "$I"; unread "a version written 2."
+healthy; dep 'version: +2' 'updates:' "$E" '    directory: /' "$W" "$I"; unread "a version written +2"
+healthy; dep 'version: 02' 'updates:' "$E" '    directory: /' "$W" "$I"; unread "a version written 02"
 healthy; dep '  version: 2' '  updates:' "  $E" '      directory: /' "  $W" "  $I"; unread "the whole file indented"
 healthy; dep 'version: 2' 'updates:' '  npm:' '    directory: /' "$W" "$I"; unread "updates: holding named keys, not a list"
 G='    multi-ecosystem-group: infra'

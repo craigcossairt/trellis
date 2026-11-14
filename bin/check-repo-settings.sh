@@ -577,7 +577,8 @@ elif [ -f "$ROOT/.github/dependabot.yml" ] || [ -f "$ROOT/.github/dependabot.yam
   # other form (a tag, a block of text,
   # a value that runs on to a second line, a backslash inside quotes), a
   # [list] or {map} that runs over several lines, a comma inside quotes in a
-  # one-line list, a version in quotes or written 2.0 (the documentation
+  # one-line list, a version in quotes or written any way but a whole
+  # number, such as 2.0, 2. or +2 (the documentation
   # gives 2, Dependabot's own parser compares the number, and which of the
   # two GitHub goes by was not established), an entry in a group the file does not
   # define, or one that needs its group's schedule when the group shows none
@@ -815,8 +816,8 @@ elif [ -f "$ROOT/.github/dependabot.yml" ] || [ -f "$ROOT/.github/dependabot.yam
         } else {
           if (K == "version") {
             if (KIND != "plain") odd("a version that is not a plain number")
-            else if (v ~ /^2\.0+$/) odd("a version written " v " where the documentation gives 2")
-            else ver = v
+            else if (v ~ /^[1-9][0-9]*$/) ver = v
+            else odd("a version that is not written as a whole number, where the documentation gives 2")
           }
           top = "other"
         }
