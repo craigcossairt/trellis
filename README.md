@@ -24,7 +24,7 @@ that prevents that - before the chaos starts.
 | Piece | What it does for you |
 |---|---|
 | `AGENTS.md` | One instruction file that every major AI tool reads (Claude Code, Cursor, Codex, Gemini CLI, Copilot). Your conventions, methodology, and project facts live here once - not re-explained every session. |
-| `SETUP.md` | Day-1 setup, two ways: let your AI interview you and make the edits, or follow the checklist yourself. About 15 minutes for the core steps, plus a couple of optional extras. Explains what each piece is before asking you to touch it. |
+| `SETUP.md` | Day-1 setup, two ways: let your AI interview you and make the edits, or follow the checklist yourself. About 15 minutes for the core steps, plus three short decisions it makes with you instead of leaving to chance: which outside tools fit your project, whether to turn on project memory, and which protections to switch on in your GitHub repository. Explains what each piece is before asking you to touch it. |
 | `bin/trellis-survey.sh` | Read-only check of static wiring and setup: missing scripts, missing skill routers, Git hook installation, and unfinished context files. Runtime activation and trust are checked separately in SETUP.md. |
 | `DESIGN.md` | Design defaults your agent reads before it builds UI: name every value as a token, treat repeats as components, decide every state up front. No colours or type choices - those are yours, and the file has slots for them. Delete or override freely. |
 | `docs/methodology/` | Battle-tested working rules: test-first development, a disciplined bug-fix protocol, why a second model should review anything you would hate to get wrong, and habits for keeping AI sessions sharp. Plain markdown, works with any tool. |
@@ -34,7 +34,8 @@ that prevents that - before the chaos starts.
 | `.claude/` | Claude Code extras: guardrail hooks (blocks edits to secrets, auto-formats code, injects context on session start), slash commands, and skills - a ranked daily brief, feature planning, safe dependency reviews, a pre-demo audit. |
 | `.githooks/` + `bin/verify-green.sh` | An optional push gate for humans and agents. Install it with `bash bin/install-git-hooks.sh`, configure your lint/test commands, then verify the staged content before pushing. Off until checks are configured; supported session hooks also repair missing wiring. |
 | Harness adapters | Cursor, Grok Build, and Codex call the same canonical guardrail scripts as Claude Code. Codex uses `.agents/skills/` routers and `.codex/hooks.json` (requires trust). Gemini CLI and Copilot have instruction pointers. `docs/harness-support.md` records coverage and limitations; the Git push gate and CI work independently of the coding tool. |
-| `brain/` | Optional: a local search index over your project's docs and history that feeds relevant context into every prompt. Off by default; 10 minutes to enable when the project has real history. |
+| `brain/` | Optional: a local search index over your project's docs and history that feeds relevant context into every prompt. Off by default; setup works out with you whether it is worth turning on today. One scheduled command keeps it current, and your next session tells you if that schedule broke or the index went stale. |
+| `bin/check-repo-settings.sh` + `.github/dependabot.yml` | A read-only check of the protections that live in your GitHub repository's settings rather than in any file: Dependabot, secret scanning, push protection, a protected main branch. It prints what is off and how to turn each one on, and changes nothing. The Dependabot file opens a weekly pull request for outdated GitHub Actions, with a slot for your own packages. |
 | `docs/growing-into-a-workspace.md` | The graduation path for when your project becomes a company: where legal docs, brand assets, and a second repo go, and how the AI context scales with you. |
 | `docs/writing-your-own-skills.md` | The 10-minute guide to teaching your AI a repeatable procedure, plus a six-question hardening checklist for making skills that survive contact with reality. |
 | `CREDITS.md` | Whose ideas these are. This template is an extraction, not an invention - every borrowed rule and every recommended tool is named with its source, and CI fails if a recommendation has no credit line. |
@@ -102,9 +103,12 @@ request, so a key added and then deleted still fails.
    15 minutes.
 3. Delete what you don't need. Every piece is independent; nothing breaks if you remove a
    skill, the brain, or an adapter you don't use.
-4. Optional but recommended: skim `docs/recommended-tooling.md` for curated third-party
-   skill packs and the service stack (issue tracking, PR review, error tracking) that
-   earned its keep in the setup this template came from.
+4. Setup also covers three things that are easy to skip and annoying to discover late: the
+   outside tools that fit your project (`docs/recommended-tooling.md` opens with a short
+   "Start here" table), whether to turn on project memory, and the protections in your GitHub
+   repository's settings.
+
+If trellis saves you time, a star on GitHub helps the next person find it.
 
 ## Design principles
 

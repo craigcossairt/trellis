@@ -14,6 +14,14 @@ provenance sentence out of the two root rule files saved **5.3%** of their bytes
 earlier pass had already taken most of it and what remained was live rule text. The same session
 cut **18.6%** by a different move.
 
+- **Test each line before you keep it: can the agent find this out by reading the code, and
+  does every task need it?** A line earns a place in an always-loaded file only when the answer
+  is no and then yes: it cannot be discovered, and it applies everywhere. A fact the agent would
+  find in `package.json` fails the first half. A rule that matters only when writing a migration
+  fails the second, and belongs in a doc the file points to with a line that says *when* to read
+  it ("before writing a migration, read `docs/migrations.md`"). This is also the reason to skip
+  a tool's "generate my rules file" command (`/init` in Claude Code): it writes down what it
+  found in the code, which is the half that needed no writing down.
 - **Count bytes first.** `wc -c` on every file the trim touches (for the two root files,
   `wc -c AGENTS.md CLAUDE.md`), before and after, in the commit message. A trim with no number
   cannot be compared with the next one.

@@ -1,0 +1,1775 @@
+#!/usr/bin/env bash
+# =============================================================================
+# test-check-repo-settings.sh - behavioral tests for bin/check-repo-settings.sh
+# =============================================================================
+# The script reads a GitHub repository's safety settings and says which are
+# off. Six ways it can lie, and each is pinned here:
+#
+#   1. It says ON for something it could not read. An API error, a missing
+#      field or a missing `gh` must come out UNKNOWN and exit 2, never ON and
+#      never a silent skip. Unknown must not resolve to green. That includes a
+#      403: GitHub answers 403 both when a plan does not offer a feature and
+#      when a token may not read it, and only the first is a SKIP.
+#   2. It says OFF for something that is on by another route. A default branch
+#      covered by a ruleset has no classic branch protection, and the reverse.
+#   3. It says ON for protection that protects nothing. A classic protection
+#      that allows force pushes, a ruleset whose only rule asks for a review,
+#      or a ruleset with somebody on its bypass list leaves the branch open.
+#      So does a rule the script never read: GitHub hands rules out a page at
+#      a time, and a first page with no blocking rule says nothing about the
+#      second.
+#   4. It changes something. The script is read-only: every `gh api` call it
+#      makes is a GET. The fake `gh` below allows only the one read shape the
+#      script uses and records anything else, and the last case fails if one
+#      was ever made.
+#   5. It reports on another repository. Asked which repository a checkout is,
+#      gh answers for a remote named `upstream` when there is one. So the
+#      script reads the `origin` remote itself, takes only a github.com
+#      address, and uses the name GitHub gives back for it.
+#   6. It asks another server. With GH_HOST unset and one saved login that is
+#      not github.com, gh sends every request to that login's server (seen
+#      with gh 2.89.0). So the script sets GH_HOST for its own calls, and the
+#      fake records what each call was given. The server's name also goes into
+#      the commands it prints for a person to paste, so a GH_HOST that is not
+#      shaped like a host name is refused before anything is asked.
+#
+# Two more that are not about GitHub's API. Rulesets layer: somebody gets past
+# a rule only by being on the bypass list of every ruleset that holds it, so
+# two lists are compared entry by entry, and lists with nothing in common are
+# UNKNOWN, not OFF.
+#
+# And dependabot.yml, which the script reads as text. It is not a YAML parser,
+# so the rule is: say ON or OFF only for a file laid out the plain way (a
+# block list of entries, each key on its own line), and UNKNOWN for anything
+# else. Pinned here: a required key in the wrong place or with no value is
+# not there; a layout the reader does not follow (the list or an entry on one
+# line, a second document, a tab, an alias, a tag, a merge, a value over two
+# lines, a key written twice, a byte that is not text, a line of more than
+# 1024 bytes) is UNKNOWN and never
+# OFF; and the plain layouts it must read, quoted keys included, are read.
+# NOT checked, by this suite or the script: whether a value is one GitHub
+# accepts. A misspelt ecosystem name or interval still reads ON, which is why
+# the ON line says "entries for" and not "watches".
+#
+# The fake `gh` answers by API path from a JSON body and runs the script's own
+# `--jq` expression over it with the real `jq`, so the expressions are
+# exercised here. It pages a list the way GitHub does: 30 entries unless
+# `per_page` asks for more, and `page=N` is the Nth slice. The
+# classic-protection and rules bodies are cut down from real GitHub responses.
+#
+# WHAT THIS SUITE DOES NOT PROVE. `gh` evaluates `--jq` with its built-in
+# gojq, not with `jq`, and the two are not the same program. One difference is
+# known, and the fake copies it: gh prints a null result as an empty line where
+# `jq -r` prints the word null (seen with a real `gh api` call, 2026-11-13).
+# Every expression the script sends turns null into a word of its own before
+# printing, except two single-field reads, which take anything but their two
+# known values as UNKNOWN. That the two programs agree on the rest is an
+# assumption, not a result. The ruleset body (its bypass list) is written from
+# GitHub's API reference, as are the bodies not named above. Both halves are
+# checked by running the script against a real repository (it is read-only, so
+# that is safe); the PR that added it records such a run.
+#
+# Hermetic: a fake `gh` on PATH, temp dirs, no network. Needs `jq`.
+#
+# Run:  bash bin/tests/test-check-repo-settings.sh
+# =============================================================================
+set -uo pipefail
+
+HERE="$(CDPATH='' cd -- "$(dirname "${BASH_SOURCE[0]}")" >/dev/null && pwd)"
+ROOT="$(cd "$HERE/../.." && pwd)"
+SCRIPT="$ROOT/bin/check-repo-settings.sh"
+[ -f "$SCRIPT" ] || { echo "missing $SCRIPT" >&2; exit 1; }
+command -v jq >/dev/null 2>&1 || { echo "this suite needs jq on PATH (the fake gh runs the script's --jq expressions with it)" >&2; exit 1; }
+
+PASS=0; FAIL=0
+ok()  { PASS=$((PASS + 1)); printf '  ok   %s\n' "$1"; }
+bad() { FAIL=$((FAIL + 1)); printf '  FAIL %s\n     %s\n' "$1" "$(printf '%s' "$2" | head -6 | tr '\n' '|')"; }
+
+TMP="$(mktemp -d 2>/dev/null || mktemp -d -t reposettings)"
+trap 'rm -rf "$TMP"' EXIT
+
+# --- the fake gh --------------------------------------------------------------
+# Fixture layout, under $GH_FIX:
+#   api/<path>           one file per API path, `/` written as `__`
+#                        line 1: HTTP status (200, 204, 403, 404, 500)
+#                        rest:   for a 2xx, the JSON body; `--jq EXPR` is run
+#                                over it with jq -r, as gh does
+#                                for anything else, the message gh would print
+#   DISALLOWED           appended to on any call that is not the one read
+#                        shape the script may send (see the fake)
+#   CALLS                every invocation, one line each
+#   HOSTS                the GH_HOST each invocation was given, or `unset`
+# jq on Windows writes CRLF; gh does not, so the fake strips the CR.
+mkdir -p "$TMP/bin"
+cat > "$TMP/bin/gh" <<'FAKE'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$GH_FIX/CALLS"
+printf '%s\n' "${GH_HOST-unset}" >> "$GH_FIX/HOSTS"
+# An allow-list, not a list of write flags. The script may send one shape:
+#   gh api <path> [--jq <expr>]
+# which gh sends as a GET. Anything else is recorded, whatever it is. A list
+# of flags to refuse misses every spelling it did not think of:
+# `--method=PUT`, `-XPUT`, `--raw-field`, and any other subcommand
+# (`gh repo edit ...`) all walked past the first version of this fake with
+# every case green.
+# `gh repo view` is answered, and recorded as not allowed: the script must
+# not ask gh which repository this is. The answer is the one a real gh gives
+# in a checkout that also has a remote named `upstream`: that remote's
+# repository, not the one the checkout pushes to (seen with gh 2.89.0).
+allowed=0
+if [ "${1:-}" = api ]; then
+  case $# in
+    2) allowed=1 ;;
+    4) [ "$3" = --jq ] && allowed=1 ;;
+  esac
+  case "${2:-}" in ''|-*) allowed=0 ;; esac
+fi
+[ "$allowed" -eq 1 ] || printf '%s\n' "$*" >> "$GH_FIX/DISALLOWED"
+if [ "${1:-}" = repo ] && [ "${2:-}" = view ]; then echo 'parent/proj'; exit 0; fi
+if [ "${1:-}" = api ]; then
+  path="${2:-}"; expr=""
+  shift 2
+  while [ $# -gt 0 ]; do
+    case "$1" in --jq) expr="${2:-}"; shift 2 ;; *) shift ;; esac
+  done
+  # GitHub pages a list: 30 entries unless per_page says otherwise, and
+  # page=N is the Nth slice. The fixture holds the whole list and the fake
+  # cuts it the same way, so a script that reads one page sees one page.
+  query=""; per=30; page=1
+  case "$path" in *\?*) query="${path#*\?}"; path="${path%%\?*}" ;; esac
+  case "&$query" in *"&per_page="*) per="&$query"; per="${per##*&per_page=}"; per="${per%%&*}" ;; esac
+  case "&$query" in *"&page="*) page="&$query"; page="${page##*&page=}"; page="${page%%&*}" ;; esac
+  case "$per$page" in ''|*[!0-9]*) echo "fake gh: cannot read the query '$query'" >&2; exit 64 ;; esac
+  key=$(printf '%s' "$path" | sed 's|/|__|g')
+  f="$GH_FIX/api/$key"
+  [ -f "$f" ] || { echo "gh: fixture missing for $path (HTTP 500)" >&2; exit 1; }
+  status=$(head -n 1 "$f")
+  rest=$(tail -n +2 "$f")
+  case "$status" in
+    2*)
+      if [ -n "$expr" ] && [ -n "$rest" ]; then
+        # The last sed is gh's one known difference from jq -r: a null result
+        # is printed as an empty line, not as the word null.
+        printf '%s\n' "$rest" \
+          | jq -r "(if type == \"array\" then .[$(( (page - 1) * per )):$(( page * per ))] else . end) | ($expr)" \
+          | tr -d '\r' | sed 's/^null$//'
+        exit "${PIPESTATUS[1]}"
+      fi
+      printf '%s' "$rest"; [ -n "$rest" ] && echo
+      exit 0 ;;
+    403) echo "gh: ${rest:-Forbidden} (HTTP 403)" >&2; exit 1 ;;
+    404) echo "gh: ${rest:-Not Found} (HTTP 404)" >&2; exit 1 ;;
+    *)   echo "gh: ${rest:-Server Error} (HTTP $status)" >&2; exit 1 ;;
+  esac
+fi
+echo "fake gh: unhandled: $*" >&2; exit 64
+FAKE
+chmod +x "$TMP/bin/gh"
+
+# --- a checkout ---------------------------------------------------------------
+# The script asks git where the checkout pushes to, so each case gets a real,
+# empty repository whose `origin` is me/proj. One is made and then copied:
+# `git init` a hundred times over is slow on Windows.
+command -v git >/dev/null 2>&1 || { echo "this suite needs git on PATH" >&2; exit 1; }
+unset GH_HOST
+if ! git init -q "$TMP/seed" >/dev/null 2>&1 \
+   || ! git -C "$TMP/seed" remote add origin https://github.com/me/proj; then
+  echo "could not make the seed repository" >&2; exit 1
+fi
+rm -rf "$TMP/seed/.git/hooks"
+origin() { git -C "$PROJ" remote set-url origin "$1"; }
+
+# --- fixtures -------------------------------------------------------------------
+N=0
+FIX=""; PROJ=""
+PLAN='Upgrade to GitHub Pro or make this repository public to enable this feature.'
+ALERTS_OFF='Vulnerability alerts are disabled.'
+DENIED='Resource not accessible by personal access token'
+UNPROTECTED='Branch not protected'
+api() { # $1 path, $2 status, $3 optional body (2xx) or message (anything else)
+  local key; key=$(printf '%s' "$1" | sed 's|/|__|g')
+  { printf '%s\n' "$2"; [ $# -ge 3 ] && printf '%s\n' "$3"; } > "$FIX/api/$key"
+  return 0
+}
+unapi() { local key; key=$(printf '%s' "$1" | sed 's|/|__|g'); rm -f "$FIX/api/$key"; }
+# The repository body, as GitHub returns it to an admin. "none none" gives a
+# null security block, which is what a real private repository on a plan
+# without secret scanning returned (read 2026-11-13).
+repo() { # private default_branch admin delete_branch_on_merge ss pp
+  # FULL is the name GitHub gives the repository (me/proj unless set); the
+  # word none leaves the field out.
+  jq -cn --arg f "${FULL-me/proj}" --arg p "$1" --arg b "$2" --arg a "$3" --arg d "$4" --arg ss "$5" --arg pp "$6" '
+    def st($v): if $v == "none" then null else {status: $v} end;
+    (if $f == "none" then {} else {full_name: $f} end) +
+    {private: ($p == "true"), default_branch: $b, permissions: {admin: ($a == "true")},
+     delete_branch_on_merge: ($d == "true"),
+     security_and_analysis: (if $ss == "none" and $pp == "none" then null
+       else {secret_scanning: st($ss), secret_scanning_push_protection: st($pp)} end)}' | tr -d '\r'
+}
+# Classic protection, cut down from a real response. $1/$2: are force pushes /
+# deletions ALLOWED (true means the branch is open to them). $3: is the branch
+# locked; left out, the answer has no lock field at all. $4: do the settings
+# bind administrators (enforce_admins), true unless given.
+classic() {
+  local lock=""
+  [ $# -ge 3 ] && lock="\"lock_branch\":{\"enabled\":$3},"
+  printf '{"url":"https://api.github.com/repos/me/proj/branches/main/protection","enforce_admins":{"enabled":%s},%s"allow_force_pushes":{"enabled":%s},"allow_deletions":{"enabled":%s}}' "${4:-true}" "$lock" "$1" "$2"
+}
+# The active rules that apply to a branch: one object per rule, by type. They
+# come from ruleset 1 unless RS says otherwise.
+rules() {
+  local out="[" sep="" t
+  for t in "$@"; do out="$out$sep{\"type\":\"$t\",\"ruleset_source_type\":\"Repository\",\"ruleset_id\":${RS:-1}}"; sep=","; done
+  printf '%s]' "$out"
+}
+both() { # two lists of rules as one
+  printf '%s\n%s\n' "$1" "$2" | jq -cs 'add' | tr -d '\r'
+}
+many() { # $1 how many review rules, then the types of the rules after them
+  local n="$1"; shift
+  jq -cn --argjson n "$n" --arg t "$*" '
+    def r($t): {type: $t, ruleset_source_type: "Repository", ruleset_id: 1};
+    [range($n) | r("pull_request")] + [$t | split(" ")[] | select(. != "") | r(.)]' | tr -d '\r'
+}
+# One ruleset, as `GET /repos/{owner}/{repo}/rulesets/{id}` answers an admin.
+# $2 is its bypass list as JSON, or the word absent for an answer without one
+# (what GitHub sends to someone who may not edit the ruleset).
+BYPASS_ADMIN='[{"actor_id":5,"actor_type":"RepositoryRole","bypass_mode":"always"}]'
+ruleset() {
+  if [ "$2" = absent ]; then api "repos/me/proj/rulesets/$1" 200 "{\"id\":$1,\"enforcement\":\"active\"}"
+  else api "repos/me/proj/rulesets/$1" 200 "{\"id\":$1,\"enforcement\":\"active\",\"bypass_actors\":$2}"; fi
+}
+actors() { # pairs of type and id -> a bypass list, each entry able to bypass always
+  local out="[" sep=""
+  while [ $# -ge 2 ]; do
+    out="$out$sep{\"actor_id\":$2,\"actor_type\":\"$1\",\"bypass_mode\":\"always\"}"; sep=","; shift 2
+  done
+  printf '%s]' "$out"
+}
+# The whole dependabot.yml, one line per argument.
+dep() { printf '%s\n' "$@" > "$PROJ/.github/dependabot.yml"; }
+healthy() { # a public repo with everything on; the branch is covered by a ruleset
+  N=$((N + 1)); FIX="$TMP/fix$N"; PROJ="$TMP/proj$N"
+  cp -R "$TMP/seed" "$PROJ"
+  mkdir -p "$FIX/api" "$PROJ/.github"
+  printf 'version: 2\nupdates:\n  - package-ecosystem: "github-actions"\n    directory: "/"\n    schedule:\n      interval: "weekly"\n' > "$PROJ/.github/dependabot.yml"
+  api repos/me/proj 200 "$(repo false main true true enabled enabled)"
+  api repos/me/proj/vulnerability-alerts 204
+  api repos/me/proj/automated-security-fixes 200 '{"enabled":true,"paused":false}'
+  api repos/me/proj/branches/main/protection 404 "$UNPROTECTED"
+  api repos/me/proj/rules/branches/main 200 "$(rules deletion non_fast_forward pull_request)"
+  ruleset 1 '[]'
+  api repos/me/proj/actions/permissions/workflow 200 '{"default_workflow_permissions":"read","can_approve_pull_request_reviews":false}'
+  api repos/me/proj/private-vulnerability-reporting 200 '{"enabled":true}'
+}
+
+OUT=""; RC=0
+run() { # args passed to the script; porcelain unless told otherwise
+  RC=0
+  OUT=$(GH_FIX="$FIX" PATH="$TMP/bin:$PATH" bash "$SCRIPT" --root "$PROJ" "$@" 2>&1) || RC=$?
+}
+# Run with a ten-second cap. RC=124 means it had to be killed: a loop that
+# never ends is a result here, not a hung suite.
+bounded() {
+  local pid i=0
+  GH_FIX="$FIX" PATH="$TMP/bin:$PATH" bash "$SCRIPT" "$@" > "$TMP/bounded.out" 2>&1 &
+  pid=$!
+  while kill -0 "$pid" 2>/dev/null && [ "$i" -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
+  if kill -0 "$pid" 2>/dev/null; then
+    kill -9 "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; RC=124
+  else
+    RC=0; wait "$pid" || RC=$?
+  fi
+  OUT=$(cat "$TMP/bounded.out")
+}
+state() { # $1 check name -> its state in porcelain OUT
+  printf '%s\n' "$OUT" | awk -F'\t' -v c="$1" '$1==c{print $2}'
+}
+note() { # $1 check name -> its note in porcelain OUT
+  printf '%s\n' "$OUT" | awk -F'\t' -v c="$1" '$1==c{print $3}'
+}
+expect() { # $1 label, $2 want rc, then pairs: check state
+  local label="$1" want="$2" got; shift 2
+  if [ "$RC" != "$want" ]; then bad "$label" "rc=$RC want $want :: $OUT"; return; fi
+  while [ $# -ge 2 ]; do
+    got=$(state "$1")
+    if [ "$got" != "$2" ]; then bad "$label" "$1 is '$got', want '$2' :: $OUT"; return; fi
+    shift 2
+  done
+  ok "$label"
+}
+
+echo "== everything on"
+healthy; run --porcelain
+expect "healthy public repo exits 0, every check ON" 0 \
+  dependabot-alerts ON dependabot-security-updates ON secret-scanning ON \
+  push-protection ON default-branch-protection ON delete-branch-on-merge ON \
+  workflow-token-read-only ON private-vulnerability-reporting ON dependabot-config ON
+
+echo "== one thing off at a time"
+healthy; api repos/me/proj/vulnerability-alerts 404 "$ALERTS_OFF"; run --porcelain
+expect "alerts endpoint says they are disabled -> OFF, exit 1" 1 dependabot-alerts OFF dependabot-security-updates ON
+
+healthy; api repos/me/proj/automated-security-fixes 200 '{"enabled":false,"paused":false}'; run --porcelain
+expect "security updates disabled -> OFF" 1 dependabot-security-updates OFF secret-scanning ON
+
+# A paused setting still answers enabled:true, and opens nothing.
+healthy; api repos/me/proj/automated-security-fixes 200 '{"enabled":true,"paused":true}'; run --porcelain
+expect "security updates enabled but paused -> OFF" 1 dependabot-security-updates OFF secret-scanning ON
+case "$(note dependabot-security-updates)" in
+  *paused*) ok "and the note says they are paused" ;;
+  *) bad "and the note says they are paused" "$OUT" ;;
+esac
+
+healthy; api repos/me/proj 200 "$(repo false main true true disabled enabled)"; run --porcelain
+expect "secret scanning disabled -> OFF" 1 secret-scanning OFF push-protection ON
+
+healthy; api repos/me/proj 200 "$(repo false main true true enabled disabled)"; run --porcelain
+expect "push protection disabled -> OFF" 1 push-protection OFF secret-scanning ON
+
+healthy; api repos/me/proj 200 "$(repo false main true false enabled enabled)"; run --porcelain
+expect "delete-branch-on-merge false -> OFF" 1 delete-branch-on-merge OFF
+
+healthy; api repos/me/proj/actions/permissions/workflow 200 '{"default_workflow_permissions":"write"}'; run --porcelain
+expect "workflow token write -> OFF" 1 workflow-token-read-only OFF
+
+healthy; api repos/me/proj/private-vulnerability-reporting 200 '{"enabled":false}'; run --porcelain
+expect "private vulnerability reporting false -> OFF" 1 private-vulnerability-reporting OFF
+
+healthy; rm -f "$PROJ/.github/dependabot.yml"; run --porcelain
+expect "no dependabot.yml -> OFF" 1 dependabot-config OFF
+
+healthy; mv "$PROJ/.github/dependabot.yml" "$PROJ/.github/dependabot.yaml"; run --porcelain
+expect ".yaml spelling of the config counts" 0 dependabot-config ON
+
+# The file being there is not the same as it watching anything. ON names what
+# it watches, so "on" is not read as "my app's packages are covered" when the
+# only entry is the one the template shipped for its own CI.
+healthy; run --porcelain
+case "$(note dependabot-config)" in
+  "entries for: github-actions") ok "the ON line names the one ecosystem the file has an entry for" ;;
+  *) bad "the ON line names the one ecosystem the file has an entry for" "$(note dependabot-config)" ;;
+esac
+
+healthy; dep 'version: 2' 'updates:' \
+  '  - package-ecosystem: "github-actions"' '    directory: "/"' '    schedule:' '      interval: "weekly"' \
+  "  - package-ecosystem: 'npm'" '    directory: /web' '    schedule:' '      interval: daily' \
+  '#  - package-ecosystem: "cargo"' '#    directory: "/"' \
+  '  - package-ecosystem: pip   # the api' '    directories:' '      - "/api"' '    schedule: {interval: weekly}'
+run --porcelain
+case "$(note dependabot-config)" in
+  "entries for: github-actions npm pip") ok "every entry is named, quoted any way, and a commented-out one is not" ;;
+  *) bad "every entry is named, quoted any way, and a commented-out one is not" "$(note dependabot-config)" ;;
+esac
+expect "a list of directories and a one-line schedule both count -> ON" 0 dependabot-config ON
+
+healthy; run
+case "$OUT" in
+  *"on       dependabot-config - entries for: github-actions"*) ok "human output shows what the file has entries for" ;;
+  *) bad "human output shows what the file has entries for" "$OUT" ;;
+esac
+
+healthy; echo 'version: 2' > "$PROJ/.github/dependabot.yml"; run --porcelain
+expect "a dependabot.yml with no package-ecosystem entry watches nothing -> OFF" 1 dependabot-config OFF
+
+healthy; printf 'version: 2\n# - package-ecosystem: "npm"\n' > "$PROJ/.github/dependabot.yml"; run --porcelain
+expect "an entry that is only a comment does not count -> OFF" 1 dependabot-config OFF
+
+echo "== dependabot.yml: an entry without the keys GitHub requires is not ON"
+# GitHub requires a directory and a schedule interval on every entry. A file
+# that names an ecosystem and stops there opens no pull request, and "on"
+# would say it does.
+healthy; dep 'version: 2' 'updates:' '  - package-ecosystem: "npm"' '    directory: "/"'; run --porcelain
+expect "an entry with no schedule -> OFF" 1 dependabot-config OFF
+case "$(note dependabot-config)" in
+  *npm*schedule*) ok "and the note names the entry and says it has no schedule" ;;
+  *) bad "and the note names the entry and says it has no schedule" "$(note dependabot-config)" ;;
+esac
+
+healthy; dep 'version: 2' 'updates:' '  - package-ecosystem: "npm"' '    schedule:' '      interval: weekly'; run --porcelain
+expect "an entry with no directory -> OFF" 1 dependabot-config OFF
+case "$(note dependabot-config)" in
+  *npm*directory*) ok "and the note names the entry and says it has no directory" ;;
+  *) bad "and the note names the entry and says it has no directory" "$(note dependabot-config)" ;;
+esac
+
+healthy; dep 'version: 2' 'updates:' \
+  '  - package-ecosystem: "github-actions"' '    directory: "/"' '    schedule:' '      interval: weekly' \
+  '  - package-ecosystem: "npm"' '    directory: "/"'
+run --porcelain
+expect "the first entry's schedule does not cover the second -> OFF" 1 dependabot-config OFF
+case "$(note dependabot-config)" in
+  *github-actions*) bad "and only the entry that lacks it is named" "$(note dependabot-config)" ;;
+  *"entry for npm"*schedule*) ok "and only the entry that lacks it is named" ;;
+  *) bad "and only the entry that lacks it is named" "$(note dependabot-config)" ;;
+esac
+
+# The section after the list is indented by four, so no line of it sits at the
+# entries' own depth and only the list's end keeps it out of the entry.
+healthy; dep 'version: 2' 'updates:' '  - package-ecosystem: "npm"' '    directory: "/"' \
+  'multi-ecosystem-groups:' '    infra:' '        schedule:' '            interval: weekly'
+run --porcelain
+expect "a schedule further down the file, outside the entry, does not count -> OFF" 1 dependabot-config OFF
+
+healthy; dep 'version: 2' 'updates:' '  - package-ecosystem: "npm"' '    directory: "/"   # interval: weekly' \
+  '    # schedule:' '    #   interval: weekly'
+run --porcelain
+expect "a schedule that is only a comment does not count -> OFF" 1 dependabot-config OFF
+
+healthy; dep 'version: 2' 'updates:' \
+  '  - package-ecosystem: npm' '    directory: "/"' '    schedule:' '      interval: weekly' \
+  '  - directory: "/api"' '    schedule:' '      interval: weekly'
+run --porcelain
+expect "an entry that names no ecosystem, beside one that does -> OFF" 1 dependabot-config OFF
+
+# GitHub's own example: an entry in a multi-ecosystem group has no schedule of
+# its own, and takes the group's.
+healthy; dep 'version: 2' 'multi-ecosystem-groups:' '  infra:' '    schedule:' '      interval: weekly' \
+  'updates:' '  - package-ecosystem: "docker"' '    directory: "/"' '    patterns: ["nginx"]' \
+  '    multi-ecosystem-group: "infra"'
+run --porcelain
+expect "an entry in a multi-ecosystem group takes the group's schedule -> ON" 0 dependabot-config ON
+
+# The script reads the file as text and does not follow a YAML merge, so an
+# entry that may get its schedule from one is neither on nor off.
+healthy; dep 'version: 2' 'x-defaults: &defaults' '  schedule:' '    interval: weekly' \
+  'updates:' '  - package-ecosystem: "npm"' '    directory: "/"' '    <<: *defaults'
+run --porcelain
+expect "an entry that may get its schedule from a YAML anchor -> UNKNOWN" 2 dependabot-config UNKNOWN
+
+healthy; dep 'version: 2' 'x-defaults: &defaults' '  open-pull-requests-limit: 5' \
+  'updates:' '  - package-ecosystem: "npm"' '    directory: "/"' '    schedule:' '      interval: weekly' \
+  '    <<: *defaults'
+run --porcelain
+# Neither is an entry that looks complete: what is merged in can be something
+# that cannot be merged, which is an error to a parser, and this script does
+# not look at what the alias names.
+expect "a complete entry in a file that uses a YAML merge -> UNKNOWN" 2 dependabot-config UNKNOWN
+
+healthy; dep 'version: 2' 'updates:' '  - directory: "/"' '    package-ecosystem: npm' \
+  '    schedule:' '      interval: weekly'
+run --porcelain
+expect "the ecosystem need not be the entry's first key -> ON" 0 dependabot-config ON
+case "$(note dependabot-config)" in
+  "entries for: npm") ok "and it is still named" ;;
+  *) bad "and it is still named" "$(note dependabot-config)" ;;
+esac
+
+healthy; dep 'version: 2' 'updates:' '- package-ecosystem: npm' '  directory: /' '  schedule:' '    interval: daily' \
+  '- package-ecosystem: pip' '  directory: /' '  schedule:' '    interval: daily' \
+  'registries:' '  npm-private:' '    type: npm-registry'
+run --porcelain
+expect "entries written flush with 'updates:', and another section after them -> ON" 0 dependabot-config ON
+case "$(note dependabot-config)" in
+  "entries for: npm pip") ok "and both are named" ;;
+  *) bad "and both are named" "$(note dependabot-config)" ;;
+esac
+
+# awk reads the file. If it cannot run, nothing was read, and that is not the
+# same as a file with no entry in it.
+mkdir -p "$TMP/noawk"; printf '#!/bin/sh\nexit 1\n' > "$TMP/noawk/awk"; chmod +x "$TMP/noawk/awk"
+healthy
+RC=0; OUT=$(GH_FIX="$FIX" PATH="$TMP/noawk:$TMP/bin:$PATH" bash "$SCRIPT" --root "$PROJ" --porcelain 2>&1) || RC=$?
+expect "the file could not be read at all -> UNKNOWN, not 'watches nothing'" 2 dependabot-config UNKNOWN
+
+healthy; printf 'version: 2\r\nupdates:\r\n  - package-ecosystem: "npm"\r\n    directory: "/"\r\n    schedule:\r\n      interval: weekly\r\n' > "$PROJ/.github/dependabot.yml"; run --porcelain
+expect "a file with Windows line endings -> ON" 0 dependabot-config ON
+case "$(note dependabot-config)" in
+  "entries for: npm") ok "and the name carries no stray character" ;;
+  *) bad "and the name carries no stray character" "$(note dependabot-config | od -c | head -3)" ;;
+esac
+
+# Some Windows editors start a file with a byte-order mark. It is not part of
+# the first key, so the file reads as it would without one. Only there: the
+# same three bytes anywhere else are part of the file.
+BOM='\357\273\277'
+healthy; printf "${BOM}"'version: 2\nupdates:\n  - package-ecosystem: "npm"\n    directory: "/"\n    schedule:\n      interval: weekly\n' > "$PROJ/.github/dependabot.yml"; run --porcelain
+expect "a file that starts with a byte-order mark -> ON" 0 dependabot-config ON
+healthy; printf 'version: 2\n'"${BOM}"'updates:\n  - package-ecosystem: "npm"\n    directory: "/"\n    schedule:\n      interval: weekly\n' > "$PROJ/.github/dependabot.yml"; run --porcelain
+expect "the same bytes at the start of a later line are not passed over -> UNKNOWN" 2 dependabot-config UNKNOWN
+healthy; printf 'version: '"${BOM}"'2\nupdates:\n  - package-ecosystem: "npm"\n    directory: "/"\n    schedule:\n      interval: weekly\n' > "$PROJ/.github/dependabot.yml"; run --porcelain
+expect "nor in the middle of the first line -> UNKNOWN" 2 dependabot-config UNKNOWN
+
+echo "== dependabot.yml: a required key in the wrong place, or with no value, is not there"
+E='  - package-ecosystem: npm'
+healthy; dep 'version: 2' 'updates:' "$E" '    directory: /' '    interval: weekly'; run --porcelain
+expect "an interval beside the entry's keys, with no schedule -> OFF" 1 dependabot-config OFF
+case "$(note dependabot-config)" in
+  *npm*schedule*) ok "and the note says the entry has no schedule interval" ;;
+  *) bad "and the note says the entry has no schedule interval" "$(note dependabot-config)" ;;
+esac
+
+healthy; dep 'version: 2' 'updates:' "$E" '    directory: /' '    schedule:' '    interval: weekly'; run --porcelain
+expect "an interval at the same depth as schedule, not under it -> OFF" 1 dependabot-config OFF
+
+healthy; dep 'version: 2' 'updates:' "$E" '    directory: /' '    commit-message:' '      interval: weekly'; run --porcelain
+expect "an interval under some other key -> OFF" 1 dependabot-config OFF
+
+for v in '' '~' 'null' 'Null' 'NULL' '""'; do
+  healthy; dep 'version: 2' 'updates:' "$E" "    directory: $v" '    schedule:' '      interval: weekly'; run --porcelain
+  expect "a directory written as [$v] is no directory -> OFF" 1 dependabot-config OFF
+done
+
+healthy; dep 'version: 2' 'updates:' "$E" '    directory: /' '    schedule:' '      interval:'; run --porcelain
+expect "an interval with no value -> OFF" 1 dependabot-config OFF
+
+healthy; dep 'version: 2' 'updates:' "$E" '    directory: /' '    schedule: weekly'; run --porcelain
+expect "a schedule that is one word, with no interval -> OFF" 1 dependabot-config OFF
+
+healthy; dep 'version: 2' 'updates:' "$E" '    directory: /' '    schedule: {day: monday}'; run --porcelain
+expect "a one-line schedule with no interval in it -> OFF" 1 dependabot-config OFF
+
+healthy; dep 'version: 2' 'updates:' "$E" '    directory: /' '    schedule: {day: monday, interval: weekly}'; run --porcelain
+expect "a one-line schedule whose interval is not its first key -> ON" 0 dependabot-config ON
+
+healthy; dep 'version: 2' 'updates:' "$E" '    directory: /' '    schedule: {interval: ~}'; run --porcelain
+expect "a one-line schedule whose interval is null -> OFF" 1 dependabot-config OFF
+
+healthy; dep 'version: 2' 'updates:' "$E" '    directories: []' '    schedule:' '      interval: weekly'; run --porcelain
+expect "an empty list of directories -> OFF" 1 dependabot-config OFF
+
+healthy; dep 'version: 2' 'updates:' "$E" '    directories:' '    - "/a"' '    - "/b"' '    schedule:' '      interval: weekly'; run --porcelain
+expect "a list of directories written at its key's own depth -> ON" 0 dependabot-config ON
+
+healthy; dep 'updates:' "$E" '    directory: /' '    schedule:' '      interval: weekly'; run --porcelain
+expect "a file with no version line -> OFF" 1 dependabot-config OFF
+case "$(note dependabot-config)" in
+  *version*) ok "and the note says the version line is missing" ;;
+  *) bad "and the note says the version line is missing" "$(note dependabot-config)" ;;
+esac
+
+healthy; dep 'version: 1' 'updates:' "$E" '    directory: /' '    schedule:' '      interval: weekly'; run --porcelain
+expect "a version other than 2 -> OFF" 1 dependabot-config OFF
+
+healthy; dep 'version: 10' 'updates:' "$E" '    directory: /' '    schedule:' '      interval: weekly'; run --porcelain
+expect "a version of two digits -> OFF" 1 dependabot-config OFF
+
+healthy; dep 'version: 2' 'updates: []'; run --porcelain
+expect "an updates list written as [] has no entry -> OFF" 1 dependabot-config OFF
+
+# A group has to be defined in the file, and the schedule is the group's.
+# GitHub's own rule for a group that is missing, or has no schedule, was not
+# established, so neither is called off: only not on.
+D='  - package-ecosystem: docker'
+healthy; dep 'version: 2' 'updates:' "$D" '    directory: /' '    multi-ecosystem-group: absent'; run --porcelain
+expect "an entry in a group the file does not define -> UNKNOWN" 2 dependabot-config UNKNOWN
+case "$(note dependabot-config)" in
+  *absent*) ok "and the note names the group" ;;
+  *) bad "and the note names the group" "$(note dependabot-config)" ;;
+esac
+
+healthy; dep 'version: 2' 'multi-ecosystem-groups:' '  infra:' '    labels:' '      - deps' \
+  'updates:' "$D" '    directory: /' '    multi-ecosystem-group: infra'
+run --porcelain
+expect "an entry in a group that has no schedule -> UNKNOWN" 2 dependabot-config UNKNOWN
+
+healthy; dep 'version: 2' 'multi-ecosystem-groups:' '  apps:' '    labels: [deps]' '  infra:' '    schedule:' '      interval: weekly' \
+  'updates:' "$D" '    directory: /' '    multi-ecosystem-group: apps'
+run --porcelain
+expect "another group's schedule does not cover this entry's group -> UNKNOWN" 2 dependabot-config UNKNOWN
+
+healthy; dep 'version: 2' 'updates:' "$D" '    directory: /' '    patterns: ["*"]' '    multi-ecosystem-group: infra' \
+  'multi-ecosystem-groups:' '  infra:' '    schedule: {interval: weekly}'
+run --porcelain
+expect "a group defined after the entries, with a one-line schedule -> ON" 0 dependabot-config ON
+
+# The group is looked up whether or not the entry has a schedule of its own.
+healthy; dep 'version: 2' 'updates:' "$D" '    directory: /' '    patterns: ["*"]' '    schedule:' '      interval: weekly' \
+  '    multi-ecosystem-group: missing'
+run --porcelain
+expect "an entry with its own schedule, in a group the file does not define -> UNKNOWN" 2 dependabot-config UNKNOWN
+case "$(note dependabot-config)" in
+  *missing*"does not define"*) ok "and the note says the group is not defined" ;;
+  *) bad "and the note says the group is not defined" "$(note dependabot-config)" ;;
+esac
+healthy; dep 'version: 2' 'multi-ecosystem-groups:' '  infra:' '    labels: [deps]' \
+  'updates:' "$D" '    directory: /' '    patterns: ["*"]' '    schedule:' '      interval: weekly' '    multi-ecosystem-group: infra'
+run --porcelain
+expect "an entry with its own schedule, in a defined group that has none -> ON" 0 dependabot-config ON
+
+echo "== dependabot.yml: keys GitHub requires only sometimes"
+# An entry in a multi-ecosystem group needs patterns, and a cron interval needs
+# a cronjob (both from GitHub's docs, 2026-11-13). Missing, each is a key the
+# file lacks: OFF, like a missing directory.
+GW='multi-ecosystem-groups:'; GI='  infra:'; GS='    schedule:'; GV='      interval: weekly'
+IN='    multi-ecosystem-group: infra'
+W='    schedule:'; I='      interval: weekly'
+healthy; dep 'version: 2' "$GW" "$GI" "$GS" "$GV" 'updates:' "$D" '    directory: /' "$IN"; run --porcelain
+expect "an entry in a group, with no patterns -> OFF" 1 dependabot-config OFF
+case "$(note dependabot-config)" in
+  *docker*patterns*) ok "and the note names the entry and the key" ;;
+  *) bad "and the note names the entry and the key" "$(note dependabot-config)" ;;
+esac
+healthy; dep 'version: 2' "$GW" "$GI" "$GS" "$GV" 'updates:' "$D" '    directory: /' '    patterns:' '      - "nginx"' "$IN"; run --porcelain
+expect "patterns as a block list -> ON" 0 dependabot-config ON
+healthy; dep 'version: 2' "$GW" "$GI" "$GS" "$GV" 'updates:' "$D" '    directory: /' '    patterns: []' "$IN"; run --porcelain
+expect "patterns: [] is no patterns -> OFF" 1 dependabot-config OFF
+healthy; dep 'version: 2' "$GW" "$GI" "$GS" "$GV" 'updates:' "$D" '    directory: /' '    patterns:' "$IN"; run --porcelain
+expect "patterns: with nothing under it -> OFF" 1 dependabot-config OFF
+healthy; dep 'version: 2' "$GW" "$GI" "$GS" "$GV" 'updates:' "$D" '    directory: /' '    groups:' '      dev:' '        patterns: ["*"]' "$IN"; run --porcelain
+expect "patterns inside the entry's groups: are not the entry's own -> OFF" 1 dependabot-config OFF
+healthy; dep 'version: 2' "$GW" "$GI" "$GS" "$GV" 'updates:' "$D" '    directory: /' '    patterns: "*"' "$IN"; run --porcelain
+expect "patterns written as one value, not a list -> UNKNOWN" 2 dependabot-config UNKNOWN
+
+healthy; dep 'version: 2' 'updates:' "$E" '    directory: /' '    schedule:' '      interval: cron'; run --porcelain
+expect "a cron interval with no cronjob -> OFF" 1 dependabot-config OFF
+case "$(note dependabot-config)" in
+  *npm*cronjob*) ok "and the note names the entry and the key" ;;
+  *) bad "and the note names the entry and the key" "$(note dependabot-config)" ;;
+esac
+healthy; dep 'version: 2' 'updates:' "$E" '    directory: /' '    schedule:' '      interval: "cron"' '      cronjob: "0 9 * * *"'; run --porcelain
+expect "a cron interval with its cronjob -> ON" 0 dependabot-config ON
+healthy; dep 'version: 2' 'updates:' "$E" '    directory: /' '    schedule:' '      interval: cron' '      cronjob:'; run --porcelain
+expect "cronjob: with no value -> OFF" 1 dependabot-config OFF
+healthy; dep 'version: 2' 'updates:' "$E" '    directory: /' '    schedule:' '      interval: cron' '    cronjob: "0 9 * * *"'; run --porcelain
+expect "a cronjob beside schedule, not in it -> OFF" 1 dependabot-config OFF
+healthy; dep 'version: 2' 'updates:' "$E" '    directory: /' '    schedule: {interval: cron}'; run --porcelain
+expect "a one-line schedule with a cron interval and no cronjob -> OFF" 1 dependabot-config OFF
+healthy; dep 'version: 2' 'updates:' "$E" '    directory: /' '    schedule: {interval: cron, cronjob: "0 9 * * *"}'; run --porcelain
+expect "a one-line schedule with both -> ON" 0 dependabot-config ON
+healthy; dep 'version: 2' 'updates:' "$E" '    directory: /' '    schedule: {interval: cron, cronjob: ~}'; run --porcelain
+expect "a one-line schedule whose cronjob is null -> OFF" 1 dependabot-config OFF
+healthy; dep 'version: 2' 'updates:' "$E" '    directory: /' '    schedule: {interval: cron, cronjob: "0 9 * * *"}' \
+  '  - package-ecosystem: pip' '    directory: /' '    schedule: {interval: cron}'
+run --porcelain
+expect "one entry's one-line cronjob does not cover the next entry -> OFF" 1 dependabot-config OFF
+healthy; dep 'version: 2' "$GW" "$GI" "$GS" '      interval: cron' 'updates:' "$D" '    directory: /' '    patterns: ["*"]' "$IN"; run --porcelain
+expect "a group's cron interval with no cronjob -> OFF" 1 dependabot-config OFF
+case "$(note dependabot-config)" in
+  *infra*cronjob*) ok "and the note names the group and the key" ;;
+  *) bad "and the note names the group and the key" "$(note dependabot-config)" ;;
+esac
+healthy; dep 'version: 2' "$GW" "$GI" "$GS" '      interval: cron' '      cronjob: "0 9 * * 1"' 'updates:' "$D" '    directory: /' '    patterns: ["*"]' "$IN"; run --porcelain
+expect "a group's cron interval with its cronjob -> ON" 0 dependabot-config ON
+healthy; dep 'version: 2' "$GW" "$GI" '    schedule: {interval: cron}' 'updates:' "$D" '    directory: /' '    patterns: ["*"]' "$IN"; run --porcelain
+expect "a group's one-line schedule with a cron interval and no cronjob -> OFF" 1 dependabot-config OFF
+healthy; dep 'version: 2' "$GW" "$GI" "$GS" '      interval: cron' '      cronjob:' 'updates:' "$D" '    directory: /' '    patterns: ["*"]' "$IN"; run --porcelain
+expect "a group's cronjob with no value -> OFF" 1 dependabot-config OFF
+healthy; dep 'version: 2' "$GW" "$GI" '    schedule: {interval: cron, cronjob: "0 9 * * 1"}' 'updates:' "$D" '    directory: /' '    patterns: ["*"]' "$IN"; run --porcelain
+expect "a group's one-line schedule with both -> ON" 0 dependabot-config ON
+healthy; dep 'version: 2' "$GW" "$GI" "$GS" '      interval: cron' 'updates:' "$D" '    directory: /' '    patterns: ["*"]' "$IN" \
+  "$E" '    directory: /' '    patterns: ["*"]' "$IN"
+run --porcelain
+expect "two entries in a group whose cron interval has no cronjob -> OFF" 1 dependabot-config OFF
+case "$(note dependabot-config | grep -o 'the group infra' | wc -l | tr -d ' ')" in
+  1) ok "and the note names the group once, not once an entry" ;;
+  *) bad "and the note names the group once, not once an entry" "$(note dependabot-config)" ;;
+esac
+healthy; dep 'version: 2' "$GW" "$GI" "$GS" "$GV" 'updates:' "$D" '    directory: /' '    patterns: [*all]' "$IN"; run --porcelain
+expect "a one-line patterns list holding an alias is not followed -> UNKNOWN" 2 dependabot-config UNKNOWN
+case "$(note dependabot-config)" in
+  *"a patterns list it cannot follow"*) ok "and the line says it is the patterns list" ;;
+  *) bad "and the line says it is the patterns list" "$(note dependabot-config)" ;;
+esac
+
+# A one-line list counts for what is in it, not for having brackets.
+healthy; dep 'version: 2' 'updates:' "$E" '    directories: [""]' "$W" "$I"; run --porcelain
+expect "a one-line directories list holding only empty quotes -> OFF" 1 dependabot-config OFF
+healthy; dep 'version: 2' 'updates:' "$E" '    directories: [null]' "$W" "$I"; run --porcelain
+expect "a one-line directories list holding only null -> OFF" 1 dependabot-config OFF
+healthy; dep 'version: 2' 'updates:' "$E" '    directories: ["", "/b"]' "$W" "$I"; run --porcelain
+expect "a one-line directories list with one real folder in it -> ON" 0 dependabot-config ON
+healthy; dep 'version: 2' 'updates:' "$E" '    directories: ["/a,b"]' "$W" "$I"; run --porcelain
+expect "a comma inside a quoted folder in a one-line list is not followed -> UNKNOWN" 2 dependabot-config UNKNOWN
+healthy; dep 'version: 2' 'updates:' "$E" '    directories: [ ]' "$W" "$I"; run --porcelain
+expect "a one-line directories list holding only a space -> OFF" 1 dependabot-config OFF
+healthy; dep 'version: 2' 'updates:' "$E" '    directories: [/a] [/b]' "$W" "$I"; run --porcelain
+expect "two pairs of brackets on a directories line are not followed -> UNKNOWN" 2 dependabot-config UNKNOWN
+case "$(note dependabot-config)" in
+  *"a directories list it cannot follow"*) ok "and the line says it is the directories list" ;;
+  *) bad "and the line says it is the directories list" "$(note dependabot-config)" ;;
+esac
+
+# A one-line schedule is read only when it is flat.
+healthy; dep 'version: 2' 'updates:' "$E" '    directory: /' '    schedule: {every: {day: monday, interval: weekly}}'; run --porcelain
+expect "an interval inside a map inside a one-line schedule -> UNKNOWN" 2 dependabot-config UNKNOWN
+case "$(note dependabot-config)" in
+  *"a one-line schedule it cannot follow"*) ok "and the line says it is the one-line schedule" ;;
+  *) bad "and the line says it is the one-line schedule" "$(note dependabot-config)" ;;
+esac
+healthy; dep 'version: 2' 'x-weekly: &weekly' '  interval: weekly' 'updates:' "$E" '    directory: /' '    schedule: {<<: *weekly}'; run --porcelain
+expect "a one-line schedule that takes its keys from a YAML merge -> UNKNOWN" 2 dependabot-config UNKNOWN
+case "$(note dependabot-config)" in
+  *"a line that holds <<"*) ok "and the line says it is the merge in the one-line schedule" ;;
+  *) bad "and the line says it is the merge in the one-line schedule" "$(note dependabot-config)" ;;
+esac
+# An alias as a value in a one-line schedule: the schedule is not followed,
+# whatever key the alias stands after.
+healthy; dep 'version: 2' 'x-w: &w a' 'updates:' "$E" '    directory: /' '    schedule: {x: *w, interval: weekly}'; run --porcelain
+expect "an alias beside the interval of a one-line schedule -> UNKNOWN" 2 dependabot-config UNKNOWN
+
+# `...` ends a document. At the end of the only one it changes nothing.
+healthy; dep 'version: 2' 'updates:' "$E" '    directory: /' "$W" "$I" '...'; run --porcelain
+expect "a file that ends with the end-of-document mark -> ON" 0 dependabot-config ON
+healthy; dep 'version: 2' 'updates:' "$E" '    directory: /' "$W" "$I" '...' 'version: 2'; run --porcelain
+expect "more after the end-of-document mark -> UNKNOWN" 2 dependabot-config UNKNOWN
+healthy; dep 'version: 2' 'updates:' "$E" '    directory: /' "$W" "$I" '... unexpected'; run --porcelain
+expect "words on the same line as the end-of-document mark -> UNKNOWN" 2 dependabot-config UNKNOWN
+healthy; dep 'version: 2' 'updates:' "$E" '    directory: /' "$W" "$I" '... # the end'; run --porcelain
+expect "a comment after the end-of-document mark -> ON" 0 dependabot-config ON
+healthy; dep 'version: 2' 'updates:' "$E" '    directory: /' "$W" "$I" '...   '; run --porcelain
+expect "spaces after the end-of-document mark -> ON" 0 dependabot-config ON
+
+echo "== dependabot.yml: a layout the script does not read is UNKNOWN, never on or off"
+# Each of these is YAML GitHub may well accept. The reader follows the plain
+# block layout only, and a guess here would be a definite answer it has not earned.
+unread() { run --porcelain; expect "$1 -> UNKNOWN" 2 dependabot-config UNKNOWN; }
+F='{package-ecosystem: npm, directory: /, schedule: {interval: weekly}}'
+W='    schedule:'; I='      interval: weekly'
+healthy; dep 'version: 2' "updates: [$F]"; unread "the whole list on one line"
+case "$(note dependabot-config)" in
+  *"one line"*"Dependency graph"*) ok "and the line says what was not read, and where GitHub's own verdict is" ;;
+  *) bad "and the line says what was not read, and where GitHub's own verdict is" "$(note dependabot-config)" ;;
+esac
+healthy; dep 'version: 2' 'updates:' "  - $F"; unread "an entry on one line, in braces"
+healthy; dep "{version: 2, updates: [$F]}"; unread "the whole file in braces"
+healthy; dep 'version: 2' 'updates:' "$E" '    directory: /' "$W" "$I" 'updates:' '  - package-ecosystem: pip'; unread "updates: written twice"
+healthy; dep 'version: 2' 'updates:' "$E" '    directory: /' "$W" "$I" '---' 'x: 1'; unread "a second YAML document in the file"
+healthy; printf 'version: 2\nupdates:\n  - package-ecosystem: npm\n\tdirectory: /\n    schedule:\n      interval: weekly\n' > "$PROJ/.github/dependabot.yml"
+unread "a tab in the indentation"
+case "$(note dependabot-config)" in
+  *" a tab "*) ok "and the line says it is a tab" ;;
+  *) bad "and the line says it is a tab" "$(note dependabot-config)" ;;
+esac
+healthy; dep 'version: 2' 'updates:' "$E" '    directory: /' '    schedule: &weekly' "$I" \
+  '  - package-ecosystem: pip' '    directory: /' '    schedule: *weekly'
+unread "a schedule taken from a YAML alias"
+healthy; dep 'version: 2' 'updates:' "$E" '    directory: /' '    labels: [' '      "deps"' '    ]' "$W" "$I"; unread "a list in brackets that runs over several lines"
+healthy; dep 'version: 2' 'updates:' '  -' '    package-ecosystem: npm' '    directory: /' "$W" "$I"; unread "an entry whose keys start on the line after its dash"
+healthy; dep 'version: 2' 'updates:' "$E" '    directory: >-' '      /' "$W" "$I"; unread "a directory written as a block of text"
+healthy; dep 'version: 2' 'base: &base' '  updates: []' '<<: *base'; unread "a file that takes its keys from a YAML merge"
+healthy; dep 'version: 2' 'updates:' "$E" '   directory: /' "$W" "$I"; unread "a key indented between the entry's dash and its first key"
+healthy; dep 'version: 2' 'updates:' "$E" '    directory: "/a" "/b"' "$W" "$I"; unread "more after a value's closing quote"
+case "$(note dependabot-config)" in
+  *"a directory that is not a plain value"*) ok "and the line says it is the directory, after the closing quote" ;;
+  *) bad "and the line says it is the directory, after the closing quote" "$(note dependabot-config)" ;;
+esac
+healthy; dep 'version: 2' 'updates:' '  - package-ecosystem: "np\" # m"' '    directory: /' "$W" "$I"; unread "a quoted name with an escaped quote in it"
+case "$(note dependabot-config)" in
+  *"a package-ecosystem that is not a plain value"*) ok "and the line says it is the package-ecosystem" ;;
+  *) bad "and the line says it is the package-ecosystem" "$(note dependabot-config)" ;;
+esac
+healthy; dep 'version: 2' 'updates:' "$E" '    directory: !!str /' "$W" "$I"; unread "a value with a YAML tag on it"
+case "$(note dependabot-config)" in
+  *"a directory that is not a plain value"*) ok "and the line says it is the directory, with the tag" ;;
+  *) bad "and the line says it is the directory, with the tag" "$(note dependabot-config)" ;;
+esac
+healthy; dep 'version: 2' 'updates:' "$E" '    directory: /a' '      b' "$W" "$I"; unread "a value that runs on to a second line"
+healthy; dep 'version: 2' 'updates:' "$E" '    directories: [[]]' "$W" "$I"; unread "a list inside a one-line list of directories"
+healthy; dep 'version: 2' 'updates:' "$E" '    directories: /a' "$W" "$I"; unread "directories written as one value, not a list"
+healthy; dep 'version: 2' 'updates:' "$E" '    directory: /' "$W" '      every:' '        interval: weekly'; unread "an interval nested deeper inside schedule"
+healthy; dep 'version: 2' 'x-weekly: &weekly' '  interval: weekly' 'updates:' "$E" '    directory: /' "$W" '      <<: *weekly'; unread "a schedule that takes its interval from a YAML merge"
+# A merge of something that cannot be merged is an error to a YAML parser,
+# wherever it stands, and one that can be merged can add keys or stand over
+# them. The script follows neither: any line that holds << is UNKNOWN, also
+# in an entry that has every key it needs.
+healthy; dep 'version: 2' 'updates:' "$E" '    directory: /' '    <<: word' "$W" "$I"; unread "a merge of a word in a complete entry"
+case "$(note dependabot-config)" in
+  *"a line that holds <<"*) ok "and the line says it is a merge" ;;
+  *) bad "and the line says it is a merge" "$(note dependabot-config)" ;;
+esac
+healthy; dep 'version: 2' 'x: &a word' 'updates:' "$E" '    directory: /' '    <<: *a' "$W" "$I"; unread "a merge of an alias to a word"
+healthy; dep 'version: 2' 'x: &a' '  - b' 'updates:' "$E" '    directory: /' '    <<: *a' "$W" "$I"; unread "a merge of an alias to a list of words"
+healthy; dep 'version: 2' 'updates:' "$E" '    directory: /' '    <<:' "$W" "$I"; unread "a merge of nothing"
+healthy; dep 'version: 2' 'updates:' "$E" '    directory: /' "$W" "$I" '      <<: word'; unread "a merge of a word in a schedule"
+healthy; dep 'version: 2' 'multi-ecosystem-groups:' '  infra:' '    <<: word' '    schedule:' '      interval: weekly' 'updates:' '  - package-ecosystem: docker' '    directory: /' "    patterns: ['*']" '    multi-ecosystem-group: infra'; unread "a merge of a word in a group"
+healthy; dep 'version: 2' 'updates:' "$E" '    directory: /' '    commit-message:' '      <<: word' '      prefix: x' "$W" "$I"; unread "a merge of a word under a key the script does not read"
+healthy; dep 'version: 2' '<<: word' 'updates:' "$E" '    directory: /' "$W" "$I"; unread "a merge of a word at the top of the file"
+healthy; dep 'version: 2' 'updates:' '  - <<: word' '    package-ecosystem: npm' '    directory: /' "$W" "$I"; unread "a merge of a word as the first key of an entry"
+healthy; dep 'version: 2' 'updates:' "$E" '    directory: /' '    x: <<' "$W" "$I"; unread "<< as a value"
+# A comment line is not part of the file, whatever it holds.
+healthy; dep 'version: 2' 'updates:' "$E" '    directory: /' '    # <<: *defaults' "$W" "$I"; run --porcelain
+expect "a comment line that holds << -> ON" 0 dependabot-config ON
+healthy; dep 'version: "2"' 'updates:' "$E" '    directory: /' "$W" "$I"; unread "a version in quotes"
+healthy; dep 'version: 2.0' 'updates:' "$E" '    directory: /' "$W" "$I"; unread "a version written 2.0"
+healthy; dep 'version: 2.' 'updates:' "$E" '    directory: /' "$W" "$I"; unread "a version written 2."
+healthy; dep 'version: +2' 'updates:' "$E" '    directory: /' "$W" "$I"; unread "a version written +2"
+healthy; dep 'version: 02' 'updates:' "$E" '    directory: /' "$W" "$I"; unread "a version written 02"
+healthy; dep '  version: 2' '  updates:' "  $E" '      directory: /' "  $W" "  $I"; unread "the whole file indented"
+healthy; dep 'version: 2' 'updates:' '  npm:' '    directory: /' "$W" "$I"; unread "updates: holding named keys, not a list"
+G='    multi-ecosystem-group: infra'
+# The entry in these three is complete and in no group, so only the groups
+# block itself can be what is not read.
+healthy; dep 'version: 2' 'multi-ecosystem-groups:' '  infra:' "$W" "$I" 'multi-ecosystem-groups:' '  apps:' "$W" "$I" 'updates:' "$E" '    directory: /' "$W" "$I"
+unread "multi-ecosystem-groups: written twice"
+healthy; dep 'version: 2' 'multi-ecosystem-groups: {infra: {schedule: {interval: weekly}}}' 'updates:' "$E" '    directory: /' "$W" "$I"
+unread "the groups written on one line"
+case "$(note dependabot-config)" in
+  *"multi-ecosystem-groups: written on one line"*) ok "and the line says the groups are on one line" ;;
+  *) bad "and the line says the groups are on one line" "$(note dependabot-config)" ;;
+esac
+healthy; dep 'version: 2' 'multi-ecosystem-groups:' '  - infra' 'updates:' "$E" '    directory: /' "$W" "$I"
+unread "the groups written as a list"
+healthy; dep 'version: 2' 'multi-ecosystem-groups:' '  infra:' "$W" '      every:' '        interval: weekly' 'updates:' "$D" '    directory: /' "$G"
+unread "an interval nested deeper inside a group's schedule"
+
+# A quote, a [list] or a {map} that is not closed on its own line takes the
+# lines after it, whatever they look like. libyaml reads each of these files
+# as missing a key, or not at all, and every line in them looks plain.
+DR='    directory: /'
+healthy; dep 'x: "a' 'version: 2' 'y: b"' 'updates:' "$E" "$DR" "$W" "$I"; unread "a quote left open above the version line"
+case "$(note dependabot-config)" in
+  *"not closed"*) ok "and the line says a quote or a bracket is not closed" ;;
+  *) bad "and the line says a quote or a bracket is not closed" "$(note dependabot-config)" ;;
+esac
+healthy; dep 'version: 2' 'x: "a' 'updates:' "$E" "$DR" "$W" "$I" 'y: b"'; unread "a quote left open above updates:"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    commit-message: "a' "$W" "$I" '    x: b"'; unread "a quote left open in an entry, above its schedule"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" "    x: 'a''" "$W" "$I" "    y: b'"; unread "a single quote left open after a doubled one"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: "a\"' "$W" "$I" '    y: b"'; unread "a quote left open after a backslashed one"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: !!str "a' "$W" "$I" '    y: b"'; unread "a quote left open after a tag"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: &n "a' "$W" "$I" '    y: b"'; unread "a quote left open after an anchor"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    commit-message:' '      prefix: "a' "$W" "$I" '      x: b"'; unread "a quote left open below a key the script does not read"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    ignore:' '      - dependency-name: "a' "$W" "$I" '      x: b"'; unread "a quote left open in a list item with a key"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    labels:' '      - "a' "$W" "$I" '      x: b"'; unread "a quote left open in a list item with no key"
+healthy; dep 'version: 2' 'updates:' "$E" '    x: {a: b,' '    directory: /,' '    c: d}' "$W" "$I"; unread "a {map} left open in an entry, above its directory"
+healthy; dep 'version: 2' 'updates:' "$E" '    x: {a: b, # }' '    directory: /,' '    c: d}' "$W" "$I"; unread "a {map} left open, with a closing brace in a comment"
+healthy; dep 'version: 2' 'updates:' "$E" '    x: {a: "}", b: c,' '    directory: /,' '    e: f}' "$W" "$I"; unread "a {map} left open, with a closing brace in quotes"
+healthy; dep 'version: 2' 'updates:' "$E" '    x: {a: [b],' '    directory: /,' '    c: d}' "$W" "$I"; unread "a {map} left open after a [list] inside it closed"
+healthy; dep 'version: 2' 'updates:' "$E" '    directory: "/"' '    commit-message:' '      prefix: "deps' "$W" '      interval: "weekly"'; unread "a closing quote forgotten"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    labels: [deps,' "$W" "$I"; unread "a closing bracket forgotten"
+# A plain value may run on to the next line, so this version is "2 3".
+healthy; dep 'version: 2' '  3' 'updates:' "$E" "$DR" "$W" "$I"; unread "a version carried on to a second line"
+healthy; dep 'version: 2' 'version: 2' 'updates:' "$E" "$DR" "$W" "$I"; unread "version: written twice"
+healthy; dep 'version: 3' 'version: 2' 'updates:' "$E" "$DR" "$W" "$I"; unread "version: written twice, the second one 2"
+healthy; dep 'version: 2' 'version: 3' 'updates:' "$E" "$DR" "$W" "$I"; unread "version: written twice, the first one 2"
+# Every line has to be written in a form that ends on that line. These
+# are not, under a key the script does not read, where nothing else looks
+# at the value. Three of them are forms YAML allows (a block of text, a
+# tag, a key with a question mark): the script has no rule for them, and
+# says so.
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" "    labels: [don't, \"it's ]" "$W" "$I" '    x: end"]'; unread "an apostrophe in a one-line list, then a quote left open"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    commit-message:' '      x/y: "a' "$W" "$I" '      x: b"'; unread "a quote left open under a key with a slash in it"
+healthy; dep 'version: 2' 'updates:' "$E" '    labels: [# ]' '    directory: /,' '    x: y]' "$W" "$I"; unread "a comment straight after an opening bracket"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    "k": "a' "$W" "$I" '    x: b"'; unread "a quote left open under a key in quotes"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: "a": b' "$W" "$I"; unread "a second key after a value in quotes"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: "a\qb"' "$W" "$I"; unread "a backslash in double quotes under a key the script does not read"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: "a" b' "$W" "$I"; unread "words after a closing quote"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: ["a"}' "$W" "$I"; unread "a [list] closed with a brace"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: [a,,b]' "$W" "$I"; unread "two commas in a row in a one-line list"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: {a: b: c}' "$W" "$I"; unread "two colons in one pair of a one-line map"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: ["a" "b"]' "$W" "$I"; unread "two values in a one-line list with no comma between them"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: {a: "b" "c"}' "$W" "$I"; unread "two values after one colon in a one-line map"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: [*a]' "$W" "$I"; unread "an alias in a one-line list under a key the script does not read"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: [a[b]' "$W" "$I"; unread "a bracket inside a plain value in a one-line list"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: [a:]' "$W" "$I"; unread "a colon at the end of a plain value in a one-line list"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: [a #]' "$W" "$I"; unread "a comment inside a one-line list"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: [a] b' "$W" "$I"; unread "words after a closing bracket"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: &n *n' "$W" "$I"; unread "an anchor on an alias"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: *n' "$W" "$I"; unread "an alias to an anchor the file does not have"
+healthy; dep 'version: 2' 'y: &n a' 'updates:' "$E" "$DR" '    x: *n b' "$W" "$I"; unread "words after an alias"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: |' '      a' "$W" "$I"; unread "a block of text (|) under a key the script does not read"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: >' '      a' "$W" "$I"; unread "a folded block of text (>)"
+# The mark alone, with no text under it, is an empty value to a YAML parser:
+# the directory is not there. The two files above have text under the mark,
+# and the rule for lines under a key that has a value refuses them whether
+# or not the mark is known; these two have only the mark to go by.
+healthy; dep 'version: 2' 'updates:' "$E" '    directory: |' "$W" "$I"; unread "a block-text mark (|) with nothing under it"
+healthy; dep 'version: 2' 'updates:' "$E" '    directory: >' "$W" "$I"; unread "a folded-text mark (>) with nothing under it"
+# After a key the script does not read, the mark alone is all there is to
+# refuse: a parser reads these two files whole, and the script still does
+# not follow block text.
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: |' "$W" "$I"; unread "a block-text mark (|) with nothing under it, after a key the script does not read"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: >' "$W" "$I"; unread "a folded-text mark (>) with nothing under it, after a key the script does not read"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: !!str a' "$W" "$I"; unread "a tag in front of a plain value"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: @a' "$W" "$I"; unread "a value that starts with @"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: %a' "$W" "$I"; unread "a value that starts with %"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: `a' "$W" "$I"; unread "a value that starts with a backtick"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: ,a' "$W" "$I"; unread "a value that starts with a comma"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: ]' "$W" "$I"; unread "a value that starts with a closing bracket"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: }' "$W" "$I"; unread "a value that starts with a closing brace"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: &' "$W" "$I"; unread "an anchor mark with no name"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: - a' "$W" "$I"; unread "a list started on the line of its key"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    commit-message:' '      ? a' "$W" "$I"; unread "a key written with a question mark"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: : a' "$W" "$I"; unread "a colon where a value should start"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: a: b' "$W" "$I"; unread "two keys on one line"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: a:' "$W" "$I"; unread "a colon at the end of a plain value"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: @a' '    y: %b' "$W" "$I"; unread "two lines it does not follow"
+case "$(note dependabot-config)" in
+  *"line 5,"*) ok "and the line names the first of them" ;;
+  *) bad "and the line names the first of them" "$(note dependabot-config)" ;;
+esac
+
+# A tab counts as a blank before a comment mark, in a one-line list as
+# anywhere else, so these two are left open: the bracket is in the comment.
+TB=$(printf '\t')
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" "    x: [a${TB}#]" "$W" "$I"; unread "a comment after a tab inside a one-line list"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" "    x: {a: b${TB}#}" "$W" "$I"; unread "a comment after a tab inside a one-line map"
+# One case to each part of a rule in the line check that no case held: a
+# reviewer changed each part alone and the suite still passed. libyaml
+# refuses every one of these lines but the last, which is YAML the script
+# has no rule for.
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: [a}]' "$W" "$I"; unread "a closing brace inside a plain value in a one-line list"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: [a{b]' "$W" "$I"; unread "an opening brace inside a plain value in a one-line list"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: {a]: b}' "$W" "$I"; unread "a closing bracket inside a plain value in a one-line map"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" "    x: -${TB}a" "$W" "$I"; unread "a dash and a tab where a value should start"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: ?' "$W" "$I"; unread "a question mark alone as a value"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" "    x: a:${TB}b" "$W" "$I"; unread "a colon and a tab inside a plain value"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: "a""b"' "$W" "$I"; unread "two double quotes in a row inside double quotes"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    commit-message:' '      "x":a' "$W" "$I"; unread "a key in quotes with nothing between its colon and the value"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" "    x: [a,${TB}b]" "$W" "$I"; unread "a tab between the values of a one-line list"
+# libyaml takes no tab where the text of a line starts: in front of a key,
+# in front of a comment, alone on a line, and after the dash of a list item.
+# The YAML 1.2 specification is wider in places (its example 6.3 has a tab
+# after a dash). The reader goes by libyaml, and UNKNOWN is always allowed.
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" "    ${TB}# a note" "$W" "$I"; unread "a tab in front of a comment on a line of its own"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" "    ${TB}" "$W" "$I"; unread "a line that holds only spaces and a tab"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    labels:' "      - ${TB}deps" "$W" "$I"; unread "a tab after the dash and space of a list item"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    labels:' "      -${TB}deps" "$W" "$I"; unread "a tab straight after the dash of a list item"
+
+# A key written twice. The YAML parsers that read such a file keep the
+# second one, so a required key that is there and then there again with
+# nothing after it is not there. The script does not choose: UNKNOWN.
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    directory:' "$W" "$I"; unread "directory written twice in one entry, the second one empty"
+case "$(note dependabot-config)" in
+  *"written twice"*) ok "and the line says a key is written twice" ;;
+  *) bad "and the line says a key is written twice" "$(note dependabot-config)" ;;
+esac
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" "$W" "$I" '    schedule:'; unread "schedule written twice in one entry, the second one empty"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" "$W" "$I" '      interval:'; unread "interval written twice in one schedule, the second one empty"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    schedule: {interval: weekly, interval: }'; unread "interval written twice in a one-line schedule"
+PT='    patterns: ["*"]'
+healthy; dep 'version: 2' "$GW" "$GI" "$GS" "$GV" "$GI" '    x: y' 'updates:' "$D" '    directory: /' "$PT" "$IN"; unread "a group written twice, the second one with no schedule"
+healthy; dep 'version: 2' "$GW" "$GI" "$GS" "$GV" "$GS" 'updates:' "$D" '    directory: /' "$PT" "$IN"; unread "schedule written twice in one group, the second one empty"
+healthy; dep 'version: 2' "$GW" "$GI" "$GS" "$GV" '      interval:' 'updates:' "$D" '    directory: /' "$PT" "$IN"; unread "interval written twice in the schedule of a group, the second one empty"
+
+# In a group, a line where its keys stand has to be a plain key. A key
+# written twice keeps the last, so a second schedule the reader cannot read
+# takes back the one it did read. An anchor on the key is enough for that.
+healthy; dep 'version: 2' "$GW" "$GI" "$GS" "$GV" '    &s schedule:' 'updates:' "$D" '    directory: /' "$PT" "$IN"; unread "the schedule of a group written again with an anchor on the key"
+case "$(note dependabot-config)" in
+  *"a line in a group that is not a plain key"*) ok "and the line says a group holds a line that is not a plain key" ;;
+  *) bad "and the line says a group holds a line that is not a plain key" "$(note dependabot-config)" ;;
+esac
+healthy; dep 'version: 2' "$GW" "$GI" "$GS" "$GV" '      &i interval:' 'updates:' "$D" '    directory: /' "$PT" "$IN"; unread "the interval of a group written again with an anchor on the key"
+case "$(note dependabot-config)" in
+  *"a schedule of a group it cannot follow"*) ok "and the line says it is the schedule of a group" ;;
+  *) bad "and the line says it is the schedule of a group" "$(note dependabot-config)" ;;
+esac
+healthy; dep 'version: 2' "$GW" "$GI" "$GS" "$GV" '    word' 'updates:' "$D" '    directory: /' "$PT" "$IN"; unread "a word alone among the keys of a group"
+healthy; dep 'version: 2' "$GW" "$GI" "$GS" "$GV" '   x: y' 'updates:' "$D" '    directory: /' "$PT" "$IN"; unread "a line set between the name of a group and its keys"
+healthy; dep 'version: 2' "$GW" "$GI" "$GS" "$GV" '        day: monday' 'updates:' "$D" '    directory: /' "$PT" "$IN"; unread "a key set under the interval of a group"
+healthy; dep 'version: 2' "$GW" "$GI" '    schedule: {interval: weekly}' '      x: y' 'updates:' "$D" '    directory: /' "$PT" "$IN"; unread "a line set under the one-line schedule of a group"
+
+# The name of a group with a value on its own line takes no lines under it.
+# To a YAML parser they are an error, and the schedule they seem to spell is
+# not one.
+healthy; dep 'version: 2' "$GW" '  infra: word' "$GS" "$GV" 'updates:' "$D" '    directory: /' "$PT" "$IN"; unread "keys set under a group that has a value on its own line"
+case "$(note dependabot-config)" in
+  *"under a group that has a value"*) ok "and the line says the group has a value" ;;
+  *) bad "and the line says the group has a value" "$(note dependabot-config)" ;;
+esac
+
+# A key with a value on its own line takes no lines under it, at any depth
+# the reader follows. To a YAML parser a key set there is an error and a
+# word set there is more of the value, so the lines are not what they look
+# like. updates: [] is such a key: entries set under it are not entries.
+healthy; dep 'version: 2' 'x: y' '  z: w' 'updates:' "$E" "$DR" "$W" "$I"; unread "a key set under a top-level key that has a value"
+case "$(note dependabot-config)" in
+  *"lines under a key that has a value"*) ok "and the line says the key has a value" ;;
+  *) bad "and the line says the key has a value" "$(note dependabot-config)" ;;
+esac
+healthy; dep 'version: 2' 'updates: []' "$E" "$DR" "$W" "$I"; unread "entries set under an updates list written as []"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: y' '      z: w' "$W" "$I"; unread "a key set under a key of an entry that has a value"
+healthy; dep 'version: 2' "$GW" "$GI" '    labels: word' '      x: y' "$GS" "$GV" 'updates:' "$D" '    directory: /' "$PT" "$IN"; unread "a key set under a key of a group that has a value"
+
+# A one-line schedule is split at its commas. A comma inside quotes cuts a
+# value in two, and what stands after it can look like a key of its own. A
+# YAML parser reads each of these files whole and finds no interval in the
+# schedule (in the third, a cron interval and no cronjob).
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    schedule: {x: "a, interval: weekly"}'; unread "an interval inside a quoted value of a one-line schedule"
+case "$(note dependabot-config)" in
+  *"a one-line schedule it cannot follow"*) ok "and the line says it is the one-line schedule that is not followed" ;;
+  *) bad "and the line says it is the one-line schedule that is not followed" "$(note dependabot-config)" ;;
+esac
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" "    schedule: {x: 'a, interval: weekly'}"; unread "an interval inside a value in single quotes of a one-line schedule"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    schedule: {interval: cron, x: "a, cronjob: b"}'; unread "a cronjob inside a quoted value of a one-line schedule"
+healthy; dep 'version: 2' "$GW" "$GI" '    schedule: {x: "a, interval: weekly"}' 'updates:' "$D" '    directory: /' "$PT" "$IN"; unread "an interval inside a quoted value of the one-line schedule of a group"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    schedule: {x: "a", interval: weekly}'; run --porcelain
+expect "a quoted value beside the interval of a one-line schedule -> ON" 0 dependabot-config ON
+# A bracket inside quotes is still a bracket to the reader of a one-line
+# schedule, and it does not follow a schedule that holds one: UNKNOWN, though
+# a YAML parser reads this file whole. Since every value has to be empty,
+# plain or in quotes that close, this is all the bracket test still decides.
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    schedule: {interval: weekly, x: "a[b"}'; unread "a bracket inside quotes in a one-line schedule"
+
+# Bytes. awk splits lines at a line feed and nowhere else. YAML also ends a
+# line at a carriage return alone and, for libyaml, at three more
+# characters, so one line to awk can be two to YAML, and the second can
+# open a quote. A control character, or text that is not UTF-8, makes a file
+# no YAML parser reads. depb writes a file from one printf format.
+depb() { printf "$1" > "$PROJ/.github/dependabot.yml"; }
+HD='version: 2\nupdates:\n  - package-ecosystem: npm\n'
+DL='    directory: /\n'
+TL='    schedule:\n      interval: weekly\n'
+healthy; depb "${HD}    # note\r    x: \"a\n${DL}    y: b\"\n${TL}"; unread "a carriage return inside a line, and a quote opened after it"
+case "$(note dependabot-config)" in
+  *"line 4 "*) ok "and the line is named" ;;
+  *) bad "and the line is named" "$(note dependabot-config)" ;;
+esac
+healthy; depb "${HD}    # note\302\205    x: \"a\n${DL}    y: b\"\n${TL}"; unread "a next-line character (U+0085) inside a line"
+healthy; depb "${HD}    # note\342\200\250    x: \"a\n${DL}    y: b\"\n${TL}"; unread "a line separator (U+2028) inside a line"
+healthy; depb "${HD}    # note\342\200\251    x: \"a\n${DL}    y: b\"\n${TL}"; unread "a paragraph separator (U+2029) inside a line"
+healthy; depb "version: 2\rupdates:\r  - package-ecosystem: npm\r    directory: /\r    schedule:\r      interval: weekly\r"; unread "a file whose lines end with a carriage return alone"
+healthy; depb "${HD}${DL}    x: a\001b\n${TL}"; unread "a control character (SOH) in a value"
+healthy; depb "${HD}${DL}    x: a\000b\n${TL}"; unread "a NUL byte in a value"
+healthy; depb "${HD}${DL}    x: a\037b\n${TL}"; unread "the last control character below a space (US)"
+healthy; depb "${HD}${DL}    x: a\177b\n${TL}"; unread "a DEL byte in a value"
+healthy; depb "${HD}${DL}    x: a\302\220b\n${TL}"; unread "a control character above ASCII (U+0090)"
+healthy; depb "${HD}${DL}    x: a\357\277\276b\n${TL}"; unread "U+FFFE in a value"
+healthy; depb "${HD}${DL}    x: a\357\277\277b\n${TL}"; unread "U+FFFF in a value"
+healthy; depb "${HD}${DL}    x: caf\351\n${TL}"; unread "a Latin-1 letter, which is not UTF-8"
+healthy; depb "${HD}${DL}    x: a\200b\n${TL}"; unread "a continuation byte with nothing before it"
+healthy; depb "${HD}${DL}    x: a\303\n${TL}"; unread "a two-byte character cut short at the end of a line"
+healthy; depb "${HD}${DL}    x: a\300\200b\n${TL}"; unread "two bytes for a character that fits in one (C0 80)"
+healthy; depb "${HD}${DL}    x: a\340\200\200b\n${TL}"; unread "three bytes for a character that fits in two (E0 80 80)"
+healthy; depb "${HD}${DL}    x: a\355\240\200b\n${TL}"; unread "half of a UTF-16 pair (ED A0 80)"
+healthy; depb "${HD}${DL}    x: a\360\200\200\200b\n${TL}"; unread "four bytes for a character that fits in three (F0 80 80 80)"
+healthy; depb "${HD}${DL}    x: a\364\220\200\200b\n${TL}"; unread "a character past the end of Unicode (F4 90 80 80)"
+healthy; depb "${HD}${DL}    x: a\365\200\200\200b\n${TL}"; unread "a first byte no character has (F5)"
+
+# A key in front of a colon on its own line may not be longer than 1024
+# characters: libyaml refuses the file. No line of 1024 bytes or fewer can
+# hold one, so a longer line is not read at all, whatever it holds.
+LK="$(printf '%1025s' '' | tr ' ' a)"
+LV="$(printf '%1017s' '' | tr ' ' a)"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" "    $LK: b" "$W" "$I"; unread "a key of 1025 characters"
+case "$(note dependabot-config)" in
+  *"has a line longer than 1024 bytes (line 5)"*) ok "and the line is named, with the length it may have" ;;
+  *) bad "and the line is named, with the length it may have" "$(note dependabot-config)" ;;
+esac
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" "    x: a$LV" "$W" "$I"; unread "a line of 1025 bytes"
+
+echo "== dependabot.yml: plain layouts that are read"
+healthy; dep 'version: 2' 'updates:' '  - "package-ecosystem": "npm"' "    'directory': '/'" '    "schedule":' '      "interval": "weekly"'; run --porcelain
+expect "keys in quotes -> ON" 0 dependabot-config ON
+case "$(note dependabot-config)" in
+  "entries for: npm") ok "and the entry is named" ;;
+  *) bad "and the entry is named" "$(note dependabot-config)" ;;
+esac
+
+healthy; dep 'version: 2' 'updates:' "$E" '    directories: ["/a", "/b"]' "$W" "$I"; run --porcelain
+expect "a list of directories written on one line -> ON" 0 dependabot-config ON
+
+healthy; dep '---' 'version: 2' 'updates:' "$E" '    directory: /' "$W" "$I"; run --porcelain
+expect "a file that opens with --- -> ON" 0 dependabot-config ON
+
+healthy; dep 'version: 2' 'updates:' "$E" '    directory: /' '    schedule: &weekly' "$I"; run --porcelain
+expect "an anchor on a schedule that is written out in full -> ON" 0 dependabot-config ON
+
+healthy; dep 'version: 2' 'updates:' '  - package-ecosystem: "npm"' '    directory: "/"' '    schedule:' '      interval: "weekly"' '      day: "monday"' \
+  '    open-pull-requests-limit: 5' '    groups:' '      dev:' '        patterns: ["*"]' '        dependency-type: "development"' \
+  '    ignore:' '    - dependency-name: "left-pad"' '      versions: ["1.x"]' '    commit-message:' '      prefix: "deps"' \
+  '    labels:' '      - "dependencies"' '  - package-ecosystem: "pip"' '    directory: "/api"' '    schedule:' '      interval: "daily"'
+run --porcelain
+expect "an entry with groups, ignore rules, labels and a commit prefix -> ON" 0 dependabot-config ON
+case "$(note dependabot-config)" in
+  "entries for: npm pip") ok "and both entries are named" ;;
+  *) bad "and both entries are named" "$(note dependabot-config)" ;;
+esac
+
+healthy; dep 'version: 2 # the only version there is' 'updates: # one app' '  - package-ecosystem: npm # the web app' \
+  '    directory: "/apps/#1"   # a # inside quotes is part of the value' '    schedule: # weekly' '      interval: weekly # on Mondays'
+run --porcelain
+expect "comments after values, and a # inside quotes -> ON" 0 dependabot-config ON
+
+# Characters above ASCII, one of each length and of each first byte that has
+# a rule of its own, in a comment and in a value.
+healthy; depb "${HD}${DL}    # \303\251 \340\240\200 \342\254\206\357\270\217 \355\200\200 \360\237\230\200 \361\200\200\200 \364\200\200\200\n    commit-message:\n      prefix: \"\342\254\206\357\270\217 d\303\251ps\"\n${TL}"; run --porcelain
+expect "characters above ASCII of every length -> ON" 0 dependabot-config ON
+healthy; depb "${HD}${DL}    x: a\357\273\277b\n${TL}"; run --porcelain
+expect "a byte-order mark in the middle of the file, which libyaml reads as a character -> ON" 0 dependabot-config ON
+
+# A group may hold other keys than its schedule, with lines of their own
+# under them, and a comment.
+healthy; dep 'version: 2' "$GW" "$GI" '    # one group' '    labels:' '      - infra' '    assignees: ["someone"]' "$GS" "$GV" '      day: monday' \
+  'updates:' "$D" '    directory: /' "$PT" "$IN"
+run --porcelain
+expect "a group with a list and other keys beside its schedule -> ON" 0 dependabot-config ON
+
+# An anchor or a comment after a key is not a value, so a block may follow.
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: &a # note' '      z: w' "$W" "$I"; run --porcelain
+expect "an anchor and a comment after a key, and a block under it -> ON" 0 dependabot-config ON
+# An anchor or a comment after the name of a group is not a value.
+healthy; dep 'version: 2' "$GW" '  infra: &g # the infra group' "$GS" "$GV" 'updates:' "$D" '    directory: /' "$PT" "$IN"; run --porcelain
+expect "a group with an anchor and a comment after its name -> ON" 0 dependabot-config ON
+# A group with a value and no lines under it does not stop the next group.
+healthy; dep 'version: 2' "$GW" '  other: {}' "$GI" "$GS" "$GV" 'updates:' "$D" '    directory: /' "$PT" "$IN"; run --porcelain
+expect "a one-line group with nothing under it, then the group in use -> ON" 0 dependabot-config ON
+
+# The longest line that is read: 1024 bytes.
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" "    x: $LV" "$W" "$I"; run --porcelain
+expect "a line of 1024 bytes -> ON" 0 dependabot-config ON
+
+# A name YAML may not read as text. Written without quotes, yes and true are
+# one key to a YAML parser, and so are 1 and 01: the second group takes the
+# place of the first, and the schedule the script read there is gone. And 1
+# is not the name '1'. The script compares names as text, so a group name,
+# or the group an entry names, that starts like a number or is one of the
+# words YAML has for true, false or nothing is UNKNOWN unless it is in quotes.
+NS='    labels: [deps]'
+healthy; dep 'version: 2' "$GW" '  yes:' "$GS" "$GV" '  true:' "$NS" 'updates:' "$D" "$DR" "$PT" '    multi-ecosystem-group: yes'; unread "two groups named yes and true, one key to a YAML parser"
+case "$(note dependabot-config)" in
+  *"a group whose name YAML may not read as text"*) ok "and the line says it is the name of a group" ;;
+  *) bad "and the line says it is the name of a group" "$(note dependabot-config)" ;;
+esac
+healthy; dep 'version: 2' "$GW" '  1:' "$GS" "$GV" '  01:' "$NS" 'updates:' "$D" "$DR" "$PT" '    multi-ecosystem-group: 1'; unread "two groups named 1 and 01"
+healthy; dep 'version: 2' "$GW" '  1:' "$GS" "$GV" 'updates:' "$D" "$DR" "$PT" "    multi-ecosystem-group: '1'"; unread "a group named 1 and an entry in '1'"
+healthy; dep '"version": 2' "$GW" '  1:' "$GS" "$GV" 'updates:' "$D" "$DR" "$PT" "    multi-ecosystem-group: '1'"; unread "a key in quotes, then a group named 1 and an entry in '1'"
+healthy; dep 'version: 2' "$GW" '  Off:' "$GS" "$GV" 'updates:' "$D" "$DR" "$PT" "    multi-ecosystem-group: 'Off'"; unread "a group named Off and an entry in 'Off'"
+for word in yes no true false on off y n null; do
+  healthy; dep 'version: 2' "$GW" "  $word:" "$GS" "$GV" 'updates:' "$D" "$DR" "$PT" "    multi-ecosystem-group: '$word'"; unread "a group named $word and an entry in '$word'"
+done
+healthy; dep 'version: 2' "$GW" "  '1':" "$GS" "$GV" 'updates:' "$D" "$DR" "$PT" '    multi-ecosystem-group: 1'; unread "a group named '1' and an entry in 1"
+case "$(note dependabot-config)" in
+  *"a multi-ecosystem-group that YAML may not read as text"*) ok "and the line says it is the group the entry names" ;;
+  *) bad "and the line says it is the group the entry names" "$(note dependabot-config)" ;;
+esac
+healthy; dep 'version: 2' "$GW" "  'Yes':" "$GS" "$GV" 'updates:' "$D" "$DR" "$PT" '    multi-ecosystem-group: Yes'; unread "a group named 'Yes' and an entry in Yes"
+healthy; dep 'version: 2' "$GW" "  '+1':" "$GS" "$GV" 'updates:' "$D" "$DR" "$PT" '    multi-ecosystem-group: +1'; unread "a group named '+1' and an entry in +1"
+healthy; dep 'version: 2' "$GW" "  '-1':" "$GS" "$GV" 'updates:' "$D" "$DR" "$PT" '    multi-ecosystem-group: -1'; unread "a group named '-1' and an entry in -1"
+healthy; dep 'version: 2' "$GW" "  '.5':" "$GS" "$GV" 'updates:' "$D" "$DR" "$PT" '    multi-ecosystem-group: .5'; unread "a group named '.5' and an entry in .5"
+healthy; dep 'version: 2' "$GW" "  '=':" "$GS" "$GV" 'updates:' "$D" "$DR" "$PT" '    multi-ecosystem-group: ='; unread "a group named '=' and an entry in ="
+# In quotes they are text. So is a name that only starts with one of the
+# words (no), ends with one (on), and has a digit, a dash and a dot that are
+# not in front.
+healthy; dep 'version: 2' "$GW" "  '1':" "$GS" "$GV" '  "yes":' "$GS" '      interval: daily' 'updates:' "$D" "$DR" "$PT" "    multi-ecosystem-group: '1'" \
+  '  - package-ecosystem: pip' '    directory: /api' "$PT" '    multi-ecosystem-group: "yes"'
+run --porcelain
+expect "groups named '1' and \"yes\", in quotes, and an entry in each -> ON" 0 dependabot-config ON
+healthy; dep 'version: 2' "$GW" '  node-18.x-python:' "$GS" "$GV" 'updates:' "$D" "$DR" "$PT" '    multi-ecosystem-group: node-18.x-python'; run --porcelain
+expect "a group named node-18.x-python -> ON" 0 dependabot-config ON
+
+# The reader is not a YAML parser, and it is not a reader of any text but
+# bytes either: it has awk work in the C locale. In a locale with two-byte
+# characters (GBK, Big5) awk can take the last byte of a UTF-8 character and
+# the backslash after it for one character, and a backslash inside double
+# quotes is what says the quote may not end where it seems to. The shim
+# stands in front of awk and writes down the locale each call was given;
+# POSIX is the same locale under another name, so a call that only inherits
+# it shows.
+REAL_AWK="$(command -v awk)"
+mkdir -p "$TMP/awkbin"
+cat > "$TMP/awkbin/awk" <<'SHIM'
+#!/usr/bin/env bash
+printf '%s\n' "${LC_ALL-unset}" >> "$AWK_LOG"
+exec "$REAL_AWK" "$@"
+SHIM
+chmod +x "$TMP/awkbin/awk"
+healthy; : > "$TMP/awklog"
+RC=0; OUT=$(GH_FIX="$FIX" AWK_LOG="$TMP/awklog" REAL_AWK="$REAL_AWK" LC_ALL=POSIX PATH="$TMP/awkbin:$TMP/bin:$PATH" bash "$SCRIPT" --root "$PROJ" --porcelain 2>&1) || RC=$?
+expect "a healthy file read through the awk shim -> ON" 0 dependabot-config ON
+if [ "$(tr '\n' ' ' < "$TMP/awklog")" = "C C " ]; then ok "both passes over the file run awk in the C locale"
+else bad "both passes over the file run awk in the C locale" "$(tr '\n' ' ' < "$TMP/awklog")"; fi
+# The file that showed it. Only a platform that has the locale can fail this
+# case (Git for Windows has it); where the locale is missing awk falls back
+# to C by itself. stderr is dropped: a shell that lacks the locale says so.
+healthy; depb "${HD}${DL}    x: \"\344\270\255\\\\\"\n${TL}    y: \" #\"\n"
+RC=0; OUT=$(GH_FIX="$FIX" LC_ALL=zh_CN.GBK PATH="$TMP/bin:$PATH" bash "$SCRIPT" --root "$PROJ" --porcelain 2>/dev/null) || RC=$?
+expect "a backslash after a UTF-8 character, read in a GBK locale -> UNKNOWN" 2 dependabot-config UNKNOWN
+
+# The same key in two entries, in two groups and in two schedules is not a
+# key written twice.
+healthy; dep 'version: 2' "$GW" "$GI" "$GS" "$GV" '  other:' "$GS" '      interval: daily' 'updates:' "$D" '    directory: /' "$PT" "$IN" \
+  '  - package-ecosystem: pip' '    directory: /api' "$PT" '    multi-ecosystem-group: other'
+run --porcelain
+expect "two groups, each with its own schedule, and an entry in each -> ON" 0 dependabot-config ON
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    schedule: {interval: weekly}' '  - package-ecosystem: pip' '    directory: /api' '    schedule: {interval: daily}'; run --porcelain
+expect "two entries, each with a one-line schedule -> ON" 0 dependabot-config ON
+
+# Forms the line check follows that no case held, again one to each part of
+# a rule a reviewer could change with the suite still passing.
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" "    x: a${TB}# b: c" "$W" "$I"; run --porcelain
+expect "a comment after a tab, with a colon in it -> ON" 0 dependabot-config ON
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    commit-message:' '      "x" : a' "$W" "$I"; run --porcelain
+expect "a key in quotes with a space before its colon -> ON" 0 dependabot-config ON
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: # a: b' "$W" "$I"; run --porcelain
+expect "a comment with a colon in it after a key with no value -> ON" 0 dependabot-config ON
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: [.a, _b]' "$W" "$I"; run --porcelain
+expect "values that start with a dot and an underscore in a one-line list -> ON" 0 dependabot-config ON
+
+# Closed on its own line, so nothing runs on, whatever is inside.
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    commit-message:' '      prefix: "[a] #x"' "$W" "$I"; run --porcelain
+expect "brackets and a # inside closed quotes -> ON" 0 dependabot-config ON
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    labels: ["a", "b"] # c' "$W" "$I"; run --porcelain
+expect "a one-line list under a key the script does not read, with a comment -> ON" 0 dependabot-config ON
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    commit-message:' "      prefix: don't" "$W" "$I"; run --porcelain
+expect "an apostrophe inside a plain value -> ON" 0 dependabot-config ON
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    labels: [a#b, c]' "$W" "$I"; run --porcelain
+expect "a # inside a word in a one-line list -> ON" 0 dependabot-config ON
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" "    x: 'a\\'" "$W" "$I"; run --porcelain
+expect "a backslash before the closing single quote -> ON" 0 dependabot-config ON
+# In a form that ends on its line, so it is followed.
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" "    x: 'it''s'" "$W" "$I"; run --porcelain
+expect "a doubled single quote inside single quotes -> ON" 0 dependabot-config ON
+healthy; dep 'version: 2' 'y: &d a' 'updates:' "$E" "$DR" '    x: *d # c' "$W" "$I"; run --porcelain
+expect "an alias to an anchor above it, with a comment after it -> ON" 0 dependabot-config ON
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: -a' "$W" "$I"; run --porcelain
+expect "a value that starts with a dash and a letter -> ON" 0 dependabot-config ON
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: a # b: c' "$W" "$I"; run --porcelain
+expect "a colon inside a comment after a plain value -> ON" 0 dependabot-config ON
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    labels:' '      - - a' "$W" "$I"; run --porcelain
+expect "a list inside a list -> ON" 0 dependabot-config ON
+
+echo "== default branch: either route protects it"
+healthy; api repos/me/proj/rules/branches/main 200 '[]'; run --porcelain
+expect "no classic protection and no rules -> OFF" 1 default-branch-protection OFF
+
+healthy; api repos/me/proj/rules/branches/main 200 '[]'
+api repos/me/proj/branches/main/protection 200 "$(classic false false)"; run --porcelain
+expect "classic protection that blocks both, no rules -> ON" 0 default-branch-protection ON
+
+healthy; api repos/me/proj 200 "$(repo false trunk true true enabled enabled)"
+api repos/me/proj/branches/trunk/protection 404 "$UNPROTECTED"
+api repos/me/proj/rules/branches/trunk 200 "$(rules non_fast_forward deletion)"
+api repos/me/proj/rules/branches/main 200 '[]'; run --porcelain
+expect "the DEFAULT branch is the one checked, whatever its name" 0 default-branch-protection ON
+
+# GitHub lists the two allow settings under "Rules applied to everyone
+# including administrators", so they count without enforce_admins.
+healthy; api repos/me/proj/rules/branches/main 200 '[]'
+api repos/me/proj/branches/main/protection 200 "$(classic false false false false)"; run --porcelain
+expect "classic blocks both and administrators may bypass the rest -> still ON" 0 default-branch-protection ON
+
+# A locked branch is read-only and cannot be deleted, whatever the two allow
+# settings say. The lock is one of the settings an administrator bypasses
+# unless enforce_admins is on, so it counts only with it.
+healthy; api repos/me/proj/rules/branches/main 200 '[]'
+api repos/me/proj/branches/main/protection 200 "$(classic true true true true)"; run --porcelain
+expect "a locked branch that binds administrators -> ON" 0 default-branch-protection ON
+
+healthy; api repos/me/proj/rules/branches/main 200 '[]'
+api repos/me/proj/branches/main/protection 200 "$(classic true true true false)"; run --porcelain
+expect "a locked branch administrators can bypass -> OFF" 1 default-branch-protection OFF
+case "$(note default-branch-protection)" in
+  *locked*administrators*) ok "and the note says the lock does not bind administrators" ;;
+  *) bad "and the note says the lock does not bind administrators" "$OUT" ;;
+esac
+
+# The two routes add up: one may stop force pushes and the other deletion.
+healthy; api repos/me/proj/branches/main/protection 200 "$(classic false true)"
+api repos/me/proj/rules/branches/main 200 "$(rules deletion)"; run --porcelain
+expect "classic blocks force pushes, a rule blocks deletion -> ON" 0 default-branch-protection ON
+
+# A branch name goes into two API paths, and GitHub allows characters in one
+# that change what a URL means. `we#ird` would ask about the branch `we`.
+healthy; api repos/me/proj 200 "$(repo false 'we#ird' true true enabled enabled)"; run --porcelain
+expect "a branch name that would change the URL -> UNKNOWN, exit 2" 2 default-branch-protection UNKNOWN dependabot-alerts ON
+if grep -q 'branches/we' "$FIX/CALLS"; then bad "a branch name that would change the URL is never sent" "$(grep 'branches/we' "$FIX/CALLS")"
+else ok "a branch name that would change the URL is never sent"; fi
+
+healthy; api repos/me/proj 200 "$(repo false release/1.x true true enabled enabled)"
+api repos/me/proj/branches/release/1.x/protection 404 "$UNPROTECTED"
+api repos/me/proj/rules/branches/release/1.x 200 "$(rules non_fast_forward deletion)"; run --porcelain
+expect "a branch name with a slash and a dot is asked about as it is" 0 default-branch-protection ON
+
+echo "== default branch: protection that protects nothing is OFF"
+healthy; api repos/me/proj/rules/branches/main 200 '[]'
+api repos/me/proj/branches/main/protection 200 "$(classic true false)"; run --porcelain
+expect "classic protection that ALLOWS force pushes -> OFF" 1 default-branch-protection OFF
+case "$(note default-branch-protection)" in
+  *"force pushes are allowed"*) ok "and the note says force pushes are what is open" ;;
+  *) bad "and the note says force pushes are what is open" "$OUT" ;;
+esac
+
+healthy; api repos/me/proj/rules/branches/main 200 '[]'
+api repos/me/proj/branches/main/protection 200 "$(classic false true)"; run --porcelain
+expect "classic protection that ALLOWS deletion -> OFF" 1 default-branch-protection OFF
+
+# Seen on a real public repository: the one active rule was a review rule.
+healthy; api repos/me/proj/rules/branches/main 200 "$(rules copilot_code_review)"; run --porcelain
+expect "a ruleset whose only rule is a review -> OFF" 1 default-branch-protection OFF
+
+healthy; api repos/me/proj/rules/branches/main 200 "$(rules non_fast_forward pull_request)"; run --porcelain
+expect "rules stop force pushes but not deletion -> OFF" 1 default-branch-protection OFF
+case "$(note default-branch-protection)" in
+  *"deletion is allowed"*) ok "and the note says deletion is what is open" ;;
+  *) bad "and the note says deletion is what is open" "$OUT" ;;
+esac
+case "$(note default-branch-protection)" in
+  *"force pushes are allowed"*) bad "and it does not claim force pushes are open" "$OUT" ;;
+  *) ok "and it does not claim force pushes are open" ;;
+esac
+
+healthy; api repos/me/proj/rules/branches/main 200 "$(rules deletion pull_request)"; run --porcelain
+expect "rules stop deletion but not force pushes -> OFF" 1 default-branch-protection OFF
+case "$(note default-branch-protection)" in
+  *"force pushes are allowed"*) ok "and the note says force pushes are what is open" ;;
+  *) bad "and the note says force pushes are what is open" "$OUT" ;;
+esac
+
+echo "== default branch: a ruleset somebody can bypass does not count"
+healthy; ruleset 1 "$BYPASS_ADMIN"; run --porcelain
+expect "the ruleset's bypass list names a role that may always bypass -> OFF" 1 default-branch-protection OFF
+case "$(note default-branch-protection)" in
+  *"ruleset 1"*bypass*) ok "and the note names the ruleset and its bypass list" ;;
+  *) bad "and the note names the ruleset and its bypass list" "$OUT" ;;
+esac
+
+healthy; ruleset 1 '[{"actor_id":5,"actor_type":"RepositoryRole","bypass_mode":"exempt"}]'; run --porcelain
+expect "an actor the rules are never run for (exempt) -> OFF" 1 default-branch-protection OFF
+
+healthy; ruleset 1 '[{"actor_id":5,"actor_type":"RepositoryRole"}]'; run --porcelain
+expect "a bypass entry that does not say how -> OFF, not assumed harmless" 1 default-branch-protection OFF
+
+# "pull_request" lets an actor merge a pull request past the rules. It does not
+# let them push, so it opens neither a force-push nor a deletion.
+healthy; ruleset 1 '[{"actor_id":5,"actor_type":"RepositoryRole","bypass_mode":"pull_request"}]'; run --porcelain
+expect "a bypass that works only through a pull request -> still ON" 0 default-branch-protection ON
+
+# GitHub leaves the bypass list out for someone who may not edit the ruleset
+# (one set above the repository, say). Absent is not empty.
+healthy; ruleset 1 absent; run --porcelain
+expect "the ruleset's answer has no bypass list -> UNKNOWN, exit 2" 2 default-branch-protection UNKNOWN
+case "$(note default-branch-protection)" in
+  *"ruleset 1"*) ok "and the note names the ruleset it could not read" ;;
+  *) bad "and the note names the ruleset it could not read" "$OUT" ;;
+esac
+
+healthy; api repos/me/proj/rulesets/1 500; run --porcelain
+expect "the ruleset cannot be read at all -> UNKNOWN" 2 default-branch-protection UNKNOWN
+
+healthy; api repos/me/proj/rulesets/1 500
+api repos/me/proj/branches/main/protection 200 "$(classic false false)"; run --porcelain
+expect "ruleset unreadable but classic protection blocks both -> ON" 0 default-branch-protection ON
+
+healthy; ruleset 2 "$BYPASS_ADMIN"
+api repos/me/proj/rules/branches/main 200 "$(both "$(rules non_fast_forward)" "$(RS=2 rules deletion)")"; run --porcelain
+expect "force pushes blocked by a clean ruleset, deletion by one with a bypass list -> OFF" 1 default-branch-protection OFF
+case "$(note default-branch-protection)" in
+  *"deletion is allowed"*) ok "and the note says deletion is what is open" ;;
+  *) bad "and the note says deletion is what is open" "$OUT" ;;
+esac
+case "$(note default-branch-protection)" in
+  *"force pushes are allowed"*) bad "and it does not claim force pushes are open" "$OUT" ;;
+  *) ok "and it does not claim force pushes are open" ;;
+esac
+
+healthy; ruleset 9 "$BYPASS_ADMIN"
+api repos/me/proj/rules/branches/main 200 "$(both "$(RS=9 rules pull_request)" "$(rules non_fast_forward deletion)")"; run --porcelain
+expect "a bypass list on a ruleset that holds neither blocking rule does not matter -> ON" 0 default-branch-protection ON
+
+echo "== default branch: 'Restrict updates' stops a force push too"
+# The `update` rule lets only people with bypass permission push to the branch
+# at all, so a force push is stopped with every other push. It says nothing
+# about deleting the branch.
+healthy; api repos/me/proj/rules/branches/main 200 "$(rules update deletion)"; run --porcelain
+expect "'Restrict updates' and a deletion rule, nobody on the bypass list -> ON" 0 default-branch-protection ON
+
+healthy; api repos/me/proj/rules/branches/main 200 "$(rules update)"; run --porcelain
+expect "'Restrict updates' alone leaves deletion open -> OFF" 1 default-branch-protection OFF
+case "$(note default-branch-protection)" in
+  *"deletion is allowed"*) ok "and the note says deletion is what is open" ;;
+  *) bad "and the note says deletion is what is open" "$OUT" ;;
+esac
+case "$(note default-branch-protection)" in
+  *"force pushes are allowed"*) bad "and it does not claim force pushes are open" "$OUT" ;;
+  *) ok "and it does not claim force pushes are open" ;;
+esac
+
+healthy; ruleset 1 "$BYPASS_ADMIN"; ruleset 2 '[]'
+api repos/me/proj/rules/branches/main 200 "$(both "$(rules update non_fast_forward)" "$(RS=2 rules deletion)")"; run --porcelain
+expect "both force-push rules sit in one ruleset with a bypass list -> OFF" 1 default-branch-protection OFF
+case "$(note default-branch-protection)" in
+  *"ruleset 1 blocks force pushes but has a bypass list"*) ok "and the ruleset is named once, with what it would have blocked" ;;
+  *) bad "and the ruleset is named once, with what it would have blocked" "$OUT" ;;
+esac
+
+echo "== default branch: rulesets layer"
+# Every ruleset that applies is enforced, so somebody gets past a rule only by
+# being on the bypass list of every ruleset that holds it.
+SAME="$(both "$(rules non_fast_forward deletion)" "$(RS=2 rules non_fast_forward deletion)")"
+
+healthy; ruleset 1 "$BYPASS_ADMIN"; ruleset 2 '[]'
+api repos/me/proj/rules/branches/main 200 "$(both "$(rules non_fast_forward)" "$(RS=2 rules update deletion)")"; run --porcelain
+expect "one ruleset has a bypass list, a second stops every push for everyone -> ON" 0 default-branch-protection ON
+
+healthy; ruleset 1 "$(actors Integration 101)"; ruleset 2 "$(actors Integration 102)"
+api repos/me/proj/rules/branches/main 200 "$SAME"; run --porcelain
+expect "two rulesets, a different app on each bypass list -> UNKNOWN, not OFF" 2 default-branch-protection UNKNOWN
+case "$(note default-branch-protection)" in
+  *"rulesets 1 2"*) ok "and the note names both rulesets" ;;
+  *) bad "and the note names both rulesets" "$OUT" ;;
+esac
+
+healthy; ruleset 1 "$BYPASS_ADMIN"; ruleset 2 "$BYPASS_ADMIN"
+api repos/me/proj/rules/branches/main 200 "$SAME"; run --porcelain
+expect "the same role on both bypass lists -> OFF" 1 default-branch-protection OFF
+case "$(note default-branch-protection)" in
+  *"rulesets 1 2 each block"*) ok "and the note says the entry is on every one of them" ;;
+  *) bad "and the note says the entry is on every one of them" "$OUT" ;;
+esac
+
+healthy; ruleset 1 "$(actors RepositoryRole 5 Team 7)"; ruleset 2 "$(actors Team 7 Integration 9)"
+api repos/me/proj/rules/branches/main 200 "$SAME"; run --porcelain
+expect "two lists with one entry in common -> OFF" 1 default-branch-protection OFF
+
+healthy; ruleset 1 "$(actors Team 1 Team 2)"; ruleset 2 "$(actors Team 2 Team 3)"; ruleset 3 "$(actors Team 1 Team 3)"
+api repos/me/proj/rules/branches/main 200 "$(both "$SAME" "$(RS=3 rules non_fast_forward deletion)")"; run --porcelain
+expect "three lists that overlap in pairs, with no entry on all three -> UNKNOWN" 2 default-branch-protection UNKNOWN
+
+healthy; ruleset 1 "$(actors Team 1)"; ruleset 2 "$(actors Team 11)"
+api repos/me/proj/rules/branches/main 200 "$SAME"; run --porcelain
+expect "team 1 and team 11 are not the same entry -> UNKNOWN" 2 default-branch-protection UNKNOWN
+
+# An entry is compared whole. Read as text, the first list here would hold an
+# entry `Y:1`, which is the second list's.
+healthy; ruleset 1 '[{"actor_id":1,"actor_type":"X,Y","bypass_mode":"always"}]'; ruleset 2 "$(actors Y 1)"
+api repos/me/proj/rules/branches/main 200 "$SAME"; run --porcelain
+expect "an entry with a comma in it is still one entry -> UNKNOWN" 2 default-branch-protection UNKNOWN
+
+healthy; ruleset 1 "$BYPASS_ADMIN"; ruleset 2 '[{"actor_id":5,"actor_type":"RepositoryRole","bypass_mode":"pull_request"}]'
+api repos/me/proj/rules/branches/main 200 "$SAME"; run --porcelain
+expect "the second list lets the role past only on a pull request -> ON" 0 default-branch-protection ON
+
+healthy; ruleset 1 '[{"actor_id":null,"actor_type":"DeployKey","bypass_mode":"always"}]'
+ruleset 2 '[{"actor_id":null,"actor_type":"DeployKey","bypass_mode":"always"}]'
+api repos/me/proj/rules/branches/main 200 "$SAME"; run --porcelain
+expect "an entry with no id (deploy keys) on both lists -> OFF" 1 default-branch-protection OFF
+
+healthy; ruleset 1 '["x"]'; run --porcelain
+expect "a bypass list whose entries are not entries -> UNKNOWN" 2 default-branch-protection UNKNOWN
+
+# What is certainly open is reported as open, even with a hole beside it.
+healthy; ruleset 1 absent
+api repos/me/proj/rules/branches/main 200 "$(rules deletion)"; run --porcelain
+expect "no rule on force pushes, and the deletion rule's bypass list unread -> OFF" 1 default-branch-protection OFF
+case "$(note default-branch-protection)" in
+  *"force pushes are allowed"*) ok "and the note says force pushes are open" ;;
+  *) bad "and the note says force pushes are open" "$OUT" ;;
+esac
+case "$(note default-branch-protection)" in
+  *"deletion is allowed"*) bad "and it does not claim deletion is open, only that it could not be read" "$OUT" ;;
+  *"could not read"*) ok "and it does not claim deletion is open, only that it could not be read" ;;
+  *) bad "and it does not claim deletion is open, only that it could not be read" "$OUT" ;;
+esac
+
+echo "== default branch: every page of rules is read"
+healthy; api repos/me/proj/rules/branches/main 200 "$(many 100 non_fast_forward deletion)"; run --porcelain
+expect "the blocking rules are on the second page -> ON" 0 default-branch-protection ON
+
+healthy; api repos/me/proj/rules/branches/main 200 "$(many 1001)"; run --porcelain
+expect "more rules than ten pages hold -> UNKNOWN, never OFF on a partial read" 2 default-branch-protection UNKNOWN
+
+echo "== fix commands name the right endpoint and are only printed"
+healthy; api repos/me/proj/vulnerability-alerts 404 "$ALERTS_OFF"
+api repos/me/proj/actions/permissions/workflow 200 '{"default_workflow_permissions":"write"}'; run
+case "$OUT" in
+  *"gh api --hostname github.com -X PUT repos/me/proj/vulnerability-alerts"*"gh api --hostname github.com -X PUT repos/me/proj/actions/permissions/workflow"*) ok "human output prints each fix command" ;;
+  *) bad "human output prints each fix command" "$OUT" ;;
+esac
+case "$OUT" in
+  *"Nothing was changed"*) ok "human output says nothing was changed" ;;
+  *) bad "human output says nothing was changed" "$OUT" ;;
+esac
+
+echo "== unknown is never green"
+healthy; api repos/me/proj/vulnerability-alerts 500; run --porcelain
+expect "alerts endpoint errors -> UNKNOWN, exit 2" 2 dependabot-alerts UNKNOWN dependabot-security-updates ON
+
+# A 404 is "off" only when GitHub says so. A token that may not look can be
+# answered 404 as well, and that is not the same fact.
+healthy; api repos/me/proj/vulnerability-alerts 404; run --porcelain
+expect "alerts 404 without GitHub's 'disabled' message -> UNKNOWN" 2 dependabot-alerts UNKNOWN
+
+healthy; api repos/me/proj/automated-security-fixes 500; run --porcelain
+expect "security updates endpoint errors -> UNKNOWN" 2 dependabot-security-updates UNKNOWN
+
+healthy; api repos/me/proj/automated-security-fixes 200 '{"paused":false}'; run --porcelain
+expect "security updates answer without its field -> UNKNOWN" 2 dependabot-security-updates UNKNOWN
+
+healthy; api repos/me/proj/automated-security-fixes 200 '{"enabled":true}'; run --porcelain
+expect "security updates enabled, with no word on whether they are paused -> UNKNOWN" 2 dependabot-security-updates UNKNOWN
+
+healthy; api repos/me/proj/actions/permissions/workflow 200 '{"can_approve_pull_request_reviews":false}'; run --porcelain
+expect "workflow permissions answer without its field -> UNKNOWN" 2 workflow-token-read-only UNKNOWN
+
+healthy; api repos/me/proj/private-vulnerability-reporting 200 '{}'; run --porcelain
+expect "vulnerability reporting answer without its field -> UNKNOWN" 2 private-vulnerability-reporting UNKNOWN
+
+healthy; api repos/me/proj/rules/branches/main 500; run --porcelain
+expect "rules endpoint errors and no classic protection -> UNKNOWN" 2 default-branch-protection UNKNOWN
+
+healthy; api repos/me/proj/rules/branches/main 200 '{"message":"not a list"}'; run --porcelain
+expect "rules answer that is not a list -> UNKNOWN" 2 default-branch-protection UNKNOWN
+
+# An entry that is not a rule is an answer this script does not understand.
+# Counting it as "not a blocking rule" would turn that into OFF.
+healthy; api repos/me/proj/rules/branches/main 200 '[{}]'; run --porcelain
+expect "a rule entry with no type -> UNKNOWN, not 'no blocking rule'" 2 default-branch-protection UNKNOWN
+
+healthy; api repos/me/proj/rules/branches/main 200 '[{"type":"non_fast_forward"},{"type":"deletion","ruleset_id":1}]'; run --porcelain
+expect "a blocking rule that does not say which ruleset it is from -> UNKNOWN" 2 default-branch-protection UNKNOWN
+
+healthy; api repos/me/proj/rules/branches/main 200 '[]'
+api repos/me/proj/branches/main/protection 200 '{"url":"https://x"}'; run --porcelain
+expect "classic answer without the force-push and deletion fields -> UNKNOWN" 2 default-branch-protection UNKNOWN
+
+# A 404 that does not say "Branch not protected" is not evidence of anything.
+healthy; api repos/me/proj/rules/branches/main 200 '[]'
+api repos/me/proj/branches/main/protection 404; run --porcelain
+expect "classic 404 without GitHub's 'not protected' message -> UNKNOWN" 2 default-branch-protection UNKNOWN
+
+# The readable route settles it, so the unreadable one does not matter.
+healthy; api repos/me/proj/branches/main/protection 500; run --porcelain
+expect "classic unreadable but rules block both -> ON" 0 default-branch-protection ON
+
+# A 403 is a plan refusal only on a private repository AND only when GitHub
+# says so. Anything else is a token that may not look.
+healthy; api repos/me/proj/branches/main/protection 403 "$PLAN"
+api repos/me/proj/rules/branches/main 403 "$PLAN"; run --porcelain
+expect "public repo, 403 on both routes -> UNKNOWN, never SKIP" 2 default-branch-protection UNKNOWN
+
+healthy; api repos/me/proj 200 "$(repo true main true true none none)"
+unapi repos/me/proj/private-vulnerability-reporting
+api repos/me/proj/branches/main/protection 403 "$DENIED"
+api repos/me/proj/rules/branches/main 403 "$DENIED"; run --porcelain
+expect "private repo, 403 that is a permission refusal -> UNKNOWN, never SKIP" 2 default-branch-protection UNKNOWN
+
+healthy; api repos/me/proj 200 "$(repo true main true true none none)"
+unapi repos/me/proj/private-vulnerability-reporting
+api repos/me/proj/branches/main/protection 403 "$DENIED"
+api repos/me/proj/rules/branches/main 200 '[]'; run --porcelain
+expect "classic refused for permission, rules empty -> UNKNOWN, not OFF" 2 default-branch-protection UNKNOWN
+
+healthy; api repos/me/proj/actions/permissions/workflow 200 '{"default_workflow_permissions":""}'; run --porcelain
+expect "empty workflow permission -> UNKNOWN" 2 workflow-token-read-only UNKNOWN
+
+healthy; api repos/me/proj 200 "$(repo false main true true none none)"; run --porcelain
+expect "absent security block on a public repo -> UNKNOWN, not OFF and not ON" 2 \
+  secret-scanning UNKNOWN push-protection UNKNOWN
+
+healthy; api repos/me/proj/vulnerability-alerts 500
+api repos/me/proj/actions/permissions/workflow 200 '{"default_workflow_permissions":"write"}'; run --porcelain
+expect "unknown beside off: exit 2 wins, the OFF is still reported" 2 \
+  dependabot-alerts UNKNOWN workflow-token-read-only OFF
+
+healthy; api repos/me/proj 500; run --porcelain
+if [ "$RC" = 2 ] && ! printf '%s\n' "$OUT" | grep -q "$(printf '\t')ON"; then
+  ok "repository unreadable -> exit 2 and nothing reported ON"
+else bad "repository unreadable -> exit 2 and nothing reported ON" "rc=$RC :: $OUT"; fi
+
+healthy; api repos/me/proj 200 "$(repo false main false true enabled enabled)"; run --porcelain
+if [ "$RC" = 2 ] && printf '%s' "$OUT" | grep -qi 'admin'; then
+  ok "no admin access -> exit 2, and the message says why"
+else bad "no admin access -> exit 2, and the message says why" "rc=$RC :: $OUT"; fi
+
+# A value that holds the character the script joins its fields with. The seven
+# fields it reads are all present and all say "on", and an eighth follows, so
+# only the shape check stands between this answer and a clean report.
+healthy; api repos/me/proj 200 "$(repo false main true true enabled 'enabled|surprise')"; run --porcelain
+if [ "$RC" = 2 ]; then ok "repository answer with an unexpected field -> exit 2"
+else bad "repository answer with an unexpected field -> exit 2" "rc=$RC :: $OUT"; fi
+
+healthy; git -C "$PROJ" remote remove origin; run --porcelain
+if [ "$RC" = 2 ] && printf '%s' "$OUT" | grep -q -- '--repo'; then ok "no origin remote -> exit 2, and the message says to name the repository"
+else bad "no origin remote -> exit 2, and the message says to name the repository" "rc=$RC :: $OUT"; fi
+
+healthy
+# PATH holds nothing at all, so this also pins that the gh check comes before
+# the script's first external command.
+RC=0; OUT=$(GH_FIX="$FIX" PATH="$TMP/empty-bin" "$BASH" "$SCRIPT" --root "$PROJ" --porcelain 2>&1) || RC=$?
+if [ "$RC" = 2 ] && printf '%s' "$OUT" | grep -q 'not installed'; then ok "gh not installed -> exit 2, and says so"
+else bad "gh not installed -> exit 2, and says so" "rc=$RC :: $OUT"; fi
+
+healthy; run --porcelain --bogus
+if [ "$RC" = 2 ]; then ok "unknown argument -> exit 2"
+else bad "unknown argument -> exit 2" "rc=$RC :: $OUT"; fi
+
+echo "== an option with its value missing"
+# `shift 2` with one argument left fails and shifts nothing, so without a
+# check the option is read again, for ever.
+healthy; bounded --root "$PROJ" --porcelain --repo
+if [ "$RC" = 2 ]; then ok "--repo with no value -> exit 2, and it returns"
+else bad "--repo with no value -> exit 2, and it returns" "rc=$RC (124 = killed after 10s) :: $OUT"; fi
+
+healthy; bounded --porcelain --root
+if [ "$RC" = 2 ]; then ok "--root with no value -> exit 2, and it returns"
+else bad "--root with no value -> exit 2, and it returns" "rc=$RC (124 = killed after 10s) :: $OUT"; fi
+
+healthy; bounded --root "$PROJ" --porcelain --repo ''
+if [ "$RC" = 2 ] && printf '%s' "$OUT" | grep -q 'needs a value'; then ok "--repo '' -> exit 2, not a silent fall back to this checkout's repository"
+else bad "--repo '' -> exit 2, not a silent fall back to this checkout's repository" "rc=$RC :: $OUT"; fi
+
+healthy; bounded --porcelain --root ''
+if [ "$RC" = 2 ] && printf '%s' "$OUT" | grep -q 'needs a value'; then ok "--root '' -> exit 2, not a silent fall back to the current directory"
+else bad "--root '' -> exit 2, not a silent fall back to the current directory" "rc=$RC :: $OUT"; fi
+
+echo "== private repositories"
+# GitHub leaves the whole security block out for a private repository on a
+# plan without secret scanning. Security updates are not part of that plan
+# question, so they are read from their own endpoint and still reported.
+healthy; api repos/me/proj 200 "$(repo true main true true none none)"
+unapi repos/me/proj/private-vulnerability-reporting
+api repos/me/proj/automated-security-fixes 200 '{"enabled":false,"paused":false}'; run --porcelain
+expect "private repo with no security block: security updates are still read (OFF)" 1 \
+  dependabot-security-updates OFF secret-scanning SKIP push-protection SKIP
+
+healthy; api repos/me/proj 200 "$(repo true main true true none none)"
+unapi repos/me/proj/private-vulnerability-reporting; run --porcelain
+expect "private repo: secret scanning and reporting are SKIP, not findings" 0 \
+  secret-scanning SKIP push-protection SKIP private-vulnerability-reporting SKIP \
+  dependabot-security-updates ON
+
+healthy; api repos/me/proj 200 "$(repo true main true true enabled enabled)"
+unapi repos/me/proj/private-vulnerability-reporting; run --porcelain
+expect "private repo on a plan that has secret scanning: reported as ON" 0 \
+  secret-scanning ON push-protection ON
+
+healthy; api repos/me/proj 200 "$(repo true main true true none none)"
+unapi repos/me/proj/private-vulnerability-reporting
+api repos/me/proj/branches/main/protection 403 "$PLAN"
+api repos/me/proj/rules/branches/main 403 "$PLAN"; run --porcelain
+expect "private repo, GitHub says the plan has no branch protection -> SKIP, exit 0" 0 default-branch-protection SKIP
+
+healthy; api repos/me/proj 200 "$(repo true main true true none none)"
+unapi repos/me/proj/private-vulnerability-reporting
+api repos/me/proj/branches/main/protection 403 "$PLAN"
+api repos/me/proj/rules/branches/main 200 '[]'; run --porcelain
+expect "plan refuses one route, the other is readable and empty -> OFF, not SKIP" 1 default-branch-protection OFF
+
+echo "== which repository: the one this checkout pushes to"
+# A fork has two remotes, and gh picks `upstream` when asked which repository
+# a checkout is. The fake's `gh repo view` answers as a real one does there
+# (parent/proj), and no fixture exists under that name.
+healthy; git -C "$PROJ" remote add upstream https://github.com/parent/proj.git; run --porcelain
+expect "origin and upstream both set: origin's repository is the one read" 0 \
+  dependabot-alerts ON default-branch-protection ON
+if grep -q '^repo view' "$FIX/CALLS"; then bad "gh is never asked which repository this is" "$(grep '^repo view' "$FIX/CALLS")"
+else ok "gh is never asked which repository this is"; fi
+if grep -q 'parent/proj' "$FIX/CALLS"; then bad "nothing is asked about the upstream repository" "$(grep 'parent/proj' "$FIX/CALLS" | head -3)"
+else ok "nothing is asked about the upstream repository"; fi
+
+for u in git@github.com:me/proj.git ssh://git@github.com/me/proj.git https://github.com/me/proj.git \
+         https://github.com/me/proj/ https://someone@github.com/me/proj.git; do
+  healthy; origin "$u"; run --porcelain
+  expect "origin written as $u -> me/proj" 0 dependabot-alerts ON
+done
+
+healthy; origin https://github.com/other/thing.git
+git -C "$PROJ" remote set-url --push origin https://github.com/me/proj.git; run --porcelain
+expect "fetch and push addresses differ: the push address is the one read" 0 dependabot-alerts ON
+
+# Only github.com. Any other host, an SSH alias included, is not guessed at:
+# gh would be asked about a repository of the same name on github.com.
+for u in https://gitlab.com/me/proj.git git@github-work:me/proj.git https://github.com.example.org/me/proj.git \
+         https://notgithub.com/me/proj.git \
+         https://example.org/x@github.com/me/proj ssh://git@example.org/me/proj.git; do
+  healthy; origin "$u"; run --porcelain
+  if [ "$RC" = 2 ] && [ ! -s "$FIX/CALLS" ] && printf '%s' "$OUT" | grep -q -- '--repo'; then ok "origin written as $u is not a github.com address -> exit 2, nothing asked"
+  else bad "origin written as $u is not a github.com address -> exit 2, nothing asked" "rc=$RC calls=$(head -2 "$FIX/CALLS" 2>/dev/null) :: $OUT"; fi
+done
+
+healthy; origin https://github.com/me/proj/extra; run --porcelain
+if [ "$RC" = 2 ] && [ ! -s "$FIX/CALLS" ]; then ok "an origin path that is not OWNER/NAME -> exit 2, nothing asked"
+else bad "an origin path that is not OWNER/NAME -> exit 2, nothing asked" "rc=$RC :: $OUT"; fi
+
+# An https address can carry a token, so the address is never printed.
+healthy; origin 'https://someone:s3cr3t-t0ken@github.com/me/proj.git'; run --porcelain
+expect "an origin address that carries a token still names me/proj" 0 dependabot-alerts ON
+healthy; origin 'https://someone:s3cr3t-t0ken@example.org/me/proj.git'; run --porcelain
+if [ "$RC" = 2 ] && ! printf '%s' "$OUT" | grep -q 's3cr3t'; then ok "an origin on another host -> exit 2, and its address is not printed"
+else bad "an origin on another host -> exit 2, and its address is not printed" "rc=$RC :: $OUT"; fi
+
+# gh sends its requests to $GH_HOST when that is set. The origin is on
+# github.com, so asking another server would be asking about another repository.
+healthy; GH_HOST=ghe.example.org run --porcelain
+if [ "$RC" = 2 ] && [ ! -s "$FIX/CALLS" ] && printf '%s' "$OUT" | grep -q 'GH_HOST'; then ok "GH_HOST points gh at another server -> exit 2, nothing asked"
+else bad "GH_HOST points gh at another server -> exit 2, nothing asked" "rc=$RC calls=$(head -2 "$FIX/CALLS" 2>/dev/null) :: $OUT"; fi
+healthy; GH_HOST=github.com run --porcelain
+expect "GH_HOST set to github.com changes nothing" 0 dependabot-alerts ON
+
+# The message for an address that is not taken says how to go on without
+# losing the one check that reads a file.
+healthy; origin git@github-work:me/proj.git; run --porcelain
+if printf '%s' "$OUT" | grep -q -- '--repo OWNER/NAME --root'; then ok "and the message names --root as well, so the file check is kept"
+else bad "and the message names --root as well, so the file check is kept" "$OUT"; fi
+
+echo "== which server: github.com, unless GH_HOST names another"
+# With GH_HOST unset gh picks a server by itself, and with one saved login
+# that is not github.com it picks that one (seen with gh 2.89.0). The script
+# says which server on every call.
+only_host() { [ -s "$FIX/HOSTS" ] && ! grep -qvx "$1" "$FIX/HOSTS"; }
+healthy; run --porcelain
+if only_host github.com; then ok "every request is sent with GH_HOST=github.com"
+else bad "every request is sent with GH_HOST=github.com" "$(sort -u "$FIX/HOSTS" 2>/dev/null)"; fi
+
+healthy; run --porcelain --repo me/proj
+if only_host github.com; then ok "--repo with GH_HOST unset: github.com as well"
+else bad "--repo with GH_HOST unset: github.com as well" "$(sort -u "$FIX/HOSTS" 2>/dev/null)"; fi
+
+healthy; api repos/me/proj/vulnerability-alerts 404 "$ALERTS_OFF"; api repos/me/proj/rules/branches/main 200 '[]'
+GH_HOST=ghe.example.org run --repo me/proj
+if only_host ghe.example.org; then ok "--repo with GH_HOST set: every request goes to that server"
+else bad "--repo with GH_HOST set: every request goes to that server" "$(sort -u "$FIX/HOSTS" 2>/dev/null)"; fi
+case "$OUT" in
+  *"gh api --hostname ghe.example.org -X PUT repos/me/proj/vulnerability-alerts"*"https://ghe.example.org/me/proj/settings/rules"*) ok "and the printed fixes name that server" ;;
+  *) bad "and the printed fixes name that server" "$OUT" ;;
+esac
+
+# The server's name goes into commands printed for a person to paste, so it is
+# held to the shape of a host name before anything is asked or printed.
+for h in 'ghe.example.org; echo x' '-evil'; do
+  healthy; GH_HOST="$h" run --porcelain --repo me/proj
+  if [ "$RC" = 2 ] && [ ! -s "$FIX/CALLS" ] && printf '%s' "$OUT" | grep -q 'GH_HOST'; then ok "GH_HOST set to [$h] is not a host name -> exit 2, nothing asked"
+  else bad "GH_HOST set to [$h] is not a host name -> exit 2, nothing asked" "rc=$RC calls=$(head -2 "$FIX/CALLS" 2>/dev/null) :: $OUT"; fi
+done
+
+# GitHub answers under a repository's old name after a rename. The name in its
+# answer is the one the remaining calls, and the commands printed for a person
+# to run, must use.
+healthy
+for f in "$FIX"/api/repos__me__proj__*; do
+  mv "$f" "$(printf '%s' "$f" | sed 's|repos__me__proj__|repos__new__name__|')"
+done
+api repos/me/proj 200 "$(FULL=new/name repo false main true true enabled enabled)"
+api repos/new/name/vulnerability-alerts 404 "$ALERTS_OFF"; run
+case "$RC/$OUT" in
+  1/*"gh api --hostname github.com -X PUT repos/new/name/vulnerability-alerts"*"Repository: new/name"*) ok "a renamed repository is read, and its fix printed, under the name it has now" ;;
+  *) bad "a renamed repository is read, and its fix printed, under the name it has now" "rc=$RC :: $OUT" ;;
+esac
+
+healthy; api repos/me/proj 200 "$(FULL=none repo false main true true enabled enabled)"; run --porcelain
+if [ "$RC" = 2 ] && ! printf '%s\n' "$OUT" | grep -q "$(printf '\t')ON"; then ok "an answer that does not name the repository -> exit 2, nothing reported ON"
+else bad "an answer that does not name the repository -> exit 2, nothing reported ON" "rc=$RC :: $OUT"; fi
+
+healthy; api repos/me/proj 200 "$(FULL='me/proj;x' repo false main true true enabled enabled)"; run --porcelain
+if [ "$RC" = 2 ] && ! printf '%s\n' "$OUT" | grep -q "$(printf '\t')ON"; then ok "an answer whose name is not OWNER/NAME -> exit 2, nothing reported ON"
+else bad "an answer whose name is not OWNER/NAME -> exit 2, nothing reported ON" "rc=$RC :: $OUT"; fi
+
+echo "== --repo"
+healthy; git -C "$PROJ" remote remove origin; run --porcelain --repo me/proj
+expect "--repo needs no remote" 0 dependabot-alerts ON
+healthy; run --porcelain --repo 'me/proj;rm -rf x'
+if [ "$RC" = 2 ] && printf '%s' "$OUT" | grep -q 'not an OWNER/NAME'; then ok "--repo refuses a name that is not owner/name"
+else bad "--repo refuses a name that is not owner/name" "rc=$RC :: $OUT"; fi
+
+# No --root: the repository asked about is not this checkout, so the file check
+# must not be answered from whatever directory the script happens to run in.
+healthy; mkdir -p "$TMP/elsewhere/.github"; echo 'version: 2' > "$TMP/elsewhere/.github/dependabot.yml"
+RC=0; OUT=$(cd "$TMP/elsewhere" && GH_FIX="$FIX" PATH="$TMP/bin:$PATH" bash "$SCRIPT" --porcelain --repo me/proj 2>&1) || RC=$?
+expect "--repo without --root: the local file check is SKIP" 0 dependabot-config SKIP dependabot-alerts ON
+
+# --root says where the checkout is, so that is the checkout whose remote is
+# read. Read from wherever the script was started, --root would report one
+# repository's settings and another one's file.
+healthy; cp -R "$TMP/seed" "$TMP/other"; git -C "$TMP/other" remote set-url origin https://github.com/other/thing.git
+RC=0; OUT=$(cd "$TMP/other" && GH_FIX="$FIX" PATH="$TMP/bin:$PATH" bash "$SCRIPT" --porcelain --root "$PROJ" 2>&1) || RC=$?
+expect "--root: the repository is the one that checkout pushes to, not the one the script was started in" 0 \
+  dependabot-alerts ON dependabot-config ON
+
+echo "== read-only"
+# Every run above, checked once: nothing left the script except the one read
+# shape the fake allows. The count of runs guards the check itself: a loop
+# over no fixtures would pass this with nothing looked at.
+disallowed=0; looked=0
+for d in "$TMP"/fix*; do
+  [ -d "$d" ] || continue
+  looked=$((looked + 1))
+  [ -f "$d/DISALLOWED" ] && disallowed=$((disallowed + 1))
+done
+if [ "$looked" -ge 170 ] && [ "$disallowed" -eq 0 ]; then ok "no run sent anything but the one read shape ($looked runs checked)"
+else bad "no run sent anything but the one read shape" "runs checked: $looked :: $(cat "$TMP"/fix*/DISALLOWED 2>/dev/null)"; fi
+
+echo
+echo "passed: $PASS   failed: $FAIL"
+[ "$FAIL" -eq 0 ]

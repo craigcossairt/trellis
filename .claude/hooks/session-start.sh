@@ -123,6 +123,49 @@ if [ -f "$ROOT/bin/install-git-hooks.sh" ]; then
   bash "$ROOT/bin/install-git-hooks.sh" "$ROOT"
 fi
 
+# 2a. Project brain: did the last refresh fail, or has the corpus gone stale?
+# Only once the brain is set up (brain/.last-ingest exists), so a project that
+# never enabled it, or deleted brain/, prints nothing here.
+#
+# Why this lives in the session-start hook: the refresh is meant to run on a
+# schedule, and a schedule fails where nobody is looking. A cron line that
+# stopped firing, or an ingest that started refusing the corpus, changes
+# nothing you can see - the brain keeps answering, from older and older text.
+# This is the one place a person is guaranteed to be reading.
+#
+#   brain/.refresh-failed   written by brain/scripts/refresh.sh when a step
+#                           fails, removed by its next clean run
+#   brain/.last-ingest      its age is the file's modification time, asked
+#                           for with `find -mmin`, in minutes. `-mtime` is
+#                           not used: GNU find drops a part-day and BSD find
+#                           (macOS), by its manual, rounds one up, so "7
+#                           days" would mean 6 there. Not run on macOS.
+#
+# PROJECT_BRAIN_STALE_DAYS sets the threshold (default 7; 0 turns the staleness
+# line off; anything that is not a number falls back to 7).
+# PROJECT_BRAIN_DISABLE=1, the brain's kill switch, silences both lines.
+if [ "${PROJECT_BRAIN_DISABLE:-0}" != "1" ] && [ -f "$ROOT/brain/.last-ingest" ]; then
+  if [ -f "$ROOT/brain/.refresh-failed" ]; then
+    echo "## Project brain: the last refresh FAILED"
+    head -n 1 "$ROOT/brain/.refresh-failed" | tr -cd '[:print:]' | cut -c1-200
+    echo ""
+    echo "The brain keeps answering from its older corpus until this is fixed."
+    echo ""
+  else
+    brain_stale_days="${PROJECT_BRAIN_STALE_DAYS:-7}"
+    case "$brain_stale_days" in ''|*[!0-9]*) brain_stale_days=7 ;; esac
+    # Base 10, said out loud: with a leading zero the arithmetic below reads
+    # the number as octal, and 08 or 09 is then an error instead of a number.
+    brain_stale_days=$((10#$brain_stale_days))
+    if [ "$brain_stale_days" -gt 0 ] && [ -n "$(find "$ROOT/brain/.last-ingest" -mmin "+$((brain_stale_days * 1440))" 2>/dev/null)" ]; then
+      echo "## Project brain is stale"
+      echo "Last ingest: $(head -n 1 "$ROOT/brain/.last-ingest" | tr -cd '[:print:]' | cut -c1-40) - $brain_stale_days or more days ago."
+      echo "Refresh: bash brain/scripts/refresh.sh. If nothing runs it daily, tell the owner (brain/README.md has the lines). Do not create a scheduled job without asking."
+      echo ""
+    fi
+  fi
+fi
+
 # 3. Quick references
 echo "## Quick References"
 echo "- Known issues: docs/common-gotchas.md"
