@@ -44,8 +44,8 @@
 # else. Pinned here: a required key in the wrong place or with no value is
 # not there; a layout the reader does not follow (the list or an entry on one
 # line, a second document, a tab, an alias, a tag, a merge, a value over two
-# lines) is UNKNOWN and never OFF; and the plain layouts it must read, quoted
-# keys included, are read.
+# lines, a key written twice, a byte that is not text) is UNKNOWN and never
+# OFF; and the plain layouts it must read, quoted keys included, are read.
 # NOT checked, by this suite or the script: whether a value is one GitHub
 # accepts. A misspelt ecosystem name or interval still reads ON, which is why
 # the ON line says "entries for" and not "watches".
@@ -849,6 +849,82 @@ case "$(note dependabot-config)" in
   *) bad "and the line names the first of them" "$(note dependabot-config)" ;;
 esac
 
+# A tab counts as a blank before a comment mark, in a one-line list as
+# anywhere else, so these two are left open: the bracket is in the comment.
+TB=$(printf '\t')
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" "    x: [a${TB}#]" "$W" "$I"; unread "a comment after a tab inside a one-line list"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" "    x: {a: b${TB}#}" "$W" "$I"; unread "a comment after a tab inside a one-line map"
+# One case to each part of a rule in the line check that no case held: a
+# reviewer changed each part alone and the suite still passed. libyaml
+# refuses every one of these lines but the last, which is YAML the script
+# has no rule for.
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: [a}]' "$W" "$I"; unread "a closing brace inside a plain value in a one-line list"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: [a{b]' "$W" "$I"; unread "an opening brace inside a plain value in a one-line list"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: {a]: b}' "$W" "$I"; unread "a closing bracket inside a plain value in a one-line map"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" "    x: -${TB}a" "$W" "$I"; unread "a dash and a tab where a value should start"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: ?' "$W" "$I"; unread "a question mark alone as a value"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" "    x: a:${TB}b" "$W" "$I"; unread "a colon and a tab inside a plain value"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: "a""b"' "$W" "$I"; unread "two double quotes in a row inside double quotes"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    commit-message:' '      "x":a' "$W" "$I"; unread "a key in quotes with nothing between its colon and the value"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" "    x: [a,${TB}b]" "$W" "$I"; unread "a tab between the values of a one-line list"
+# A tab is not indentation in YAML, in front of a comment or on an empty
+# line no more than in front of a key, and not after the dash of a list item.
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" "    ${TB}# a note" "$W" "$I"; unread "a tab in front of a comment on a line of its own"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" "    ${TB}" "$W" "$I"; unread "a line that holds only spaces and a tab"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    labels:' "      - ${TB}deps" "$W" "$I"; unread "a tab after the dash and space of a list item"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    labels:' "      -${TB}deps" "$W" "$I"; unread "a tab straight after the dash of a list item"
+
+# A key written twice. The YAML parsers that read such a file keep the
+# second one, so a required key that is there and then there again with
+# nothing after it is not there. The script does not choose: UNKNOWN.
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    directory:' "$W" "$I"; unread "directory written twice in one entry, the second one empty"
+case "$(note dependabot-config)" in
+  *"written twice"*) ok "and the line says a key is written twice" ;;
+  *) bad "and the line says a key is written twice" "$(note dependabot-config)" ;;
+esac
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" "$W" "$I" '    schedule:'; unread "schedule written twice in one entry, the second one empty"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" "$W" "$I" '      interval:'; unread "interval written twice in one schedule, the second one empty"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    schedule: {interval: weekly, interval: }'; unread "interval written twice in a one-line schedule"
+PT='    patterns: ["*"]'
+healthy; dep 'version: 2' "$GW" "$GI" "$GS" "$GV" "$GI" '    x: y' 'updates:' "$D" '    directory: /' "$PT" "$IN"; unread "a group written twice, the second one with no schedule"
+healthy; dep 'version: 2' "$GW" "$GI" "$GS" "$GV" "$GS" 'updates:' "$D" '    directory: /' "$PT" "$IN"; unread "schedule written twice in one group, the second one empty"
+healthy; dep 'version: 2' "$GW" "$GI" "$GS" "$GV" '      interval:' 'updates:' "$D" '    directory: /' "$PT" "$IN"; unread "interval written twice in the schedule of a group, the second one empty"
+
+# Bytes. awk splits lines at a line feed and nowhere else. YAML also ends a
+# line at a carriage return alone and, for libyaml, at three more
+# characters, so one line to awk can be two to YAML, and the second can
+# open a quote. A control character, or text that is not UTF-8, makes a file
+# no YAML parser reads. depb writes a file from one printf format.
+depb() { printf "$1" > "$PROJ/.github/dependabot.yml"; }
+HD='version: 2\nupdates:\n  - package-ecosystem: npm\n'
+DL='    directory: /\n'
+TL='    schedule:\n      interval: weekly\n'
+healthy; depb "${HD}    # note\r    x: \"a\n${DL}    y: b\"\n${TL}"; unread "a carriage return inside a line, and a quote opened after it"
+case "$(note dependabot-config)" in
+  *"line 4 "*) ok "and the line is named" ;;
+  *) bad "and the line is named" "$(note dependabot-config)" ;;
+esac
+healthy; depb "${HD}    # note\302\205    x: \"a\n${DL}    y: b\"\n${TL}"; unread "a next-line character (U+0085) inside a line"
+healthy; depb "${HD}    # note\342\200\250    x: \"a\n${DL}    y: b\"\n${TL}"; unread "a line separator (U+2028) inside a line"
+healthy; depb "${HD}    # note\342\200\251    x: \"a\n${DL}    y: b\"\n${TL}"; unread "a paragraph separator (U+2029) inside a line"
+healthy; depb "version: 2\rupdates:\r  - package-ecosystem: npm\r    directory: /\r    schedule:\r      interval: weekly\r"; unread "a file whose lines end with a carriage return alone"
+healthy; depb "${HD}${DL}    x: a\001b\n${TL}"; unread "a control character (SOH) in a value"
+healthy; depb "${HD}${DL}    x: a\000b\n${TL}"; unread "a NUL byte in a value"
+healthy; depb "${HD}${DL}    x: a\037b\n${TL}"; unread "the last control character below a space (US)"
+healthy; depb "${HD}${DL}    x: a\177b\n${TL}"; unread "a DEL byte in a value"
+healthy; depb "${HD}${DL}    x: a\302\220b\n${TL}"; unread "a control character above ASCII (U+0090)"
+healthy; depb "${HD}${DL}    x: a\357\277\276b\n${TL}"; unread "U+FFFE in a value"
+healthy; depb "${HD}${DL}    x: a\357\277\277b\n${TL}"; unread "U+FFFF in a value"
+healthy; depb "${HD}${DL}    x: caf\351\n${TL}"; unread "a Latin-1 letter, which is not UTF-8"
+healthy; depb "${HD}${DL}    x: a\200b\n${TL}"; unread "a continuation byte with nothing before it"
+healthy; depb "${HD}${DL}    x: a\303\n${TL}"; unread "a two-byte character cut short at the end of a line"
+healthy; depb "${HD}${DL}    x: a\300\200b\n${TL}"; unread "two bytes for a character that fits in one (C0 80)"
+healthy; depb "${HD}${DL}    x: a\340\200\200b\n${TL}"; unread "three bytes for a character that fits in two (E0 80 80)"
+healthy; depb "${HD}${DL}    x: a\355\240\200b\n${TL}"; unread "half of a UTF-16 pair (ED A0 80)"
+healthy; depb "${HD}${DL}    x: a\360\200\200\200b\n${TL}"; unread "four bytes for a character that fits in three (F0 80 80 80)"
+healthy; depb "${HD}${DL}    x: a\364\220\200\200b\n${TL}"; unread "a character past the end of Unicode (F4 90 80 80)"
+healthy; depb "${HD}${DL}    x: a\365\200\200\200b\n${TL}"; unread "a first byte no character has (F5)"
+
 echo "== dependabot.yml: plain layouts that are read"
 healthy; dep 'version: 2' 'updates:' '  - "package-ecosystem": "npm"' "    'directory': '/'" '    "schedule":' '      "interval": "weekly"'; run --porcelain
 expect "keys in quotes -> ON" 0 dependabot-config ON
@@ -881,6 +957,33 @@ healthy; dep 'version: 2 # the only version there is' 'updates: # one app' '  - 
   '    directory: "/apps/#1"   # a # inside quotes is part of the value' '    schedule: # weekly' '      interval: weekly # on Mondays'
 run --porcelain
 expect "comments after values, and a # inside quotes -> ON" 0 dependabot-config ON
+
+# Characters above ASCII, one of each length and of each first byte that has
+# a rule of its own, in a comment and in a value.
+healthy; depb "${HD}${DL}    # \303\251 \340\240\200 \342\254\206\357\270\217 \355\200\200 \360\237\230\200 \361\200\200\200 \364\200\200\200\n    commit-message:\n      prefix: \"\342\254\206\357\270\217 d\303\251ps\"\n${TL}"; run --porcelain
+expect "characters above ASCII of every length -> ON" 0 dependabot-config ON
+healthy; depb "${HD}${DL}    x: a\357\273\277b\n${TL}"; run --porcelain
+expect "a byte-order mark in the middle of the file, which libyaml reads as a character -> ON" 0 dependabot-config ON
+
+# The same key in two entries, in two groups and in two schedules is not a
+# key written twice.
+healthy; dep 'version: 2' "$GW" "$GI" "$GS" "$GV" '  other:' "$GS" '      interval: daily' 'updates:' "$D" '    directory: /' "$PT" "$IN" \
+  '  - package-ecosystem: pip' '    directory: /api' "$PT" '    multi-ecosystem-group: other'
+run --porcelain
+expect "two groups, each with its own schedule, and an entry in each -> ON" 0 dependabot-config ON
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    schedule: {interval: weekly}' '  - package-ecosystem: pip' '    directory: /api' '    schedule: {interval: daily}'; run --porcelain
+expect "two entries, each with a one-line schedule -> ON" 0 dependabot-config ON
+
+# Forms the line check follows that no case held, again one to each part of
+# a rule a reviewer could change with the suite still passing.
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" "    x: a${TB}# b: c" "$W" "$I"; run --porcelain
+expect "a comment after a tab, with a colon in it -> ON" 0 dependabot-config ON
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    commit-message:' '      "x" : a' "$W" "$I"; run --porcelain
+expect "a key in quotes with a space before its colon -> ON" 0 dependabot-config ON
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: # a: b' "$W" "$I"; run --porcelain
+expect "a comment with a colon in it after a key with no value -> ON" 0 dependabot-config ON
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: [.a, _b]' "$W" "$I"; run --porcelain
+expect "values that start with a dot and an underscore in a one-line list -> ON" 0 dependabot-config ON
 
 # Closed on its own line, so nothing runs on, whatever is inside.
 healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    commit-message:' '      prefix: "[a] #x"' "$W" "$I"; run --porcelain

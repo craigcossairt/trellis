@@ -571,8 +571,13 @@ elif [ -f "$ROOT/.github/dependabot.yml" ] || [ -f "$ROOT/.github/dependabot.yam
   #   - `multi-ecosystem-groups:` as a block of named groups
   #   - a byte-order mark at the very start of the file, `---` before the
   #     first key and `...` after the last line, alone or with a comment
-  # What makes it UNKNOWN: the list or an entry written on one line, a second
-  # document, a tab in the indentation, an alias (*name) as the value of a
+  # What makes it UNKNOWN: a byte the check in front of the reader does not
+  # take as text (a control character, a line break that is not a line feed,
+  # text that is not UTF-8), the list or an entry written on one line, a second
+  # document, a tab in front of a line's key, value or comment or alone on
+  # a line, a tab after the dash of a list item, a key written
+  # twice in one entry, one schedule or one group, a group written twice, an
+  # alias (*name) as the value of a
   # required key or anywhere in a one-line schedule, a required value in any
   # other form (a tag, a block of text,
   # a value that runs on to a second line, a backslash inside quotes), a
@@ -600,6 +605,26 @@ elif [ -f "$ROOT/.github/dependabot.yml" ] || [ -f "$ROOT/.github/dependabot.yam
   # the file was not read at all.
   DEP_FILE="$ROOT/.github/dependabot.yml"
   [ -f "$DEP_FILE" ] || DEP_FILE="$ROOT/.github/dependabot.yaml"
+  # Bytes first. awk splits the file at line feeds and nowhere else. YAML
+  # also ends a line at a carriage return alone, and libyaml at U+0085,
+  # U+2028 and U+2029, so one line to the reader below can be two to a YAML
+  # parser, and the second can open a quote that takes the lines after it.
+  # A control character, or text that is not UTF-8, makes a file no YAML
+  # parser reads at all. So the file is read only when every line of it is
+  # made of tabs, printable ASCII and well-formed UTF-8 above U+009F, less
+  # U+2028, U+2029, U+FFFE and U+FFFF. A carriage return may be the last
+  # byte of a line and nothing else. LC_ALL=C has awk count in bytes. It
+  # prints "text", or the number of the first line that is not. An awk that
+  # cuts a line short at a NUL byte would not see what stands after it; GNU
+  # awk and mawk do not, and no other awk was tried.
+  DEP_BYTES="$(LC_ALL=C awk '
+    {
+      line = $0; sub(/\r$/, "", line)
+      if (line !~ /^([\t\040-\176]|[\302-\337][\200-\277]|\340[\240-\277][\200-\277]|[\341-\354\356\357][\200-\277][\200-\277]|\355[\200-\237][\200-\277]|\360[\220-\277][\200-\277][\200-\277]|[\361-\363][\200-\277][\200-\277][\200-\277]|\364[\200-\217][\200-\277][\200-\277])*$/) { bad = NR; exit }
+      if (line ~ /\302[\200-\237]|\342\200[\250\251]|\357\277[\276\277]/) { bad = NR; exit }
+    }
+    END { print (bad ? bad : "text") }
+  ' "$DEP_FILE" 2>/dev/null)"
   DEP_READ="$(awk -v q="'" '
     function lacks(what) { problems = problems (problems == "" ? "" : "; ") what }
     function odd(what) { if (unsure == "") unsure = what }
@@ -648,12 +673,17 @@ elif [ -f "$ROOT/.github/dependabot.yml" ] || [ -f "$ROOT/.github/dependabot.yam
       return v
     }
     # The line check. Every line of the file, under any key, has to be written
-    # in one of a few forms that end on that line: a key with nothing after
-    # it, a plain value, a value in quotes that close, a one-line [list] or
-    # {map} that closes. A line in any other form may run on into the lines
-    # after it, which then are not what they look like, so the file is not
-    # followed. The three functions below say yes only to what they can show
-    # is closed. They never say no to a line by finding what is wrong with it.
+    # in one of a few forms: a key with nothing after it, a plain value, a
+    # value in quotes that close, a one-line [list] or {map} that closes. A
+    # line in any other form may run on into the lines after it, which then
+    # are not what they look like, so the file is not followed. For quotes
+    # and brackets the functions below say yes only to what they can show is
+    # closed. A plain value is the exception: it is passed unless it starts
+    # with a character that begins another form or holds a second key. YAML
+    # lets a plain value run on to a deeper line below it. The other
+    # rules refuse that for the keys the script reads, version among them. Under a
+    # key it does not read the words that run on are part of a value nothing
+    # here looks at, and such a line cannot hold a key of its own.
     #
     # closedq: s starts with a quote. Where the quote that closes it stands,
     # or 0: it does not close on this line, or it is in double quotes and
@@ -695,7 +725,7 @@ elif [ -f "$ROOT/.github/dependabot.yml" ] || [ -f "$ROOT/.github/dependabot.yam
             if (d == "," || d == shut) break
             if (index("[]{}", d)) return 0
             if (d == ":") { if (substr(s, i + 2, 1) == " ") break; return 0 }
-            if (d == "#" && substr(s, i, 1) == " ") return 0
+            if (d == "#" && substr(s, i, 1) ~ /[ \t]/) return 0
             i++
           }
         }
@@ -740,9 +770,10 @@ elif [ -f "$ROOT/.github/dependabot.yml" ] || [ -f "$ROOT/.github/dependabot.yam
       }
       return 1
     }
-    # lineok: the same question of a whole line, t, after its dashes.
+    # lineok: the same question of a whole line, t, after its dashes. A tab
+    # between a dash and what it holds is not followed: YAML refuses it.
     function lineok(t) {
-      while (t ~ /^-([ \t]|$)/) { t = substr(t, 2); sub(/^[ \t]+/, "", t) }
+      while (t ~ /^-([ \t]|$)/) { t = substr(t, 2); sub(/^ +/, "", t); if (t ~ /^\t/) return 0 }
       return closed(t, 1)
     }
     # flowlist: 1 for a one-line [list] holding at least one value, 0 for one
@@ -767,8 +798,8 @@ elif [ -f "$ROOT/.github/dependabot.yml" ] || [ -f "$ROOT/.github/dependabot.yam
     # for one without, -1 for anything else: a map or list inside it, or an
     # alias as any value, which is also what a merge (<<) has. It leaves the
     # interval in FIV, and 1 in FCJ when the map also holds cronjob with a
-    # value.
-    function flowinterval(v,    inner, parts, n, i, p, x, found) {
+    # value. A key written twice in the map is -1 as well.
+    function flowinterval(v,    inner, parts, n, i, p, x, found, had) {
       FIV = ""; FCJ = 0
       if (v !~ /^\{.*\}$/) return -1
       inner = substr(v, 2, length(v) - 2)
@@ -779,6 +810,8 @@ elif [ -f "$ROOT/.github/dependabot.yml" ] || [ -f "$ROOT/.github/dependabot.yam
         p = parts[i]; sub(/^[ \t]+/, "", p)
         if (p == "") continue
         if (!keyval(p)) return -1
+        if (K in had) return -1
+        had[K] = 1
         x = scalar(V)
         if (KIND == "alias") return -1
         if (K == "interval" && val(x, "an interval that is not a plain value")) { found = 1; FIV = x }
@@ -800,10 +833,13 @@ elif [ -f "$ROOT/.github/dependabot.yml" ] || [ -f "$ROOT/.github/dependabot.yam
         } else if (!sched) lacks("the entry for " eco " has no schedule interval")
       }
       initem = 0; eco = ""; dir = 0; sched = 0; grp = ""; curkey = ""; ival = ""; cj = 0; pat = 0
+      split("", ekeys); split("", skeys)
     }
     # One key of an entry, on its own line.
     function entrykey(t,    v, r) {
       if (!keyval(t)) { odd("a line in an entry that is not a plain key"); curkey = ""; return }
+      if (K in ekeys) odd("a key written twice in one entry")
+      ekeys[K] = 1
       curkey = K; v = scalar(V); curempty = (KIND == "empty"); nestind = -1
       if (K == "<<") anchor = 1
       else if (K == "package-ecosystem") { if (val(v, "a package-ecosystem that is not a plain value")) eco = v }
@@ -839,6 +875,8 @@ elif [ -f "$ROOT/.github/dependabot.yml" ] || [ -f "$ROOT/.github/dependabot.yam
         if (nestind < 0) nestind = ind
         if (!curempty || ind != nestind || !keyval(text)) { odd("a schedule it cannot follow"); return }
         if (K == "<<") { anchor = 1; return }
+        if (K in skeys) odd("a key written twice in one schedule")
+        skeys[K] = 1
         v = scalar(V)
         if (K == "interval") { if (val(v, "an interval that is not a plain value")) { sched = 1; ival = v } }
         else if (K == "cronjob") { if (val(v, "a cronjob that is not a plain value")) cj = 1 }
@@ -870,6 +908,7 @@ elif [ -f "$ROOT/.github/dependabot.yml" ] || [ -f "$ROOT/.github/dependabot.yam
       if (g1 < 0) g1 = ind
       if (ind <= g1) {
         if (ind < g1 || !keyval(text)) { odd("a multi-ecosystem-groups: block that is not a block of named groups"); cg = ""; return }
+        if (K in gdef) odd("a group written twice")
         cg = K; gdef[cg] = 1; g2 = -1; gkey = ""
         return
       }
@@ -878,6 +917,8 @@ elif [ -f "$ROOT/.github/dependabot.yml" ] || [ -f "$ROOT/.github/dependabot.yam
       if (ind <= g2) {
         gkey = ""
         if (ind < g2 || !keyval(text)) return
+        if ((cg, K) in gkeys) odd("a key written twice in one group")
+        gkeys[cg, K] = 1
         gkey = K; v = scalar(V); gempty = (KIND == "empty"); g3 = -1
         if (K == "schedule" && KIND == "flow" && flowinterval(v) > 0) { gsched[cg] = 1; giv[cg] = FIV; if (FCJ) gcj[cg] = 1 }
         return
@@ -885,6 +926,8 @@ elif [ -f "$ROOT/.github/dependabot.yml" ] || [ -f "$ROOT/.github/dependabot.yam
       if (gkey != "schedule") return
       if (g3 < 0) g3 = ind
       if (!gempty || ind != g3 || !keyval(text)) return
+      if ((cg, K) in gskeys) odd("a key written twice in the schedule of a group")
+      gskeys[cg, K] = 1
       v = scalar(V)
       if (K == "interval") { if (val(v, "an interval that is not a plain value")) { gsched[cg] = 1; giv[cg] = v } }
       else if (K == "cronjob") { if (val(v, "a cronjob that is not a plain value")) gcj[cg] = 1 }
@@ -893,7 +936,7 @@ elif [ -f "$ROOT/.github/dependabot.yml" ] || [ -f "$ROOT/.github/dependabot.yam
       line = $0
       sub(/\r$/, "", line)
       if (NR == 1) sub(/^\357\273\277/, "", line)
-      if (line ~ /^[ \t]*(#|$)/) next
+      if (line ~ /^ *(#|$)/) next
       if (ended) { odd("more than one YAML document"); next }
       if (line ~ /^\.\.\.([ \t]+#.*|[ \t]*)$/) { ended = 1; next }
       if (line ~ /^---([ \t]|$)/) {
@@ -952,6 +995,7 @@ elif [ -f "$ROOT/.github/dependabot.yml" ] || [ -f "$ROOT/.github/dependabot.yam
   { IFS= read -r WATCHES; IFS= read -r DEP_LACKS; IFS= read -r DEP_ANCHOR; IFS= read -r DEP_ODD; } <<DEP
 $DEP_READ
 DEP
+  [ "$DEP_BYTES" = text ] || DEP_ODD="on line $DEP_BYTES a byte it does not take as text (a control character, a line break that is not a line feed, or text that is not UTF-8)"
   case "$DEP_ANCHOR" in
     0|1)
       if [ -n "$DEP_ODD" ]; then
