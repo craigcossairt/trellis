@@ -23,6 +23,7 @@ brain/raw/*
 brain/summaries/*
 !brain/summaries/.gitkeep
 brain/.last-ingest
+brain/.refresh-failed
 brain/log.md
 brain/index.md
 brain/hooks/debug.log

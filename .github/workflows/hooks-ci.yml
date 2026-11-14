@@ -1004,6 +1004,30 @@ jobs:
           #     The two direct-installer cases. Through session-start the
           #     variables are already gone.
           #   both removed                                  6 -> 6 red
+          #
+          # Project-brain section (stale, or its last refresh failed), measured
+          # 2026-11-13 over 61 cases, each mutant in its own copy beside an
+          # unmutated baseline (0 red), predicted -> observed red. The age is
+          # asked for in minutes and tested an hour or two either side of the
+          # threshold; the two ages every earlier case used (now, and 2020)
+          # could not see an off-by-one-day. What the hook prints lands in the
+          # agent's context, so the wording is pinned too: it must not read as
+          # an instruction to create a scheduled job.
+          #   setup guard removed (no .last-ingest needed)  1 -> 1
+          #   kill switch ignored                           1 -> 1
+          #   threshold variable ignored                    3 -> 3
+          #   threshold 0 no longer disables                1 -> 1
+          #   non-number threshold not defaulted            1 -> 1
+          #   threshold not read as base 10 (08, 09)        2 -> 2
+          #   threshold a day early                         1 -> 1
+          #   threshold a day late                          1 -> 1
+          #   failure marker ignored                        5 -> 5
+          #   whole marker printed, unfiltered              3 -> 3
+          #   marker's 200-character cut removed            1 -> 1
+          #   marker's printable filter removed             1 -> 1
+          #   staleness always fires                        3 -> 3
+          #   staleness never fires                         7 -> 7
+          #   stale line tells the agent to schedule it     2 -> 2
           bash bin/tests/test-session-start.sh
 
       - name: CDPATH-guarded self-location
@@ -1130,6 +1154,625 @@ jobs:
           #   failed marker read treated as not set           1 -> 1
           #   "not set" (exit 1) also reported as FAILED      1 -> 1
           bash bin/tests/test-session-start-main-checkout.sh
+
+      - name: Suite - repo settings check (read-only GitHub settings)
+        if: hashFiles('bin/check-repo-settings.sh') != ''
+        run: |
+          # Reads a repository's GitHub settings and reports which protections
+          # are off. Three exit states: 0 nothing off, 1 at least one off,
+          # 2 could not tell (outranks 1, and every finding still prints).
+          # The property that matters most is one a user cannot see: it never
+          # writes. A fake gh on PATH allows only the one read form the script
+          # uses (`api <path> [--jq <expr>]`, which gh sends as a GET) and
+          # records anything else, however it is spelled. The last case fails
+          # if one was recorded, and counts the runs it looked at so an empty
+          # record cannot pass for a clean one. A list of forbidden flags was
+          # tried first and walked around three ways (`--method=PUT`, `-XPUT`,
+          # `gh repo edit`). The fake runs each --jq expression with real jq
+          # over a JSON body shaped like GitHub's, pages a list as GitHub does
+          # (30 entries unless asked), and a refusal carries the message gh
+          # prints, so the expressions, the paging and the message matching
+          # are all under test. gh's own jq is not jq: the suite's header says
+          # what that leaves unproven. The shapes were read from real
+          # responses on 2026-11-13, except a bypass list with somebody on it,
+          # which is from GitHub's API reference. Needs jq and git. 480 cases.
+          #
+          # Which repository: the one the checkout pushes to, read from its
+          # `origin` remote by git. gh is not asked, because in a checkout
+          # that also has an `upstream` remote it answers for that one (seen
+          # with gh 2.89.0), and the fake answers the same way. Only a
+          # github.com address is taken, the address is never printed, and
+          # the name GitHub gives back is the one used from then on.
+          #
+          # Which server: github.com, unless GH_HOST names another, which only
+          # --repo allows. With GH_HOST unset and one saved login that is not
+          # github.com, gh sends a request to that login's server (seen with
+          # gh 2.89.0), so the script sets GH_HOST for its own calls and the
+          # fake records what each call was given. The server's name also goes
+          # into each printed fix, so a GH_HOST that is not shaped like a host
+          # name is refused before anything is asked.
+          #
+          # What "protected" means here: no rule lets anyone force-push to the
+          # default branch or delete it. Classic protection and rulesets are
+          # both read and add up, and every page of rules is read. "Restrict
+          # updates" counts as a force-push block. These are OFF: a protection
+          # that allows force pushes, a ruleset holding only a review rule, a
+          # ruleset with somebody on its bypass list (a bypass that works only
+          # through a pull request does not count), and a branch lock
+          # administrators can bypass. Rulesets layer, so with two that hold
+          # the same rule somebody gets past only by being on both bypass
+          # lists: an entry on both is OFF, and lists with no entry in common
+          # are UNKNOWN, since two entries can still be one person. A refusal
+          # is a plan SKIP only on a private repository whose refusal names
+          # the plan, and a 404 is "off" only with GitHub's own message.
+          # UNKNOWN covers what could not be read or was not understood: an
+          # error, a rules answer holding an entry that is not a rule, a
+          # ruleset whose bypass list is missing, more than ten pages of
+          # rules. Not read at all, and said so in the script: an
+          # organisation's custom roles that carry a bypass permission, and a
+          # ruleset's pull-request rule as a block on force pushes.
+          #
+          # Security updates that are enabled but paused are OFF. A branch
+          # name holding a character that changes what a URL means is never
+          # sent.
+          #
+          # The dependabot-config line reads the file as text, with awk, which
+          # is not a YAML parser. awk runs in the C locale for it: in a locale
+          # with two-byte characters (GBK, Big5) GNU awk takes the last byte
+          # of a UTF-8 character and a backslash after it for one character,
+          # and the backslash is what says a quote may not end where it
+          # seems to. So it says ON or OFF only for a file in the
+          # plain block layout, and UNKNOWN for anything it does not follow:
+          # a byte that is not text (a control character, a line break that
+          # is not a line feed, text that is not UTF-8), the list or an
+          # entry on one line, a second document, a tab where the text of a
+          # line starts (after its spaces, or as the whole line) or after a
+          # list dash, a key
+          # written twice in one entry, schedule or group, a group written
+          # twice, a line longer than 1024 bytes (a key in front of a colon
+          # on its own line may not be longer than 1024 characters, and no
+          # shorter line can hold one), in a multi-ecosystem-groups block a line
+          # that is not a plain key where a key of a group or of its
+          # schedule is due, lines under a key that has a value on its own
+          # line (at the top level, in an entry, in a group and under the
+          # name of a group; `updates: []` with entries under it is one), an
+          # alias, a tag, a value over two lines, any line that holds << (a
+          # merge is not followed, wherever it stands: it can supply a key,
+          # and one of something that cannot be merged is an error to a
+          # parser), a group name or the group an entry names that is
+          # written without quotes and that YAML may not read as text (a
+          # number, yes, no, null and the like: two such names can be one
+          # key to a parser, and neither is the name in quotes), a
+          # one-line list or map that is not flat, a comma inside quotes in
+          # a one-line list or schedule, an entry in a group the
+          # file does not define, a version written with anything but digits
+          # or with a zero in front (2.0, 2., +2, 02), `version:` twice or
+          # carried on to a second line, words after `...` on its line, and
+          # a line under any key that is not in a form that ends on that
+          # line. The forms followed are a
+          # key with nothing after it, a plain value, a value in quotes that
+          # close, and a one-line list or map that closes and holds only
+          # plain or quoted values. A quote or a bracket left open is the
+          # one that matters: the lines after it belong to it, whatever they
+          # look like. A block of text, a tag and a `?` key are forms YAML
+          # allows and the reader has no rule for, so they are UNKNOWN too.
+          # OFF is a file with no `version: 2`, no
+          # entry, or an entry missing a key GitHub requires, each with a
+          # value: an ecosystem, a directory, a schedule interval of its own
+          # or its group's, `patterns` when it is in a group, and a `cronjob`
+          # beside a `cron` interval. A byte-order mark at the start, `---`
+          # before the first key and `...` after the last line are stepped
+          # over. ON names the ecosystems the file has entries for. Whether
+          # GitHub accepts a value is not checked: its lists change, and a
+          # copy of them here would go stale without failing. Nor is the
+          # nesting: the reader takes one line at a time, so a file GitHub
+          # refuses for its indentation can still read ON. It places the
+          # lines under the keys it reads and refuses what it cannot place
+          # there. Under any other key that has nothing after it on its own
+          # line (commit-message, labels, a key of a group that is not its
+          # schedule) the lines of the block are not placed at all.
+          #
+          # The reader was also run against libyaml (PyYAML's CSafeLoader) on
+          # generated files with a piece of random marks in each, among them
+          # tabs, a carriage return, a control character, U+0085, U+2028 and
+          # characters above ASCII, half with GNU awk and half with mawk: 12200
+          # files with the piece in a plain entry, 12000 with it in a groups
+          # block, and 12000 with it in a one-line schedule or list or as the
+          # value of a key the reader reads. None read ON through a line libyaml
+          # refuses, and none where libyaml does not find a key the reader
+          # counted. Three read ON that libyaml refuses for the nesting, each in
+          # the block under a key the reader does not read that has nothing
+          # after it on its line (1 of the entry files, 2 of the group files).
+          # The generators make one merge only (an alias, as a part of a one-
+          # line schedule), no two groups with names that are one key to a
+          # parser, and no locale; those were found by reviewers, and the cases
+          # here hold them. That run is not part of CI; the cases here are.
+          #
+          # Mutation ledger, measured 2026-11-14, 345 mutants each in its own
+          # copy beside an unmutated baseline (0 red), predicted -> observed
+          # red. Measured on Linux (bash 5.3, GNU awk 5.3, jq 1.8.1, under
+          # WSL). The unmutated suite also passes there with mawk 1.3.4 as
+          # awk, and under Git for Windows' bash. The carriage-return row can
+          # only be measured on Linux: Git for Windows' awk drops a carriage
+          # return before the program sees the line, so removing the script's
+          # own line for it changes nothing there.
+          # All 345 mutants were run on the script as it is here, against all
+          # 480 cases. Eight rows were predicted wrong (2 low and 6 high): each
+          # of those mutants fails a different number of cases than the count
+          # written beforehand. Their rows show both numbers. ONE MUTANT IS NOT
+          # CAUGHT, the row that ends 1 -> 0: an alias as a value in a one-line
+          # schedule is read on. The check on the form of every line refuses the
+          # same line whatever this test says, so the mutant changes no verdict,
+          # only the reason that is printed. The one case that held that reason
+          # was for a merge in a one-line schedule, and the rule for << now
+          # gives its reason first. No case was added for it. Every other mutant
+          # is caught. One case reads a file under a GBK locale, and can fail
+          # only where that locale exists: Git for Windows has it, the Linux
+          # runner does not. There the row for the reader's locale is caught by
+          # one case alone, the one that puts a shim in front of awk and writes
+          # down the locale each call was given.
+          # Not every line of the reader has a row. Left out: the two tests
+          # that a key had no value of its own before the lines under it are
+          # read, and the two that a one-line list or map closes on the line
+          # it opens on. Nor has every edge of the byte pass a case: a
+          # reviewer changed five of its ranges at their ends (U+0080 and
+          # U+009F let through, E0 9F and F0 8F let through, C1 starting a
+          # character), `\r$` to `\r+$`, and an empty answer taken as
+          # text, and the suite stayed green for all seven.
+          #
+          #   alerts endpoint error read as ON                2 -> 2
+          #   unreadable on/off field read as OFF             4 -> 4
+          #   found (1) outranks could-not-tell (2)           1 -> 1
+          #   private repo's absent secret scanning a finding 4 -> 4
+          #   vulnerability reporting checked on private      5 -> 5
+          #   admin check removed                             1 -> 1
+          #   gh presence check removed                       1 -> 1
+          #   a write is sent                                 1 -> 1
+          #   default branch hardcoded to main                1 -> 1
+          #   extra field in the repository line accepted     1 -> 1
+          #   repository name shape check removed             2 -> 2
+          #   --repo still reads the local tree               1 -> 1
+          #   option value check removed (the endless loop)   4 -> 4
+          #   empty option value accepted                     2 -> 2
+          #   classic force-push flag ignored                 2 -> 2
+          #   classic deletion flag ignored                   1 -> 1
+          #   a deletion rule counts as a force-push block    6 -> 6
+          #   a force-push rule counts as a deletion block    6 -> 6
+          #   plan refusal believed on a public repo          1 -> 1
+          #   any 403 on a private repo read as the plan      2 -> 2
+          #   any classic 404 read as not protected           1 -> 1
+          #   unreadable route no longer UNKNOWN              11 -> 11
+          #   deletion left out of the verdict                8 -> 8
+          #   an unreadable route undoes a proven ON          1 -> 1
+          #   classic answer missing its fields accepted      1 -> 1
+          #   plan refusal on one route read as SKIP          1 -> 1
+          #   a ruleset nobody can bypass blocks nothing      82 -> 82
+          #   classic protection contributes nothing          5 -> 5
+          #   plan refusal on both routes read as OFF         1 -> 1
+          #   any alerts 404 read as off                      1 -> 1
+          #   security updates endpoint error read as ON      1 -> 1
+          #   a write spelled --method=PUT and -XPUT          1 -> 1
+          #   a setting changed through gh repo edit          1 -> 1
+          #   --root: remote read from the starting folder    11 -> 11
+          #   branch name sent whatever it holds              1 -> 1
+          #   a slash in a branch name refused                1 -> 1
+          #   a dependabot file with no entry counts as ON    3 -> 3
+          #   comment lines read as part of the file          7 -> 7
+          #   what the file watches left out of the report    1 -> 1
+          #   paused security updates read as ON              2 -> 2
+          #   enabled, no word on paused, read as ON          1 -> 1
+          #   the paused field is never read                  3 -> 3
+          #   a branch lock is ignored                        1 -> 1
+          #   a lock counts though admins can bypass it       2 -> 2
+          #   allow flags count only with enforce_admins      1 -> 1
+          #   note on a lock that does not bind dropped       1 -> 1
+          #   a ruleset with a bypass list still counts       17 -> 17
+          #   pull-request-only bypass counted as a way in    2 -> 2
+          #   a missing bypass list read as an empty one      3 -> 3
+          #   an unreadable ruleset counts as no bypass       5 -> 5
+          #   what could not be settled reported as OFF       7 -> 7
+          #   note naming one bypassed ruleset dropped        2 -> 2
+          #   only an 'always' bypass counts as a way in      2 -> 2
+          #   a classic block loses to an unread ruleset      1 -> 1
+          #   the first page taken as the whole list          2 -> 2
+          #   a hundred a page is not asked for               2 -> 2
+          #   the ten-page cap removed                        1 -> 1
+          #   an entry that is not a rule skipped             1 -> 1
+          #   a blocking rule with no ruleset skipped         1 -> 1
+          #   lists with nothing in common read as a way in   4 -> 4
+          #   lists with nothing in common read as blocked    5 -> 5
+          #   note naming several bypassed rulesets dropped   1 -> 1
+          #   'Restrict updates' not read from the rules      3 -> 3
+          #   'Restrict updates' not a force-push block       3 -> 3
+          #   'Restrict updates' counted as a deletion block  2 -> 2
+          #   two bypass lists are not compared               4 -> 4
+          #   entries compared as parts of a word             1 -> 1
+          #   an entry not encoded before lists are joined    1 -> 1
+          #   a ruleset with two force rules counted twice    1 -> 1
+          #   certainly open no longer outranks a hole        2 -> 2
+          #   the hole left out of an OFF line                1 -> 1
+          #   an unread bypass list is passed over            5 -> 5
+          #   fetch address read, not the push address        1 -> 1
+          #   any https host taken for github.com             5 -> 5
+          #   a host that only ends in github.com taken       1 -> 1
+          #   an SSH alias taken for github.com               2 -> 2
+          #   an ssh:// address on any host taken             1 -> 1
+          #   the .git ending kept in the name                6 -> 6
+          #   a trailing slash kept in the name               1 -> 1
+          #   GH_HOST pointing elsewhere ignored              1 -> 1
+          #   the address printed when it is refused          1 -> 1
+          #   the old name kept after a rename                1 -> 1
+          #   the name GitHub gives back not checked          1 -> 1
+          #   an answer naming no repository accepted         2 -> 2
+          #   gh asked which repository this is               457 -> 457
+          #   an entry with no directory counts               12 -> 12
+          #   one entry's keys carry over to the next         2 -> 2
+          #   a file that could not be read reported OFF      1 -> 1
+          #   a carriage return kept on the line              2 -> 2
+          #   what the file has entries for not recorded      8 -> 8
+          #   quotes kept around a value                      11 -> 11
+          #   disabled security updates no longer OFF         2 -> 2
+          #   GH_HOST set but not handed to gh                2 -> 2
+          #   server is github.com whatever GH_HOST says      4 -> 4
+          #   a printed fix does not name the server          3 -> 3
+          #   the settings address is always github.com       1 -> 1
+          #   GH_HOST used whatever it holds                  2 -> 2
+          #   a GH_HOST starting with a dash is used          1 -> 1
+          #   the --repo hint leaves --root out               1 -> 1
+          #   an entry with no schedule counts                14 -> 14
+          #   an entry naming no ecosystem passed over        1 -> 1
+          #   a file with no version line counts              4 -> 4
+          #   any version counts                              2 -> 2
+          #   a version in quotes read as the number          1 -> 1
+          #   ~ and null count as values                      7 -> 7
+          #   an empty pair of quotes counts as a value       2 -> 2
+          #   a key in quotes is not read                     4 -> 4
+          #   an anchor before a value not stepped over       4 -> 4
+          #   a comment after a value read as part of it      2 -> 2
+          #   a comment in a value's place read as one        3 -> 3
+          #   what follows a closing quote ignored            1 -> 1
+          #   a backslash inside quotes not noticed           1 -> 1
+          #   an alias read as a plain value                  3 -> 2
+          #   a tag read as a plain value                     1 -> 1
+          #   a one-line list or map read as plain            42 -> 41
+          #   a one-line list holding nothing counts          5 -> 5
+          #   brackets inside a one-line list not noticed     1 -> 1
+          #   a one-line directories list not read            2 -> 2
+          #   a block list of directories not read            3 -> 3
+          #   directories as one value passed over            1 -> 1
+          #   any key in a one-line schedule counts           1 -> 1
+          #   a one-line interval needs no value              1 -> 1
+          #   a one-line schedule not read                    6 -> 6
+          #   an interval beside the entry's keys counts      3 -> 3
+          #   an interval under another key counts            1 -> 1
+          #   an interval at any depth in schedule counts     1 -> 1
+          #   a value on two lines taken from its first       1 -> 1
+          #   entries flush with updates: not read            2 -> 2
+          #   a list at its key's depth read as keys          3 -> 3
+          #   a key between dash and keys read as a key       1 -> 1
+          #   keys after the dash's line passed over          1 -> 1
+          #   a stray line under updates: passed over         1 -> 1
+          #   a tab in the indentation not named              1 -> 1
+          #   a second document read as part of the first     1 -> 1
+          #   a file opening with --- not read                1 -> 1
+          #   a second updates: read on                       1 -> 1
+          #   a one-line updates list read as empty           1 -> 1
+          #   updates: [] not followed                        1 -> 1
+          #   a file indented as a whole read as empty        1 -> 1
+          #   an entry's group not looked at                  21 -> 21
+          #   a group with no schedule covers its entries     3 -> 3
+          #   one group not told from the next                4 -> 4
+          #   a group's one-line schedule not read            3 -> 3
+          #   an interval at any depth in a group counts      2 -> 2
+          #   a groups block of unnamed groups passed over    1 -> 1
+          #   groups on one line passed over                  1 -> 1
+          #   a second groups block read on                   1 -> 1
+          #   what was not followed left out of verdict       222 -> 225
+          #   a bracket in a one-line schedule is not noticed 1 -> 1
+          #   a byte-order mark not stepped over              1 -> 1
+          #   the mark stepped over on any line               1 -> 1
+          #   the mark stepped over anywhere in line one      1 -> 1
+          #   a list element that is not a value passed over  2 -> 2
+          #   an empty list element not followed              1 -> 1
+          #   an unread directories list taken as a list      2 -> 2
+          #   an unread patterns list taken as a list         1 -> 1
+          #   an unread one-line schedule taken as one        8 -> 7
+          #   a one-line schedule's values are not looked at  6 -> 5
+          #   a grouped entry needs no patterns               5 -> 5
+          #   a one-line patterns list not read               11 -> 11
+          #   a block list of patterns not read               1 -> 1
+          #   patterns as one value passed over               1 -> 1
+          #   an entry's cron interval needs no cronjob       7 -> 7
+          #   a cronjob in a schedule block not read          1 -> 1
+          #   a cronjob with no value counts                  1 -> 1
+          #   a cronjob beside schedule counts                1 -> 1
+          #   the interval in a schedule block not kept       4 -> 4
+          #   the interval in a one-line schedule not kept    3 -> 3
+          #   the cronjob in a one-line schedule not kept     1 -> 1
+          #   a one-line cronjob needs no value               1 -> 1
+          #   any key in a one-line schedule is its cronjob   4 -> 4
+          #   one one-line schedule carried to the next       1 -> 1
+          #   a group's cron interval needs no cronjob        6 -> 6
+          #   a group's cronjob not read                      1 -> 1
+          #   a group's cronjob with no value counts          1 -> 1
+          #   a group's interval not kept                     5 -> 5
+          #   a group's one-line interval not kept            1 -> 1
+          #   a group's one-line cronjob not kept             1 -> 1
+          #   a group named once for each entry in it         1 -> 1
+          #   own schedule: the group is not looked up        2 -> 2
+          #   own schedule: the group's is still needed       1 -> 1
+          #   an undefined group taken as having no schedule  2 -> 2
+          #   the groups the file defines not recorded        23 -> 23
+          #   what follows the end mark passed over           1 -> 1
+          #   the end-of-document mark not known              3 -> 3
+          #   a version not a whole number read as it stands  5 -> 5
+          #   anything may follow the end mark on its line    1 -> 1
+          #   a comment after the end mark not allowed        1 -> 1
+          #   spaces after the end mark not allowed           1 -> 1
+          #   a whole number starting with 0 is a version     1 -> 1
+          #   a whole number other than 2 not read            2 -> 2
+          #   version: written twice not noticed              3 -> 3
+          #   a version of two digits not read                1 -> 1
+          #   a line in a form not followed is not counted    68 -> 68
+          #   the last such line is named, not the first      1 -> 1
+          #   a backslash in double quotes not looked for     3 -> 3
+          #   a backslash refused in single quotes too        1 -> 1
+          #   a doubled single quote ends the quotes          1 -> 1
+          #   a quote that never closes taken as closed       12 -> 12
+          #   either closing bracket closes a list or map     1 -> 1
+          #   a comma with nothing before it passed           1 -> 1
+          #   a colon passed wherever it stands               1 -> 1
+          #   a value straight after a value passed           1 -> 1
+          #   a value straight after a pair's value passed    1 -> 1
+          #   a pair's value taken for a key                  1 -> 1
+          #   the start of a plain value in a list not read   4 -> 4
+          #   a bracket inside a plain value passed           4 -> 4
+          #   a colon inside a plain value passed             1 -> 1
+          #   a comment inside a list read on                 3 -> 3
+          #   a # inside a word in a list is a comment        1 -> 1
+          #   a list that never closes taken as closed        3 -> 3
+          #   an anchor not noted                             1 -> 1
+          #   an anchor on an alias passed                    1 -> 1
+          #   an alias followed to any name                   2 -> 2
+          #   a comment after an alias kept in its name       1 -> 1
+          #   an anchor not stepped over                      4 -> 4
+          #   what follows a key in quotes not looked at      1 -> 1
+          #   a second key after a value in quotes passed     1 -> 1
+          #   what follows a closing quote not looked at      4 -> 4
+          #   what follows a closing bracket not looked at    1 -> 1
+          #   a value may start with !                        2 -> 2
+          #   a value may start with |                        1 -> 1
+          #   a value may start with >                        1 -> 1
+          #   a value may start with %                        1 -> 1
+          #   a value may start with @                        2 -> 2
+          #   a value may start with a comma                  1 -> 1
+          #   a value may start with ]                        1 -> 1
+          #   a value may start with }                        1 -> 1
+          #   a value may start with a bare &                 1 -> 1
+          #   a value may start with a backtick               1 -> 1
+          #   a dash and a space may start a value            2 -> 2
+          #   a ? and a space may start a line                2 -> 2
+          #   a colon and a space may start a value           1 -> 1
+          #   a dash, ? or colon may never start a value      1 -> 1
+          #   a comment does not end a plain value            2 -> 2
+          #   a second key on a line passed                   3 -> 3
+          #   a colon at a line's end is not a key's colon    2 -> 2
+          #   only the first dash of a line stepped over      1 -> 1
+          #   only a space comes before a comment in a list   2 -> 2
+          #   a tab before a comment or alone is passed over  2 -> 2
+          #   a tab after a dash stepped over with the spaces 2 -> 2
+          #   a tab after a dash is not looked for            2 -> 2
+          #   a } passed inside a plain value in a list       1 -> 1
+          #   a { passed inside a plain value in a list       1 -> 1
+          #   a ] passed inside a plain value in a map        1 -> 1
+          #   a dash, ? or colon and a tab may start a value  1 -> 1
+          #   a dash, ? or colon alone at a line's end passed 1 -> 1
+          #   a # after a tab does not end a plain value      1 -> 1
+          #   a colon and then a tab is not a key's colon     1 -> 1
+          #   no space between a key in quotes and its colon  1 -> 1
+          #   a comment after an empty key read as a value    1 -> 1
+          #   a plain value in a list may not start with .    1 -> 1
+          #   a plain value in a list may not start with _    1 -> 1
+          #   a key in quotes needs nothing after its colon   1 -> 1
+          #   two double quotes in a row skipped like single  1 -> 1
+          #   a tab between values in a list is skipped       1 -> 1
+          #   a key written twice in one entry passed         3 -> 3
+          #   an entry's keys not forgotten at the next       15 -> 15
+          #   a key written twice in one schedule passed      1 -> 1
+          #   a schedule's keys not forgotten at the next     7 -> 7
+          #   a key twice in a one-line schedule passed       1 -> 1
+          #   a group written twice passed                    1 -> 1
+          #   a key written twice in one group passed         1 -> 1
+          #   a key twice in a group's schedule passed        1 -> 1
+          #   the byte check left out of the verdict          24 -> 24
+          #   listed characters looked for, not well-formed   15 -> 15
+          #   well-formed characters still refused are passed 6 -> 6
+          #   a carriage return at a line's end is not text   2 -> 2
+          #   a tab is not text                               2 -> 2
+          #   control characters below a space are text       4 -> 4
+          #   DEL is text                                     1 -> 1
+          #   a two-byte character is not text                1 -> 1
+          #   C0 and C1 may start a two-byte character        1 -> 1
+          #   any byte may follow E0                          1 -> 1
+          #   a character that starts with E0 is not text     1 -> 1
+          #   a character starting E1-EC, EE, EF is not text  3 -> 3
+          #   any byte may follow ED                          1 -> 1
+          #   a character that starts with ED is not text     1 -> 1
+          #   any byte may follow F0                          1 -> 1
+          #   a character that starts with F0 is not text     1 -> 1
+          #   F4 and F5 may start a character like F1         2 -> 2
+          #   a character that starts with F1-F3 is not text  1 -> 1
+          #   any byte may follow F4                          1 -> 1
+          #   a character that starts with F4 is not text     1 -> 1
+          #   of U+0080-U+009F only U+0085 refused            1 -> 1
+          #   U+0080-U+009F passed                            2 -> 2
+          #   U+2029 passed                                   1 -> 1
+          #   U+2028 passed                                   1 -> 1
+          #   U+FFFF passed                                   1 -> 1
+          #   U+FFFE passed                                   1 -> 1
+          #   the line named is always the first              1 -> 1
+          #   ED may start a three-byte character like E1     1 -> 1
+          #   a group's line that is no plain key passed over 4 -> 4
+          #   a line between a group's name and keys is a key 1 -> 1
+          #   a group's line not asked whether it is a key    3 -> 3
+          #   a group schedule's line it cannot follow passed 4 -> 4
+          #   a line under a group's one-line schedule a key  1 -> 1
+          #   a group schedule's line not asked if it is key  1 -> 1
+          #   a line of any length is read                    3 -> 3
+          #   a line of 1025 bytes is read                    1 -> 1
+          #   a line of 1024 bytes is not read                1 -> 1
+          #   a long line reported as a byte that is not text 1 -> 1
+          #   the byte pass does not say a line is long       1 -> 1
+          #   lines under a group that has a value are read   2 -> 2
+          #   anchor or comment after a group's name a value  1 -> 1
+          #   a group with a value stops the groups after it  1 -> 1
+          #   lines under a group with a value passed unsaid  1 -> 1
+          #   lines under a top key with a value are read     4 -> 4
+          #   an anchor or comment after a top key is a value 2 -> 2
+          #   lines under an entry's key with a value passed  1 -> 1
+          #   lines under an entry's empty key are refused    10 -> 10
+          #   lines under a group's key with a value passed   1 -> 1
+          #   lines under a group's empty key are refused     1 -> 1
+          #   only an alias stops a one-line schedule         5 -> 5
+          #   an alias in a one-line schedule is read on      1 -> 0
+          #   a line that holds << is read like any other     16 -> 16
+          #   only << in front of a colon is taken as a merge 1 -> 1
+          #   a comment line that holds << is refused         1 -> 1
+          #   a group's name is not asked if YAML reads text  15 -> 13
+          #   a group's name in quotes is asked too           2 -> 2
+          #   the group an entry names is not asked           7 -> 7
+          #   the group an entry names in quotes is asked too 1 -> 1
+          #   a key in quotes is not noted as one             2 -> 2
+          #   a plain key is not noted as one                 1 -> 1
+          #   a name with a digit in front is text            5 -> 5
+          #   a name with + in front is text                  1 -> 1
+          #   a name with - in front is text                  1 -> 1
+          #   a name with a dot in front is text              1 -> 1
+          #   a name with = in front is text                  1 -> 1
+          #   the words for true, false and nothing are text  13 -> 13
+          #   the words are looked for only as written        2 -> 2
+          #   a digit, sign, dot or = anywhere in a name      1 -> 1
+          #   a name that starts with one of the words        1 -> 1
+          #   a name that ends with one of the words          1 -> 1
+          #   yes is text                                     2 -> 2
+          #   no is text                                      1 -> 1
+          #   true is text                                    1 -> 1
+          #   false is text                                   1 -> 1
+          #   on is text                                      1 -> 1
+          #   off is text                                     2 -> 2
+          #   y is text                                       1 -> 1
+          #   n is text                                       1 -> 1
+          #   null is text                                    1 -> 1
+          #   the reader runs awk in the locale it is given   1 -> 1
+          #   the byte pass runs awk in the locale it gets    10 -> 196
+          bash bin/tests/test-check-repo-settings.sh
+
+      - name: Suite - brain refresh (optional project memory)
+        if: hashFiles('brain/scripts/refresh.sh') != ''
+        run: |
+          # refresh.sh is the line a schedule runs, so each way it can fail
+          # happens where nobody is watching. It must not set the brain up by
+          # accident, must not index a corpus the ingest refused, and must
+          # leave brain/.refresh-failed behind on either failure, because that
+          # marker is all the session-start hook has to report. Hermetic: a
+          # temp copy of brain/ and a fake indexer. 71 cases.
+          #
+          # Exit 127 ("command not found") gets a hint in the marker, because
+          # on a schedule it is nearly always PATH and the same command then
+          # works by hand. The hint must fit the 200 characters the
+          # session-start hook prints, and must not show up on other failures.
+          #
+          # install-cron.sh puts that line in a crontab (macOS and Linux).
+          # Installing a crontab replaces the whole table, so every way it can
+          # go wrong ends with somebody else's jobs gone. It runs the job once
+          # the way cron will, with nothing inherited from the terminal, reads
+          # the crontab once and stops if it cannot, writes it back with only
+          # this folder's line replaced and every other line as it was, byte
+          # for byte (empty lines at the very end are dropped), and believes
+          # the write only when the read-back works and the table it reads
+          # back is the table it wrote. A line is this folder's only when it
+          # is the line the script writes: a schedule, then exactly its job.
+          # (A schedule is digits, letters and * / , - @ ~ and nothing else.)
+          # One that mentions the refresh, or runs something besides it, is
+          # somebody else's, and so is a commented-out copy of the job and a
+          # line that sets a variable to it. No line is picked out with grep,
+          # which drops a line that is not valid UTF-8 when the locale is.
+          #
+          # A single quote, a percent sign or a line break in
+          # PATH or in the folder's path is refused: none can be written into
+          # a cron line safely. The crontab in the suite is a stand-in, first
+          # on PATH, and the section stops before its first case if that
+          # stand-in is not the one the shell would run. No real crontab is
+          # read or written, by the suite or by the ledger's runs.
+          #
+          # Mutation ledger, measured 2026-11-13 on Linux (bash 5.3, under
+          # WSL), each mutant in its own copy beside an unmutated baseline
+          # (0 red), predicted -> observed red. The unmutated suite also
+          # passes under Git for Windows' bash. Not run: macOS, and a real
+          # cron. Not in the table: the check that a crontab command exists,
+          # which cannot be tested without taking the stand-in off PATH, and
+          # the test that a line which starts like the job also ends like it.
+          # Any such line a shell would run has the closing quote of its PATH
+          # in what is left, and the quote test refuses it for that.
+          #
+          # refresh.sh:
+          #   setup guard removed (runs with no .last-ingest) 5 -> 5
+          #   ingest failure ignored                          3 -> 3
+          #   index failure ignored                           9 -> 9
+          #   marker never cleared by a clean run             1 -> 1
+          #   marker not written                              5 -> 5
+          #   CDPATH guard dropped from self-location         1 -> 1
+          #   exit 127 gets no hint                           1 -> 1
+          #   every failure blames PATH                       1 -> 1
+          #   hint long enough to pass 200 characters         1 -> 1
+          #   command no longer ends the marker               1 -> 1
+          #
+          # install-cron.sh:
+          #   the trial run skipped                           5 -> 5
+          #   the trial run inherits the terminal             1 -> 1
+          #   a failed trial does not say nothing went in     1 -> 1
+          #   a failed read taken for no crontab yet          3 -> 3
+          #   the read's exit status not looked at            4 -> 4
+          #   a failed read tried again                       1 -> 1
+          #   an unreadable crontab reported without why      1 -> 1
+          #   no line taken for this folder's                 10 -> 10
+          #   a line that only ends like the job taken        1 -> 1
+          #   a quote in the PATH a line carries not noticed  1 -> 1
+          #   an @ schedule read as five words                2 -> 2
+          #   a schedule read as one word                     8 -> 8
+          #   a schedule read as six words                    9 -> 9
+          #   spaces before an @ schedule hide it             1 -> 1
+          #   spaces after a line not trimmed                 1 -> 1
+          #   what stands before the job not looked at        4 -> 4
+          #   a / not a schedule character                    1 -> 1
+          #   a , not a schedule character                    1 -> 1
+          #   a letter not a schedule character               3 -> 3
+          #   an @ not a schedule character                   2 -> 2
+          #   a - not a schedule character                    2 -> 2
+          #   a digit not a schedule character                8 -> 8
+          #   a * not a schedule character                    8 -> 8
+          #   a space not a schedule character                10 -> 10
+          #   a ~ not a schedule character                    1 -> 1
+          #   the other lines not written back                17 -> 17
+          #   the new line put first                          5 -> 5
+          #   no crontab read as one empty line               1 -> 1
+          #   an empty line counted as another line           1 -> 1
+          #   a replaced line not counted                     1 -> 1
+          #   says a line was replaced when none was          1 -> 1
+          #   the schedule not daily at 9:00                  1 -> 1
+          #   the job line does not carry PATH                5 -> 5
+          #   a refused table not noticed                     1 -> 1
+          #   the write believed without a read-back          5 -> 5
+          #   only its own line looked for in the read-back   2 -> 2
+          #   the read-back's exit status not looked at       1 -> 1
+          #   a single quote written into the job line        1 -> 1
+          #   a percent sign written into the job line        2 -> 2
+          #   a line break written into the job line          1 -> 1
+          #   the project folder's path not checked           1 -> 1
+          #   a very long line gets no warning                1 -> 1
+          #   every line gets the warning                     1 -> 1
+          #   CDPATH guard dropped from self-location         1 -> 1
+          bash bin/tests/test-brain-refresh.sh
 
       # node is preinstalled on ubuntu-latest, but its version is the image's
       # choice. The suite uses node:test and the hook uses optional chaining,
@@ -1639,6 +2282,14 @@ jobs:
       - name: Suite - session-start main-checkout section on Git for Windows
         if: hashFiles('bin/check-main-checkouts.sh') != ''
         run: bash bin/tests/test-session-start-main-checkout.sh
+      # Both lean on things that differ on Git for Windows: a fake gh found
+      # through PATH, and file ages read by find. Ledgers on the Linux steps.
+      - name: Suite - repo settings check on Git for Windows
+        if: hashFiles('bin/check-repo-settings.sh') != ''
+        run: bash bin/tests/test-check-repo-settings.sh
+      - name: Suite - brain refresh on Git for Windows
+        if: hashFiles('brain/scripts/refresh.sh') != ''
+        run: bash bin/tests/test-brain-refresh.sh
       # Python suites for the tools above. The CRLF case matters most here: a
       # Windows checkout writes README.md with CRLF, which the catalog check
       # must read as the same text.

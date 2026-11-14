@@ -1,6 +1,8 @@
 # SETUP.md - Day-1 checklist
 
-This page gets your project set up. Work top to bottom. The core steps take about 15 minutes.
+This page gets your project set up. Work top to bottom. The core steps (1 to 5 and the check
+in 9) take about 15 minutes. Steps 6 to 8 are three decisions, a few minutes each. Make them
+rather than skip them: each one is cheap today and easy to forget later.
 
 ## Two ways to do this
 
@@ -28,6 +30,10 @@ re-explain your project.
 - [ ] Open `AGENTS.md` and fill in every slot marked `<!-- FILL IN -->`: project name, what it
       does, who owns it, what stage it is at, and your tech stack. If you do not know your stack
       yet, write what you are leaning toward. You can fix it later.
+- [ ] Do not run your AI tool's "write my rules file" command over this (`/init` in Claude
+      Code). `AGENTS.md` already is that file. Such a command fills it with things the AI can
+      read from the code anyway, and every line in it is loaded into every session, so it should
+      hold only what the code cannot say.
 - [ ] In the same file, find the **Delegation** section and fill in a model family for each
       tier - the alias your AI tool takes (for example `haiku`, `sonnet`, `opus`), not a
       version number, so the table does not go stale when a new model ships. If you are not
@@ -60,10 +66,14 @@ anything committed to git is very hard to truly delete.
 - [ ] Make a copy of `.env.example` and name the copy `.env`, then fill in your values.
       In a terminal that is `cp .env.example .env`. The `.env` file is already set up to be
       ignored by git, so it will not be committed by accident.
+- [ ] Never paste a key into a settings file such as `.claude/settings.json`, and that includes
+      its `env` block. That file is committed with your project. Even a settings file git
+      ignores is one your AI opens and reads, and whatever it reads is copied into the saved
+      record of the session. Keys go in `.env` or in your password manager.
 - [ ] Only if you use MCP servers (extensions that give your AI access to outside tools like a
       database or your issue tracker): make a copy of `.mcp.json.example` named `.mcp.json` and
-      fill it in. Also ignored by git. If you do not know what this means, skip it - you can
-      come back when you need one.
+      fill it in. Also ignored by git, so it is set up once per computer. If you do not know
+      what this means, skip it - you can come back when you need one.
 
 ## 4. Turn on the safety rails (3 min)
 
@@ -151,28 +161,125 @@ what protects you; the check only catches the common case.
       sessions on one machine or wire the warning. Both do nothing until you opt in
       (`.claude/hooks/README.md` § Optional hooks). Delete each with its suite in `bin/tests/`
       or `.claude/hooks/tests/`; hooks CI skips a suite whose subject file is gone.
-- [ ] **`brain/`** if your project is too small to need a searchable memory. You can add it back
-      later; it is self-contained.
+- [ ] **The repository-settings check** (`bin/check-repo-settings.sh`, its suite
+      `bin/tests/test-check-repo-settings.sh`, and `.github/dependabot.yml`) if this project
+      will never live on GitHub. Step 8 is where it gets used.
+- [ ] **`brain/`**, but not on a guess: step 7 decides it from what your project has. If the
+      answer there is "delete", remove `brain/` and `bin/tests/test-brain-refresh.sh` together.
 - [ ] **`examples/`** once your own `AGENTS.md` is filled in. It is a worked sample of a
       finished one, and nothing else refers to it.
 
-## 6. Outside tools (optional, 5 min)
+## 6. Choose your outside tools (5 min)
 
-- [ ] Skim `docs/recommended-tooling.md`. It covers add-on skill packs and the services worth
-      paying for, with collision warnings where one would tread on something already in here.
-      Read the warnings before installing anything: some popular packs install skills under
-      names this template already uses.
+This template works on its own. A few outside tools are still worth choosing on purpose, because
+the other way to meet them is by accident, at a bad moment. You do not have to read the whole
+catalogue: `docs/recommended-tooling.md` opens with a **Start here** table, one row per
+situation. Find the rows that describe you.
 
-## 7. Project memory (optional, 10 min)
+- [ ] Decide these three today, even where the answer is the free default:
+      - **Where your secrets live.** A password manager. This is the one that cannot wait.
+      - **Where your to-do list lives.** GitHub Issues is free and already attached to your
+        repo. Linear is the pick once you are ranking a long backlog. Whichever you choose is
+        what step 2 points at.
+      - **Whether to add a skill pack.** Matt Pocock's skills are the pack the tooling page
+        recommends: they make your AI question the plan before it builds anything. One of them
+        overlaps this template's own test-first workflow, and the tooling page says how to
+        settle which of the two is in charge.
+- [ ] If you run more than one AI session at a time, or more than one AI tool, read the
+      **T3 Code** entry. It puts all of them in one window.
+- [ ] For every other row that fits you, the table says *when* to add it. Most wait until real
+      people use what you built. Note the "later" ones in `docs/decision-log.md` with what
+      would make you add them, so the reminder is somewhere you will see it.
+- [ ] Before installing any skill pack, read its line under **Overlaps and collisions** on that
+      page. Some popular packs install skills under names this template already uses.
+- [ ] Write what you chose into `AGENTS.md` (the Tech Stack table and the issue-tracker line).
+      Your AI then uses the tools you picked instead of guessing.
 
-This sets up a local search index over your own docs and history, so relevant background gets
-pulled into your prompts automatically. It is genuinely useful and genuinely not a day-1 task.
+## 7. Project memory: decide it now (2 min to decide, 10 to set up)
 
-- [ ] Skip this for now. Come back when the project has roughly 15 to 20 real documents and
-      decisions, or a few weeks of history. Before that there is nothing worth searching.
-      When you are ready, follow `brain/README.md`.
+`brain/` is a search index over your own docs and history that lives on your computer. Once it
+is on, background that matches what you are asking about is added to your prompt without you
+doing anything. Whether to set it up today depends on what your project has, so decide from
+that rather than from how busy you feel.
 
-## 8. Check that it worked (5 min)
+- [ ] **Set it up now** if any of these is true:
+      - The project already has about 15 documents of your own (specs, notes, decisions - not
+        the files this template shipped), or a few weeks of commit history.
+      - You are bringing material with you: research, a product spec, meeting notes, an export
+        from another tool. Put it under `docs/` first.
+      - You plan to write things down as you build (requirements, decisions, research) and
+        expect the project to run for months. An index that is already running picks those up
+        as they appear. One you meant to set up later usually never gets set up.
+
+      Then follow `brain/README.md`. It installs two programs (bun and QMD) and takes three
+      commands.
+- [ ] **Leave it for later** if this is a new project with nothing written down and no plan to
+      write much. Add a line to `docs/decision-log.md` saying when you will come back ("set up
+      `brain/` when `docs/` has 15 files of mine"), because nothing else will remind you.
+- [ ] **Delete it** if you already use another memory tool, or neither case above will ever
+      apply. Running two memories is worse than running one.
+- [ ] One limit to know before you choose: the automatic part works in Claude Code, Grok Build
+      and Codex. In Cursor, Gemini CLI and Copilot the index still builds and you (or your AI)
+      search it by hand. `docs/harness-support.md` has the table.
+- [ ] **If you set it up, schedule its refresh.** The index only knows what it was last fed, so
+      one built today and never refreshed is answering from today's project in three months.
+      The whole job is one command, `bash brain/scripts/refresh.sh`, run once a day by your
+      computer's own scheduler. `brain/README.md` § Keeping it current has one command for
+      macOS and Linux and lines to paste for Windows, and each checks that the scheduled run
+      will work before you rely on it. It has to run on your computer: the index is not in git, so a job running in the
+      cloud has nothing to refresh. A scheduled run that fails leaves a note, and your next AI
+      session shows it at the top. A schedule that never starts leaves no note, so that case
+      shows up as a "stale" line once the index is a week old. Both lines need a tool that
+      runs this template's session-start hook: Claude Code, Cursor, Grok Build or Codex.
+
+## 8. Your GitHub repository's settings (3 min)
+
+Some protection is a switch in your repository's settings on GitHub rather than a file in this
+folder, so copying the template did not bring it with you. One command reads those switches and
+tells you which are off. It only reads. It changes nothing.
+
+- [ ] Run `bash bin/check-repo-settings.sh`. It needs the GitHub command-line tool (`gh`),
+      signed in as someone who can administer the repository. It checks the repository this
+      folder pushes to: its `origin` remote, which has to be on github.com. What it looks at:
+      - **Dependabot alerts and security updates.** GitHub tells you when something your
+        project depends on has a known security hole, and opens the fix for you. GitHub pauses
+        those fixes when its pull requests sit untouched for 90 days, and the script reports
+        paused as off.
+      - **Secret scanning and push protection.** GitHub refuses a push that contains something
+        shaped like a real key. This is the net under step 3.
+      - **Protection on your main branch.** A rule that stops anyone, an AI included, from
+        force-pushing over it or deleting it. Anyone on the rule's bypass list can still do
+        both, unless their entry is limited to pull requests, so leave that list empty. The
+        script does not count a rule that somebody can push past.
+      - **Smaller ones:** merged branches delete themselves, automated workflows start with
+        read-only access, and (public repositories) people can report a security problem to
+        you privately.
+- [ ] For each line marked `OFF`, the script prints the command or the settings page that turns
+      it on. Decide each one separately. Nothing here is required, and all of it can be undone.
+      If you are not sure, turn them all on: none of them costs money, and each one only stops
+      or reports something you would want stopped or reported. One has a side effect worth
+      knowing. With read-only access as the default, a workflow that writes (commits, labels,
+      releases) needs a `permissions:` block of its own.
+- [ ] Run the script again when you are done. A setting is on when the script says so, not
+      when the command that changed it returned without an error.
+- [ ] Read the other marks correctly. `SKIP` means the setting does not apply to this
+      repository or is not offered on your GitHub plan. `UNKNOWN` means the script could not
+      read it, which is not the same as on. Its line says why. The usual fixes are
+      `gh auth login`, or asking whoever administers the repository to run the check.
+- [ ] Open `.github/dependabot.yml` and add an entry for the language your project is written
+      in. As shipped it watches only the GitHub Actions this template's own checks use, and it
+      knows nothing about your app's packages until you tell it. The comments at the top of the
+      file show how. Copy the whole shipped entry: GitHub requires a `directory` and a
+      `schedule` on each one, and the script reports the file as off when an entry is
+      missing either. It checks that those keys are there, not that GitHub accepts what you
+      wrote in them, and it reads only the plain layout the shipped file uses (anything else
+      is `UNKNOWN`). Two things come with keeping the file. GitHub opens a pull request, at
+      most weekly, when one of those actions has a newer release. And that pull request edits
+      `.github/workflows/hooks-ci.yml`, a file the template also updates, so a later
+      `/trellis-sync` shows it as changed on both sides and asks which version to keep. Delete
+      the file if you want neither.
+
+## 9. Check that it worked (5 min)
 
 Do not skip this. A safety rail that silently does nothing looks exactly like one that is
 working. The only way to tell them apart is to try to break something on purpose.
@@ -180,6 +287,10 @@ working. The only way to tell them apart is to try to break something on purpose
 - [ ] Start an AI session in this folder and ask: *"What are the working methodology rules for
       this project?"* It should answer from `AGENTS.md`. If it does not, your AI tool is not
       reading the file, and nothing else on this page is doing anything either.
+- [ ] Run `bash bin/check-instruction-budgets.sh`. Filling in `AGENTS.md` made it longer, and
+      one tool (Codex) drops whatever is past its size limit without telling you. If the check
+      says the file is over, move a long explanation out to `docs/` and leave a one-line
+      pointer to it.
 - [ ] For a tool with hooks, edit a code file whose formatter is installed and
       confirm the formatting hook ran. Codex's edit adapter covers `apply_patch`;
       shell writes are outside its file-path check.
@@ -193,3 +304,12 @@ working. The only way to tell them apart is to try to break something on purpose
 - [ ] If you turned on the push gate: make a trivial change, commit it, and push WITHOUT running
       `bash bin/verify-green.sh` first. The push should be refused. Then run the check and push
       again for real.
+- [ ] If you set up `brain/`: run `bash brain/scripts/refresh.sh` once by hand. It should end
+      with `brain refresh: done.` Do this before trusting the schedule to run it.
+
+## One last thing
+
+If this template saved you time, please star it on GitHub:
+https://github.com/craigcossairt/trellis
+
+Stars are how other people find it. That is the whole ask.
