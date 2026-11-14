@@ -1175,7 +1175,7 @@ jobs:
           # are all under test. gh's own jq is not jq: the suite's header says
           # what that leaves unproven. The shapes were read from real
           # responses on 2026-11-13, except a bypass list with somebody on it,
-          # which is from GitHub's API reference. Needs jq and git. 276 cases.
+          # which is from GitHub's API reference. Needs jq and git. 302 cases.
           #
           # Which repository: the one the checkout pushes to, read from its
           # `origin` remote by git. gh is not asked, because in a checkout
@@ -1222,8 +1222,10 @@ jobs:
           # the list or an entry on one line, a second document, a tab, an
           # alias, a tag, a value over two lines, a merge beside a gap, a
           # one-line list or map that is not flat, an entry in a group the
-          # file does not define, a version not written as a whole number
-          # (2.0, 2., +2), words after `...` on its line. OFF is a file with
+          # file does not define, a version written with anything but digits
+          # or with a zero in front (2.0, 2., +2, 02), `version:` twice, a
+          # quote or a bracket left open at the end of its line under any
+          # key, words after `...` on its line. OFF is a file with
           # no `version: 2`, no
           # entry, or an entry missing a key GitHub requires, each with a
           # value: an ecosystem, a directory, a schedule interval of its own
@@ -1234,7 +1236,7 @@ jobs:
           # GitHub accepts a value is not checked: its lists change, and a
           # copy of them here would go stale without failing.
           #
-          # Mutation ledger, measured 2026-11-13, 197 mutants each in its own
+          # Mutation ledger, measured 2026-11-13, 212 mutants each in its own
           # copy beside an unmutated baseline (0 red), predicted -> observed
           # red. Measured on Linux (bash 5.3, GNU awk 5.3, jq 1.8.1, under
           # WSL). The unmutated suite also passes there with mawk 1.3.4 as
@@ -1273,7 +1275,7 @@ jobs:
           #   an unreadable route undoes a proven ON          1 -> 1
           #   classic answer missing its fields accepted      1 -> 1
           #   plan refusal on one route read as SKIP          1 -> 1
-          #   a ruleset nobody can bypass blocks nothing      55 -> 55
+          #   a ruleset nobody can bypass blocks nothing      60 -> 60
           #   classic protection contributes nothing          5 -> 5
           #   plan refusal on both routes read as OFF         1 -> 1
           #   any alerts 404 read as off                      1 -> 1
@@ -1331,7 +1333,7 @@ jobs:
           #   the old name kept after a rename                1 -> 1
           #   the name GitHub gives back not checked          1 -> 1
           #   an answer naming no repository accepted         2 -> 2
-          #   gh asked which repository this is               253 -> 253
+          #   gh asked which repository this is               279 -> 279
           #   an entry with no directory counts               12 -> 12
           #   one entry's keys carry over to the next         2 -> 2
           #   a file that could not be read reported OFF      1 -> 1
@@ -1348,8 +1350,8 @@ jobs:
           #   the --repo hint leaves --root out               1 -> 1
           #   an entry with no schedule counts                16 -> 16
           #   an entry naming no ecosystem passed over        1 -> 1
-          #   a file with no version line counts              3 -> 3
-          #   any version counts                              1 -> 1
+          #   a file with no version line counts              4 -> 4
+          #   any version counts                              2 -> 2
           #   a version in quotes read as the number          1 -> 1
           #   ~ and null count as values                      7 -> 7
           #   an empty pair of quotes counts as a value       2 -> 2
@@ -1400,7 +1402,7 @@ jobs:
           #   a merge no longer makes a gap UNKNOWN           3 -> 3
           #   a merge makes a complete file UNKNOWN           1 -> 1
           #   a merge beside no entry read as OFF             1 -> 1
-          #   what was not followed left out of verdict       47 -> 47
+          #   what was not followed left out of verdict       67 -> 67
           #   a map inside a one-line schedule not noticed    1 -> 1
           #   a byte-order mark not stepped over              1 -> 1
           #   the mark stepped over on any line               1 -> 1
@@ -1443,7 +1445,22 @@ jobs:
           #   a comment after the end mark not allowed        1 -> 1
           #   spaces after the end mark not allowed           1 -> 1
           #   a whole number starting with 0 is a version     1 -> 1
-          #   a whole number other than 2 not read            1 -> 1
+          #   a whole number other than 2 not read            2 -> 2
+          #   an open quote or bracket not counted            17 -> 17
+          #   a quote left open not looked for                12 -> 12
+          #   a [list] or {map} left open not looked for      5 -> 5
+          #   a backslashed quote closes the quotes           1 -> 1
+          #   a doubled single quote closes the quotes        1 -> 1
+          #   a backslash skips in single quotes too          1 -> 1
+          #   a # inside a word starts a comment              1 -> 1
+          #   a comment after an open bracket read on         1 -> 1
+          #   quotes inside a [list] or {map} not followed    1 -> 1
+          #   any closing bracket closes the whole value      1 -> 1
+          #   a tag or an anchor in front not stepped over    2 -> 2
+          #   a list item's dashes not stepped over           2 -> 2
+          #   the key not stepped over                        16 -> 16
+          #   version: written twice not noticed              3 -> 3
+          #   a version of two digits not read                1 -> 1
           bash bin/tests/test-check-repo-settings.sh
 
       - name: Suite - brain refresh (optional project memory)

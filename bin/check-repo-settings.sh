@@ -576,9 +576,12 @@ elif [ -f "$ROOT/.github/dependabot.yml" ] || [ -f "$ROOT/.github/dependabot.yam
   # required key or anywhere in a one-line schedule, a required value in any
   # other form (a tag, a block of text,
   # a value that runs on to a second line, a backslash inside quotes), a
-  # [list] or {map} that runs over several lines, a comma inside quotes in a
-  # one-line list, a version in quotes or written any way but a whole
-  # number, such as 2.0, 2. or +2 (the documentation
+  # quote, a [list] or a {map} that is not closed on its own line, under any
+  # key at any depth (the lines after it belong to it, whatever they look
+  # like, and a forgotten closing quote is how that happens), a comma inside
+  # quotes in a one-line list, `version:` written twice, a version in quotes
+  # or written with anything but digits or with a zero in front, such as 2.0,
+  # 2., +2 or 02 (the documentation
   # gives 2, Dependabot's own parser compares the number, and which of the
   # two GitHub goes by was not established), an entry in a group the file does not
   # define, or one that needs its group's schedule when the group shows none
@@ -640,6 +643,36 @@ elif [ -f "$ROOT/.github/dependabot.yml" ] || [ -f "$ROOT/.github/dependabot.yam
       else if (index("|>!%@&?", c)) KIND = "other"
       else KIND = "plain"
       return v
+    }
+    # runson: 1 when v, what stands after a key or a dash, opens a quote, a
+    # [list] or a {map} and does not close it on the same line. The lines
+    # after it then belong to it, whatever they look like, so nothing read
+    # from them can be trusted. A tag or an anchor in front is stepped over.
+    function runson(v,    i, n, c, inq, depth) {
+      sub(/^[ \t]+/, "", v)
+      while (v ~ /^[!&][^ \t]*[ \t]+/) sub(/^[!&][^ \t]*[ \t]+/, "", v)
+      c = substr(v, 1, 1)
+      if (c != "\"" && c != q && c != "[" && c != "{") return 0
+      n = length(v); inq = ""; depth = 0
+      for (i = 1; i <= n; i++) {
+        c = substr(v, i, 1)
+        if (inq != "") {
+          if (c == "\\" && inq == "\"") i++
+          else if (c == inq && inq == q && substr(v, i + 1, 1) == q) i++
+          else if (c == inq) { inq = ""; if (depth == 0) return 0 }
+        } else if (c == "\"" || c == q) inq = c
+        else if (c == "[" || c == "{") depth++
+        else if (c == "]" || c == "}") { if (--depth <= 0) return 0 }
+        else if (c == "#" && substr(v, i - 1, 1) ~ /[ \t]/) break
+      }
+      return 1
+    }
+    # opens: the same question of a whole line, t: its dashes and its key are
+    # stepped over first.
+    function opens(t) {
+      while (t ~ /^-([ \t]|$)/) { t = substr(t, 2); sub(/^[ \t]+/, "", t) }
+      if (keyval(t)) t = V
+      return runson(t)
     }
     # flowlist: 1 for a one-line [list] holding at least one value, 0 for one
     # holding none (nothing, or only empty quotes and nulls), -1 for anything
@@ -799,6 +832,7 @@ elif [ -f "$ROOT/.github/dependabot.yml" ] || [ -f "$ROOT/.github/dependabot.yam
       content = 1
       match(line, /^ */); ind = RLENGTH
       text = substr(line, ind + 1)
+      if (opens(text)) runs = 1
       if (substr(text, 1, 1) == "\t") { odd("a tab in its indentation"); next }
       dash = (text ~ /^-([ \t]|$)/)
       if (ind == 0 && !(dash && top == "updates")) {
@@ -815,9 +849,10 @@ elif [ -f "$ROOT/.github/dependabot.yml" ] || [ -f "$ROOT/.github/dependabot.yam
           top = "groups"; g1 = -1; cg = ""
         } else {
           if (K == "version") {
+            if (seenver++) odd("version: written twice")
             if (KIND != "plain") odd("a version that is not a plain number")
             else if (v ~ /^[1-9][0-9]*$/) ver = v
-            else odd("a version that is not written as a whole number, where the documentation gives 2")
+            else odd("a version written with anything but digits, or with a zero in front, where the documentation gives 2")
           }
           top = "other"
         }
@@ -836,6 +871,7 @@ elif [ -f "$ROOT/.github/dependabot.yml" ] || [ -f "$ROOT/.github/dependabot.yam
         else if (!(g in gsched)) odd("an entry (" pe[i] ") in a multi-ecosystem group, " g ", for which the file shows no schedule interval")
         else if (giv[g] == "cron" && !(g in gcj) && !(g in gtold)) { gtold[g] = 1; lacks("the group " g " has a cron interval and no cronjob") }
       }
+      if (runs) odd("a quote, a [list] or a {map} that is not closed on its own line")
       if (ver != "2") lacks("the file has no version: 2 line")
       print names; print problems; print anchor + 0; print unsure
     }

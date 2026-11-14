@@ -537,6 +537,9 @@ esac
 healthy; dep 'version: 1' 'updates:' "$E" '    directory: /' '    schedule:' '      interval: weekly'; run --porcelain
 expect "a version other than 2 -> OFF" 1 dependabot-config OFF
 
+healthy; dep 'version: 10' 'updates:' "$E" '    directory: /' '    schedule:' '      interval: weekly'; run --porcelain
+expect "a version of two digits -> OFF" 1 dependabot-config OFF
+
 healthy; dep 'version: 2' 'updates: []'; run --porcelain
 expect "an updates list written as [] has no entry -> OFF" 1 dependabot-config OFF
 
@@ -697,7 +700,7 @@ esac
 healthy; dep 'version: 2' 'updates:' "  - $F"; unread "an entry on one line, in braces"
 healthy; dep "{version: 2, updates: [$F]}"; unread "the whole file in braces"
 healthy; dep 'version: 2' 'updates:' "$E" '    directory: /' "$W" "$I" 'updates:' '  - package-ecosystem: pip'; unread "updates: written twice"
-healthy; dep 'version: 2' 'updates:' "$E" '    directory: /' "$W" "$I" '---' 'version: 2'; unread "a second YAML document in the file"
+healthy; dep 'version: 2' 'updates:' "$E" '    directory: /' "$W" "$I" '---' 'x: 1'; unread "a second YAML document in the file"
 healthy; printf 'version: 2\nupdates:\n  - package-ecosystem: npm\n\tdirectory: /\n    schedule:\n      interval: weekly\n' > "$PROJ/.github/dependabot.yml"
 unread "a tab in the indentation"
 case "$(note dependabot-config)" in
@@ -739,6 +742,34 @@ unread "the groups written as a list"
 healthy; dep 'version: 2' 'multi-ecosystem-groups:' '  infra:' "$W" '      every:' '        interval: weekly' 'updates:' "$D" '    directory: /' "$G"
 unread "an interval nested deeper inside a group's schedule"
 
+# A quote, a [list] or a {map} that is not closed on its own line takes the
+# lines after it, whatever they look like. libyaml reads each of these files
+# as missing a key, or not at all, and every line in them looks plain.
+DR='    directory: /'
+healthy; dep 'x: "a' 'version: 2' 'y: b"' 'updates:' "$E" "$DR" "$W" "$I"; unread "a quote left open above the version line"
+case "$(note dependabot-config)" in
+  *"not closed"*) ok "and the line says a quote or a bracket is not closed" ;;
+  *) bad "and the line says a quote or a bracket is not closed" "$(note dependabot-config)" ;;
+esac
+healthy; dep 'version: 2' 'x: "a' 'updates:' "$E" "$DR" "$W" "$I" 'y: b"'; unread "a quote left open above updates:"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    commit-message: "a' "$W" "$I" '    x: b"'; unread "a quote left open in an entry, above its schedule"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" "    x: 'a''" "$W" "$I" "    y: b'"; unread "a single quote left open after a doubled one"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: "a\"' "$W" "$I" '    y: b"'; unread "a quote left open after a backslashed one"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: !!str "a' "$W" "$I" '    y: b"'; unread "a quote left open after a tag"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: &n "a' "$W" "$I" '    y: b"'; unread "a quote left open after an anchor"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    commit-message:' '      prefix: "a' "$W" "$I" '      x: b"'; unread "a quote left open below a key the script does not read"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    ignore:' '      - dependency-name: "a' "$W" "$I" '      x: b"'; unread "a quote left open in a list item with a key"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    labels:' '      - "a' "$W" "$I" '      x: b"'; unread "a quote left open in a list item with no key"
+healthy; dep 'version: 2' 'updates:' "$E" '    x: {a: b,' '    directory: /,' '    c: d}' "$W" "$I"; unread "a {map} left open in an entry, above its directory"
+healthy; dep 'version: 2' 'updates:' "$E" '    x: {a: b, # }' '    directory: /,' '    c: d}' "$W" "$I"; unread "a {map} left open, with a closing brace in a comment"
+healthy; dep 'version: 2' 'updates:' "$E" '    x: {a: "}", b: c,' '    directory: /,' '    e: f}' "$W" "$I"; unread "a {map} left open, with a closing brace in quotes"
+healthy; dep 'version: 2' 'updates:' "$E" '    x: {a: [b],' '    directory: /,' '    c: d}' "$W" "$I"; unread "a {map} left open after a [list] inside it closed"
+healthy; dep 'version: 2' 'updates:' "$E" '    directory: "/"' '    commit-message:' '      prefix: "deps' "$W" '      interval: "weekly"'; unread "a closing quote forgotten"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    labels: [deps,' "$W" "$I"; unread "a closing bracket forgotten"
+healthy; dep 'version: 2' 'version: 2' 'updates:' "$E" "$DR" "$W" "$I"; unread "version: written twice"
+healthy; dep 'version: 3' 'version: 2' 'updates:' "$E" "$DR" "$W" "$I"; unread "version: written twice, the second one 2"
+healthy; dep 'version: 2' 'version: 3' 'updates:' "$E" "$DR" "$W" "$I"; unread "version: written twice, the first one 2"
+
 echo "== dependabot.yml: plain layouts that are read"
 healthy; dep 'version: 2' 'updates:' '  - "package-ecosystem": "npm"' "    'directory': '/'" '    "schedule":' '      "interval": "weekly"'; run --porcelain
 expect "keys in quotes -> ON" 0 dependabot-config ON
@@ -771,6 +802,18 @@ healthy; dep 'version: 2 # the only version there is' 'updates: # one app' '  - 
   '    directory: "/apps/#1"   # a # inside quotes is part of the value' '    schedule: # weekly' '      interval: weekly # on Mondays'
 run --porcelain
 expect "comments after values, and a # inside quotes -> ON" 0 dependabot-config ON
+
+# Closed on its own line, so nothing runs on, whatever is inside.
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    commit-message:' '      prefix: "[a] #x"' "$W" "$I"; run --porcelain
+expect "brackets and a # inside closed quotes -> ON" 0 dependabot-config ON
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    labels: ["a", "b"] # c' "$W" "$I"; run --porcelain
+expect "a one-line list under a key the script does not read, with a comment -> ON" 0 dependabot-config ON
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    commit-message:' "      prefix: don't" "$W" "$I"; run --porcelain
+expect "an apostrophe inside a plain value -> ON" 0 dependabot-config ON
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    labels: [a#b, c]' "$W" "$I"; run --porcelain
+expect "a # inside a word in a one-line list -> ON" 0 dependabot-config ON
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" "    x: 'a\\'" "$W" "$I"; run --porcelain
+expect "a backslash before the closing single quote -> ON" 0 dependabot-config ON
 
 echo "== default branch: either route protects it"
 healthy; api repos/me/proj/rules/branches/main 200 '[]'; run --porcelain

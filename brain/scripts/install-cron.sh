@@ -33,8 +33,9 @@
 # Which line is this folder's: one this script wrote. That is a schedule, then
 # exactly the job, with whatever PATH it carried. Change the time in
 # `crontab -e` and it is still recognised, and the next run of this script
-# puts it back to 9:00. (A time written with any other character is not
-# recognised: that line stays and a second one is added.) A line of your own
+# puts it back to 9:00. (A time is digits, letters and * / , - @ ~. One
+# written with any other character is not recognised: that line stays and
+# a second one is added.) A line of your own
 # that runs the refresh some other
 # way is not recognised and is left alone, and so is any line that starts
 # with #, and any line that sets a variable (NAME = value), whatever the
