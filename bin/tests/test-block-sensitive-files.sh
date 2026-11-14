@@ -298,16 +298,18 @@ if [ "$RC" -eq 0 ]; then ok "relative + CDPATH at a decoy dir loads its OWN help
 else bad "relative + CDPATH at a decoy dir loads its OWN helper" "expected exit 0, got $RC (stderr: ${ERR:-none})"; fi
 
 # The adapter in front of this hook for Cursor and Grok. It finds the hook from
-# its OWN location, and a target it cannot find fails OPEN by design (a moved
-# path must not brick a session). So the same CDPATH bug there does not refuse
-# everything, it ALLOWS everything: a .env write came back {"permission":"allow"}.
+# its OWN location. When this case was written a target it could not find was
+# allowed, so the same CDPATH bug there ALLOWED everything: a .env write came
+# back {"permission":"allow"}. The adapter now refuses when the check is
+# missing, which would make a bare "deny" pass for the wrong reason, so the
+# case also asks for the hook's own words: the refusal has to be the rule's.
 ADAPTER="$ROOT/bin/run-claude-hook.sh"
 [ -f "$ADAPTER" ] || { echo "missing $ADAPTER" >&2; exit 1; }
 ADAPTER_OUT="$( cd "$ROOT" && printf '%s' "$(cursor '.env')" \
   | CDPATH=. bash bin/run-claude-hook.sh cursor block-sensitive-files 2>/dev/null )"
 case "$ADAPTER_OUT" in
-  *'"permission":"deny"'*) ok "adapter run relatively with CDPATH=. still DENIES a .env write" ;;
-  *) bad "adapter run relatively with CDPATH=. still DENIES a .env write" "stdout: ${ADAPTER_OUT:-none}" ;;
+  *'"permission":"deny"'*'sensitive, lock, or generated'*) ok "adapter run relatively with CDPATH=. still DENIES a .env write, on the rule" ;;
+  *) bad "adapter run relatively with CDPATH=. still DENIES a .env write, on the rule" "stdout: ${ADAPTER_OUT:-none}" ;;
 esac
 
 echo

@@ -24,7 +24,8 @@ session already knows it. This page is the 10-minute guide to writing one that a
 - **Test it in a fresh session.** If a clean session with no context can follow it, it works.
   If you had to explain something extra, that explanation belongs in the skill.
 - **Add routers for each retained adapter in the same commit.** Cursor uses
-  `.cursor/skills/<name>/SKILL.md`; Codex uses `.agents/skills/<name>/SKILL.md`.
+  `.cursor/skills/<name>/SKILL.md`; Codex, Grok Build and the other tools that read
+  `.agents/skills/` use `.agents/skills/<name>/SKILL.md`.
   A router is frontmatter plus one sentence naming the canonical `.claude/` file,
   never a second copy of the procedure. CI checks targets and coverage in both
   directions. Skip the corresponding routers only if you removed that adapter.

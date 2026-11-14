@@ -1,16 +1,27 @@
 # Project config for Grok Build. Loaded when the session cwd is inside this
 # project; the folder must be trusted first (/hooks-trust on first open).
-
-[compat.claude]
-# Reuse the Claude Code skills, commands, and agents in .claude/ as-is.
-skills = true
-commands = true
-agents = true
-# Do NOT auto-run the .claude/settings.json hooks under Grok: they invoke bare
-# `bash` (which on Windows can resolve to WSL) and would double-fire alongside
-# the adapters wired in .grok/hooks/hooks.json. The adapters run the exact same
-# canonical scripts, safely, via bin/run-claude-hook.sh.
-hooks = false
+#
+# A project config.toml can hold four things: [mcp_servers], [plugins],
+# [permission], and [mcp] max_output_bytes (Grok's config reference, CLI
+# 1.0.77). This file used to carry a [compat.claude] table that looked like it
+# stopped Grok from also running the hooks in .claude/settings.json. It did
+# nothing from here, and Grok printed no warning about it.
+#
+# That switch is per computer, in ~/.grok/config.toml:
+#
+#   [compat.claude]
+#   hooks = false   # .grok/hooks/hooks.json already runs the same scripts
+#   [compat.cursor]
+#   hooks = false   # Grok cannot run .cursor/hooks.json; it lists each entry as a load error
+#
+# It covers every project on that computer, so it is the owner's to set, not
+# this file's. Left alone, a guardrail can run twice: once from
+# .claude/settings.json and once through the adapter. That is wasteful, not
+# unsafe - a block from either one blocks. docs/harness-support.md says what
+# was and was not confirmed about it.
+#
+# Skills, commands and agent personas need nothing here: Grok finds the routers
+# in .agents/skills/ and the personas in .claude/agents/ on its own.
 
 # MCP servers (optional). Same services as .mcp.json, but auth is per-harness -
 # expect a one-time login per product. Example:

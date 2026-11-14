@@ -11,16 +11,18 @@ Lessons already baked into these scripts - keep them in mind when adding hooks:
   locales (seen in Git Bash on Windows). Use `jq`, or POSIX `sed` as the fallback.
 - **Blockers fail closed; helpers fail open.** `block-sensitive-files.sh` blocks when it cannot
   parse a path; `format-on-edit.sh` just skips. Match the failure mode to the stakes.
-- **Windows:** a bare `bash` can resolve to WSL, where HOME and every path are wrong - harness
-  configs should name Git Bash's full path (see `.grok/hooks/hooks.json`). Shell scripts must
-  check out with LF (`.gitattributes` forces it).
+- **Windows:** a bare `bash` can resolve to WSL, where HOME and every path are wrong - each
+  tool has to be pointed at Git Bash, and how differs by tool (the Windows section of
+  `docs/harness-support.md` has the lines). Shell scripts must check out with LF
+  (`.gitattributes` forces it).
 - **A `cd` into a script's own directory must clear `CDPATH`.** Write
   `HERE="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null && pwd)"`, never a
   bare `cd "$(dirname ...)"`. With `CDPATH` exported and the script run by a RELATIVE path (the
   Cursor and Grok wiring runs `bash bin/run-claude-hook.sh`), bash resolves the directory through
   `CDPATH` and echoes it, so the capture holds two lines and every sibling path breaks. Here that
-  made the sensitive-file hook refuse every edit and the adapter, which fails open on a missing
-  target, allow every edit. Behavioral suites ran their scripts by absolute path and could not
+  made the sensitive-file hook refuse every edit and the adapter, which at the time failed open
+  on a missing target, allow every edit (it now refuses when that check is missing). Behavioral
+  suites ran their scripts by absolute path and could not
   see it. `bin/check-cdpath-cd.sh` enforces the rule in hooks CI; opt out of one line with
   `# cdpath-ok: <reason>`.
 - **A session hook that overruns its time budget is killed and its output is DISCARDED.** Not
@@ -113,8 +115,9 @@ every Bash call, so wire it only where node is installed. To turn it on, add thi
 ```
 
 Suite: `node --test .claude/hooks/tests/heredoc-backslash-warn.test.mjs` (runs in hooks CI
-whether or not you wire the hook). Claude Code only: the Cursor, Grok and Codex adapters
-translate blocks, and a non-blocking warning has no equivalent there yet.
+whether or not you wire the hook). Claude Code only as shipped: the Cursor, Grok and Codex
+adapters translate blocks and nothing else. Grok can carry a non-blocking note to the model
+(a PreToolUse `additionalContext`, per its hooks guide), but no adapter here sends one.
 
 ### Shared main checkout check - `bin/check-main-checkouts.sh`
 
