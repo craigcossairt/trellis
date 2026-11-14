@@ -653,6 +653,10 @@ case "$(note dependabot-config | grep -o 'the group infra' | wc -l | tr -d ' ')"
 esac
 healthy; dep 'version: 2' "$GW" "$GI" "$GS" "$GV" 'updates:' "$D" '    directory: /' '    patterns: [*all]' "$IN"; run --porcelain
 expect "a one-line patterns list holding an alias is not followed -> UNKNOWN" 2 dependabot-config UNKNOWN
+case "$(note dependabot-config)" in
+  *"a patterns list it cannot follow"*) ok "and the line says it is the patterns list" ;;
+  *) bad "and the line says it is the patterns list" "$(note dependabot-config)" ;;
+esac
 
 # A one-line list counts for what is in it, not for having brackets.
 healthy; dep 'version: 2' 'updates:' "$E" '    directories: [""]' "$W" "$I"; run --porcelain
@@ -667,12 +671,24 @@ healthy; dep 'version: 2' 'updates:' "$E" '    directories: [ ]' "$W" "$I"; run 
 expect "a one-line directories list holding only a space -> OFF" 1 dependabot-config OFF
 healthy; dep 'version: 2' 'updates:' "$E" '    directories: [/a] [/b]' "$W" "$I"; run --porcelain
 expect "two pairs of brackets on a directories line are not followed -> UNKNOWN" 2 dependabot-config UNKNOWN
+case "$(note dependabot-config)" in
+  *"a directories list it cannot follow"*) ok "and the line says it is the directories list" ;;
+  *) bad "and the line says it is the directories list" "$(note dependabot-config)" ;;
+esac
 
 # A one-line schedule is read only when it is flat.
 healthy; dep 'version: 2' 'updates:' "$E" '    directory: /' '    schedule: {every: {day: monday, interval: weekly}}'; run --porcelain
 expect "an interval inside a map inside a one-line schedule -> UNKNOWN" 2 dependabot-config UNKNOWN
+case "$(note dependabot-config)" in
+  *"a one-line schedule it cannot follow"*) ok "and the line says it is the one-line schedule" ;;
+  *) bad "and the line says it is the one-line schedule" "$(note dependabot-config)" ;;
+esac
 healthy; dep 'version: 2' 'x-weekly: &weekly' '  interval: weekly' 'updates:' "$E" '    directory: /' '    schedule: {<<: *weekly}'; run --porcelain
 expect "a one-line schedule that takes its keys from a YAML merge -> UNKNOWN" 2 dependabot-config UNKNOWN
+case "$(note dependabot-config)" in
+  *"a one-line schedule it cannot follow"*) ok "and the line says the merge is in a one-line schedule" ;;
+  *) bad "and the line says the merge is in a one-line schedule" "$(note dependabot-config)" ;;
+esac
 
 # `...` ends a document. At the end of the only one it changes nothing.
 healthy; dep 'version: 2' 'updates:' "$E" '    directory: /' "$W" "$I" '...'; run --porcelain
@@ -716,8 +732,20 @@ healthy; dep 'version: 2' 'updates:' "$E" '    directory: >-' '      /' "$W" "$I
 healthy; dep 'version: 2' 'base: &base' '  updates: []' '<<: *base'; unread "a file that takes its keys from a YAML merge"
 healthy; dep 'version: 2' 'updates:' "$E" '   directory: /' "$W" "$I"; unread "a key indented between the entry's dash and its first key"
 healthy; dep 'version: 2' 'updates:' "$E" '    directory: "/a" "/b"' "$W" "$I"; unread "more after a value's closing quote"
+case "$(note dependabot-config)" in
+  *"a directory that is not a plain value"*) ok "and the line says it is the directory, after the closing quote" ;;
+  *) bad "and the line says it is the directory, after the closing quote" "$(note dependabot-config)" ;;
+esac
 healthy; dep 'version: 2' 'updates:' '  - package-ecosystem: "np\" # m"' '    directory: /' "$W" "$I"; unread "a quoted name with an escaped quote in it"
+case "$(note dependabot-config)" in
+  *"a package-ecosystem that is not a plain value"*) ok "and the line says it is the package-ecosystem" ;;
+  *) bad "and the line says it is the package-ecosystem" "$(note dependabot-config)" ;;
+esac
 healthy; dep 'version: 2' 'updates:' "$E" '    directory: !!str /' "$W" "$I"; unread "a value with a YAML tag on it"
+case "$(note dependabot-config)" in
+  *"a directory that is not a plain value"*) ok "and the line says it is the directory, with the tag" ;;
+  *) bad "and the line says it is the directory, with the tag" "$(note dependabot-config)" ;;
+esac
 healthy; dep 'version: 2' 'updates:' "$E" '    directory: /a' '      b' "$W" "$I"; unread "a value that runs on to a second line"
 healthy; dep 'version: 2' 'updates:' "$E" '    directories: [[]]' "$W" "$I"; unread "a list inside a one-line list of directories"
 healthy; dep 'version: 2' 'updates:' "$E" '    directories: /a' "$W" "$I"; unread "directories written as one value, not a list"
@@ -737,6 +765,10 @@ healthy; dep 'version: 2' 'multi-ecosystem-groups:' '  infra:' "$W" "$I" 'multi-
 unread "multi-ecosystem-groups: written twice"
 healthy; dep 'version: 2' 'multi-ecosystem-groups: {infra: {schedule: {interval: weekly}}}' 'updates:' "$E" '    directory: /' "$W" "$I"
 unread "the groups written on one line"
+case "$(note dependabot-config)" in
+  *"multi-ecosystem-groups: written on one line"*) ok "and the line says the groups are on one line" ;;
+  *) bad "and the line says the groups are on one line" "$(note dependabot-config)" ;;
+esac
 healthy; dep 'version: 2' 'multi-ecosystem-groups:' '  - infra' 'updates:' "$E" '    directory: /' "$W" "$I"
 unread "the groups written as a list"
 healthy; dep 'version: 2' 'multi-ecosystem-groups:' '  infra:' "$W" '      every:' '        interval: weekly' 'updates:' "$D" '    directory: /' "$G"
@@ -766,9 +798,56 @@ healthy; dep 'version: 2' 'updates:' "$E" '    x: {a: "}", b: c,' '    directory
 healthy; dep 'version: 2' 'updates:' "$E" '    x: {a: [b],' '    directory: /,' '    c: d}' "$W" "$I"; unread "a {map} left open after a [list] inside it closed"
 healthy; dep 'version: 2' 'updates:' "$E" '    directory: "/"' '    commit-message:' '      prefix: "deps' "$W" '      interval: "weekly"'; unread "a closing quote forgotten"
 healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    labels: [deps,' "$W" "$I"; unread "a closing bracket forgotten"
+# A plain value may run on to the next line, so this version is "2 3".
+healthy; dep 'version: 2' '  3' 'updates:' "$E" "$DR" "$W" "$I"; unread "a version carried on to a second line"
 healthy; dep 'version: 2' 'version: 2' 'updates:' "$E" "$DR" "$W" "$I"; unread "version: written twice"
 healthy; dep 'version: 3' 'version: 2' 'updates:' "$E" "$DR" "$W" "$I"; unread "version: written twice, the second one 2"
 healthy; dep 'version: 2' 'version: 3' 'updates:' "$E" "$DR" "$W" "$I"; unread "version: written twice, the first one 2"
+# Every line has to be written in a form that ends on that line. These
+# are not, under a key the script does not read, where nothing else looks
+# at the value. Three of them are forms YAML allows (a block of text, a
+# tag, a key with a question mark): the script has no rule for them, and
+# says so.
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" "    labels: [don't, \"it's ]" "$W" "$I" '    x: end"]'; unread "an apostrophe in a one-line list, then a quote left open"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    commit-message:' '      x/y: "a' "$W" "$I" '      x: b"'; unread "a quote left open under a key with a slash in it"
+healthy; dep 'version: 2' 'updates:' "$E" '    labels: [# ]' '    directory: /,' '    x: y]' "$W" "$I"; unread "a comment straight after an opening bracket"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    "k": "a' "$W" "$I" '    x: b"'; unread "a quote left open under a key in quotes"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: "a": b' "$W" "$I"; unread "a second key after a value in quotes"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: "a\qb"' "$W" "$I"; unread "a backslash in double quotes under a key the script does not read"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: "a" b' "$W" "$I"; unread "words after a closing quote"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: ["a"}' "$W" "$I"; unread "a [list] closed with a brace"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: [a,,b]' "$W" "$I"; unread "two commas in a row in a one-line list"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: {a: b: c}' "$W" "$I"; unread "two colons in one pair of a one-line map"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: ["a" "b"]' "$W" "$I"; unread "two values in a one-line list with no comma between them"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: {a: "b" "c"}' "$W" "$I"; unread "two values after one colon in a one-line map"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: [*a]' "$W" "$I"; unread "an alias in a one-line list under a key the script does not read"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: [a[b]' "$W" "$I"; unread "a bracket inside a plain value in a one-line list"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: [a:]' "$W" "$I"; unread "a colon at the end of a plain value in a one-line list"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: [a #]' "$W" "$I"; unread "a comment inside a one-line list"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: [a] b' "$W" "$I"; unread "words after a closing bracket"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: &n *n' "$W" "$I"; unread "an anchor on an alias"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: *n' "$W" "$I"; unread "an alias to an anchor the file does not have"
+healthy; dep 'version: 2' 'y: &n a' 'updates:' "$E" "$DR" '    x: *n b' "$W" "$I"; unread "words after an alias"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: |' '      a' "$W" "$I"; unread "a block of text (|) under a key the script does not read"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: >' '      a' "$W" "$I"; unread "a folded block of text (>)"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: !!str a' "$W" "$I"; unread "a tag in front of a plain value"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: @a' "$W" "$I"; unread "a value that starts with @"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: %a' "$W" "$I"; unread "a value that starts with %"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: `a' "$W" "$I"; unread "a value that starts with a backtick"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: ,a' "$W" "$I"; unread "a value that starts with a comma"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: ]' "$W" "$I"; unread "a value that starts with a closing bracket"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: }' "$W" "$I"; unread "a value that starts with a closing brace"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: &' "$W" "$I"; unread "an anchor mark with no name"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: - a' "$W" "$I"; unread "a list started on the line of its key"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    commit-message:' '      ? a' "$W" "$I"; unread "a key written with a question mark"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: : a' "$W" "$I"; unread "a colon where a value should start"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: a: b' "$W" "$I"; unread "two keys on one line"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: a:' "$W" "$I"; unread "a colon at the end of a plain value"
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: @a' '    y: %b' "$W" "$I"; unread "two lines it does not follow"
+case "$(note dependabot-config)" in
+  *"line 5,"*) ok "and the line names the first of them" ;;
+  *) bad "and the line names the first of them" "$(note dependabot-config)" ;;
+esac
 
 echo "== dependabot.yml: plain layouts that are read"
 healthy; dep 'version: 2' 'updates:' '  - "package-ecosystem": "npm"' "    'directory': '/'" '    "schedule":' '      "interval": "weekly"'; run --porcelain
@@ -814,6 +893,17 @@ healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    labels: [a#b, c]' "$W" "$I"
 expect "a # inside a word in a one-line list -> ON" 0 dependabot-config ON
 healthy; dep 'version: 2' 'updates:' "$E" "$DR" "    x: 'a\\'" "$W" "$I"; run --porcelain
 expect "a backslash before the closing single quote -> ON" 0 dependabot-config ON
+# In a form that ends on its line, so it is followed.
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" "    x: 'it''s'" "$W" "$I"; run --porcelain
+expect "a doubled single quote inside single quotes -> ON" 0 dependabot-config ON
+healthy; dep 'version: 2' 'y: &d a' 'updates:' "$E" "$DR" '    x: *d # c' "$W" "$I"; run --porcelain
+expect "an alias to an anchor above it, with a comment after it -> ON" 0 dependabot-config ON
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: -a' "$W" "$I"; run --porcelain
+expect "a value that starts with a dash and a letter -> ON" 0 dependabot-config ON
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    x: a # b: c' "$W" "$I"; run --porcelain
+expect "a colon inside a comment after a plain value -> ON" 0 dependabot-config ON
+healthy; dep 'version: 2' 'updates:' "$E" "$DR" '    labels:' '      - - a' "$W" "$I"; run --porcelain
+expect "a list inside a list -> ON" 0 dependabot-config ON
 
 echo "== default branch: either route protects it"
 healthy; api repos/me/proj/rules/branches/main 200 '[]'; run --porcelain

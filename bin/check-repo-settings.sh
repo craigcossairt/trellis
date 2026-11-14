@@ -576,8 +576,9 @@ elif [ -f "$ROOT/.github/dependabot.yml" ] || [ -f "$ROOT/.github/dependabot.yam
   # required key or anywhere in a one-line schedule, a required value in any
   # other form (a tag, a block of text,
   # a value that runs on to a second line, a backslash inside quotes), a
-  # quote, a [list] or a {map} that is not closed on its own line, under any
-  # key at any depth (the lines after it belong to it, whatever they look
+  # line under any key, at any depth, that is not in one of the forms the
+  # line check below follows (a quote, a [list] or a {map} left open is the
+  # one that matters: the lines after it belong to it, whatever they look
   # like, and a forgotten closing quote is how that happens), a comma inside
   # quotes in a one-line list, `version:` written twice, a version in quotes
   # or written with anything but digits or with a zero in front, such as 2.0,
@@ -591,7 +592,9 @@ elif [ -f "$ROOT/.github/dependabot.yml" ] || [ -f "$ROOT/.github/dependabot.yam
   # the group then has no schedule as far as it can see, and an entry in it is
   # UNKNOWN. A merge (<<) is not followed either, so a file that uses one and
   # looks incomplete is UNKNOWN, since the merge may supply what is missing.
-  # What it does not check: whether a value is one GitHub accepts.
+  # What it does not check: whether a value is one GitHub accepts, and
+  # whether the lines are nested in a way YAML allows. It reads one line at a
+  # time, so a file GitHub refuses for its indentation can still read ON.
   # awk prints four lines: the ecosystems, what is missing, 0 or 1 for a
   # merge, and what it could not follow. Anything else on the third line means
   # the file was not read at all.
@@ -644,35 +647,103 @@ elif [ -f "$ROOT/.github/dependabot.yml" ] || [ -f "$ROOT/.github/dependabot.yam
       else KIND = "plain"
       return v
     }
-    # runson: 1 when v, what stands after a key or a dash, opens a quote, a
-    # [list] or a {map} and does not close it on the same line. The lines
-    # after it then belong to it, whatever they look like, so nothing read
-    # from them can be trusted. A tag or an anchor in front is stepped over.
-    function runson(v,    i, n, c, inq, depth) {
+    # The line check. Every line of the file, under any key, has to be written
+    # in one of a few forms that end on that line: a key with nothing after
+    # it, a plain value, a value in quotes that close, a one-line [list] or
+    # {map} that closes. A line in any other form may run on into the lines
+    # after it, which then are not what they look like, so the file is not
+    # followed. The three functions below say yes only to what they can show
+    # is closed. They never say no to a line by finding what is wrong with it.
+    #
+    # closedq: s starts with a quote. Where the quote that closes it stands,
+    # or 0: it does not close on this line, or it is in double quotes and
+    # holds a backslash.
+    function closedq(s,    c, d, i, n) {
+      c = substr(s, 1, 1); n = length(s)
+      for (i = 2; i <= n; i++) {
+        d = substr(s, i, 1)
+        if (d == "\\" && c == "\"") return 0
+        if (d != c) continue
+        if (c == q && substr(s, i + 1, 1) == q) { i++; continue }
+        return i
+      }
+      return 0
+    }
+    # flowend: s starts with [ or {. Where the bracket that closes it stands,
+    # or 0. Followed: values in quotes or plain, commas between them, and
+    # one "key: value" to a pair. Not followed: a [list] or {map} inside it,
+    # a comment inside it, a colon inside a plain value. st is what came
+    # last: 0 nothing or a comma, 1 a value that may be a key, 2 a colon,
+    # 3 a value that may not be a key.
+    function flowend(s,    i, n, c, d, st, e, shut) {
+      n = length(s); st = 0
+      shut = (substr(s, 1, 1) == "[" ? "]" : "}")
+      for (i = 2; i <= n; i++) {
+        c = substr(s, i, 1)
+        if (c == " ") continue
+        if (c == shut) return i
+        if (c == ",") { if (st == 0) return 0; st = 0; continue }
+        if (c == ":") { if (st != 1) return 0; st = 2; continue }
+        if (st == 1 || st == 3) return 0
+        if (c == "\"" || c == q) {
+          e = closedq(substr(s, i)); if (!e) return 0
+          i += e - 1
+        } else {
+          if (c !~ /[A-Za-z0-9_.\/~]/) return 0
+          while (i < n) {
+            d = substr(s, i + 1, 1)
+            if (d == "," || d == shut) break
+            if (index("[]{}", d)) return 0
+            if (d == ":") { if (substr(s, i + 2, 1) == " ") break; return 0 }
+            if (d == "#" && substr(s, i, 1) == " ") return 0
+            i++
+          }
+        }
+        st = (st == 2 ? 3 : 1)
+      }
+      return 0
+    }
+    # closed: 1 when v is in a form that is followed and ends on this line. v
+    # is what stands after the dashes of a line (key = 1: a key may come
+    # first) or after its key (key = 0). An anchor in front is noted and
+    # stepped over, and an alias is followed only to an anchor seen above it.
+    function closed(v, key,    c, e, i, n, rest, name) {
       sub(/^[ \t]+/, "", v)
-      while (v ~ /^[!&][^ \t]*[ \t]+/) sub(/^[!&][^ \t]*[ \t]+/, "", v)
+      if (match(v, /^&[A-Za-z0-9_-]+([ \t]+|$)/)) {
+        name = substr(v, 2, RLENGTH - 1); sub(/[ \t]+$/, "", name); anchors[name] = 1
+        v = substr(v, RLENGTH + 1)
+        if (v ~ /^[&*]/) return 0
+      }
+      if (v == "" || v ~ /^#/) return 1
       c = substr(v, 1, 1)
-      if (c != "\"" && c != q && c != "[" && c != "{") return 0
-      n = length(v); inq = ""; depth = 0
-      for (i = 1; i <= n; i++) {
+      if (c == "*") {
+        name = substr(v, 2); sub(/([ \t]+#.*|[ \t]+)$/, "", name)
+        return (name in anchors)
+      }
+      if (c == "\"" || c == q) {
+        e = closedq(v); if (!e) return 0
+        rest = substr(v, e + 1)
+        if (key && match(rest, /^[ \t]*:([ \t]|$)/)) return closed(substr(rest, RLENGTH + 1), 0)
+        return (rest ~ /^([ \t]+#.*|[ \t]*)$/)
+      }
+      if (c == "[" || c == "{") {
+        e = flowend(v); if (!e) return 0
+        return (substr(v, e + 1) ~ /^([ \t]+#.*|[ \t]*)$/)
+      }
+      if (index("!|>%@,]}&", c) || c == sprintf("%c", 96)) return 0
+      if (index("-?:", c) && substr(v, 2, 1) ~ /^[ \t]?$/) return 0
+      n = length(v)
+      for (i = 2; i <= n; i++) {
         c = substr(v, i, 1)
-        if (inq != "") {
-          if (c == "\\" && inq == "\"") i++
-          else if (c == inq && inq == q && substr(v, i + 1, 1) == q) i++
-          else if (c == inq) { inq = ""; if (depth == 0) return 0 }
-        } else if (c == "\"" || c == q) inq = c
-        else if (c == "[" || c == "{") depth++
-        else if (c == "]" || c == "}") { if (--depth <= 0) return 0 }
-        else if (c == "#" && substr(v, i - 1, 1) ~ /[ \t]/) break
+        if (c == "#" && substr(v, i - 1, 1) ~ /[ \t]/) return 1
+        if (c == ":" && substr(v, i + 1, 1) ~ /^[ \t]?$/) return (key ? closed(substr(v, i + 1), 0) : 0)
       }
       return 1
     }
-    # opens: the same question of a whole line, t: its dashes and its key are
-    # stepped over first.
-    function opens(t) {
+    # lineok: the same question of a whole line, t, after its dashes.
+    function lineok(t) {
       while (t ~ /^-([ \t]|$)/) { t = substr(t, 2); sub(/^[ \t]+/, "", t) }
-      if (keyval(t)) t = V
-      return runson(t)
+      return closed(t, 1)
     }
     # flowlist: 1 for a one-line [list] holding at least one value, 0 for one
     # holding none (nothing, or only empty quotes and nulls), -1 for anything
@@ -832,7 +903,7 @@ elif [ -f "$ROOT/.github/dependabot.yml" ] || [ -f "$ROOT/.github/dependabot.yam
       content = 1
       match(line, /^ */); ind = RLENGTH
       text = substr(line, ind + 1)
-      if (opens(text)) runs = 1
+      if (!runs && !lineok(text)) runs = NR
       if (substr(text, 1, 1) == "\t") { odd("a tab in its indentation"); next }
       dash = (text ~ /^-([ \t]|$)/)
       if (ind == 0 && !(dash && top == "updates")) {
@@ -854,13 +925,14 @@ elif [ -f "$ROOT/.github/dependabot.yml" ] || [ -f "$ROOT/.github/dependabot.yam
             else if (v ~ /^[1-9][0-9]*$/) ver = v
             else odd("a version written with anything but digits, or with a zero in front, where the documentation gives 2")
           }
-          top = "other"
+          top = (K == "version" ? "version" : "other")
         }
         next
       }
       if (top == "") { odd("a line before the first key"); next }
       if (top == "updates") upline()
       else if (top == "groups") grline()
+      else if (top == "version") odd("a version carried on to a second line")
     }
     END {
       flush()
@@ -871,7 +943,7 @@ elif [ -f "$ROOT/.github/dependabot.yml" ] || [ -f "$ROOT/.github/dependabot.yam
         else if (!(g in gsched)) odd("an entry (" pe[i] ") in a multi-ecosystem group, " g ", for which the file shows no schedule interval")
         else if (giv[g] == "cron" && !(g in gcj) && !(g in gtold)) { gtold[g] = 1; lacks("the group " g " has a cron interval and no cronjob") }
       }
-      if (runs) odd("a quote, a [list] or a {map} that is not closed on its own line")
+      if (runs) odd("line " runs ", written in a form it does not follow: a quote, a [list] or a {map} that is not closed on its own line, or a value it has no rule for")
       if (ver != "2") lacks("the file has no version: 2 line")
       print names; print problems; print anchor + 0; print unsure
     }

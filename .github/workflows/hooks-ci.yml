@@ -1175,7 +1175,7 @@ jobs:
           # are all under test. gh's own jq is not jq: the suite's header says
           # what that leaves unproven. The shapes were read from real
           # responses on 2026-11-13, except a bypass list with somebody on it,
-          # which is from GitHub's API reference. Needs jq and git. 302 cases.
+          # which is from GitHub's API reference. Needs jq and git. 353 cases.
           #
           # Which repository: the one the checkout pushes to, read from its
           # `origin` remote by git. gh is not asked, because in a checkout
@@ -1223,10 +1223,17 @@ jobs:
           # alias, a tag, a value over two lines, a merge beside a gap, a
           # one-line list or map that is not flat, an entry in a group the
           # file does not define, a version written with anything but digits
-          # or with a zero in front (2.0, 2., +2, 02), `version:` twice, a
-          # quote or a bracket left open at the end of its line under any
-          # key, words after `...` on its line. OFF is a file with
-          # no `version: 2`, no
+          # or with a zero in front (2.0, 2., +2, 02), `version:` twice or
+          # carried on to a second line, words after `...` on its line, and
+          # a line under any key that is not in a form that ends on that
+          # line. The forms followed are a
+          # key with nothing after it, a plain value, a value in quotes that
+          # close, and a one-line list or map that closes and holds only
+          # plain or quoted values. A quote or a bracket left open is the
+          # one that matters: the lines after it belong to it, whatever they
+          # look like. A block of text, a tag and a `?` key are forms YAML
+          # allows and the reader has no rule for, so they are UNKNOWN too.
+          # OFF is a file with no `version: 2`, no
           # entry, or an entry missing a key GitHub requires, each with a
           # value: an ecosystem, a directory, a schedule interval of its own
           # or its group's, `patterns` when it is in a group, and a `cronjob`
@@ -1234,9 +1241,21 @@ jobs:
           # before the first key and `...` after the last line are stepped
           # over. ON names the ecosystems the file has entries for. Whether
           # GitHub accepts a value is not checked: its lists change, and a
-          # copy of them here would go stale without failing.
+          # copy of them here would go stale without failing. Nor is the
+          # nesting: the reader takes one line at a time, so a file GitHub
+          # refuses for its indentation can still read ON.
           #
-          # Mutation ledger, measured 2026-11-13, 212 mutants each in its own
+          # The line check was also run against libyaml (PyYAML's
+          # CSafeLoader) on generated files, each a plain entry with one line
+          # of random marks in it: 12100 files, half with GNU awk and half
+          # with mawk. None read ON through a line libyaml refuses. Four read
+          # ON that libyaml refuses for the nesting, every line of them being
+          # one it reads when the line stands alone. On the first 6050 of
+          # those files the reader before this check read 2288 ON through
+          # a line libyaml refuses. That run is not part of CI; the cases
+          # here are.
+          #
+          # Mutation ledger, measured 2026-11-13, 247 mutants each in its own
           # copy beside an unmutated baseline (0 red), predicted -> observed
           # red. Measured on Linux (bash 5.3, GNU awk 5.3, jq 1.8.1, under
           # WSL). The unmutated suite also passes there with mawk 1.3.4 as
@@ -1244,6 +1263,13 @@ jobs:
           # only be measured on Linux: Git for Windows' awk drops a carriage
           # return before the program sees the line, so removing the script's
           # own line for it changes nothing there.
+          # Two rows were predicted low (25 -> 27 and 2 -> 3): the mutant
+          # fails more cases than the count written beforehand, and is
+          # caught either way. 211 rows were run before the two lines for
+          # a version carried on to a second line went in. The other 36
+          # were run on the script as it is here: the 3 new rows, and 33
+          # that those lines or their case can reach or whose count had
+          # been predicted wrong.
           # Not every line of the reader has a row. Left out: the two tests
           # that a key had no value of its own before the lines under it are
           # read, and the two that a one-line list or map closes on the line
@@ -1275,7 +1301,7 @@ jobs:
           #   an unreadable route undoes a proven ON          1 -> 1
           #   classic answer missing its fields accepted      1 -> 1
           #   plan refusal on one route read as SKIP          1 -> 1
-          #   a ruleset nobody can bypass blocks nothing      60 -> 60
+          #   a ruleset nobody can bypass blocks nothing      65 -> 65
           #   classic protection contributes nothing          5 -> 5
           #   plan refusal on both routes read as OFF         1 -> 1
           #   any alerts 404 read as off                      1 -> 1
@@ -1333,7 +1359,7 @@ jobs:
           #   the old name kept after a rename                1 -> 1
           #   the name GitHub gives back not checked          1 -> 1
           #   an answer naming no repository accepted         2 -> 2
-          #   gh asked which repository this is               279 -> 279
+          #   gh asked which repository this is               330 -> 330
           #   an entry with no directory counts               12 -> 12
           #   one entry's keys carry over to the next         2 -> 2
           #   a file that could not be read reported OFF      1 -> 1
@@ -1363,7 +1389,7 @@ jobs:
           #   a backslash inside quotes not noticed           1 -> 1
           #   an alias read as a plain value                  3 -> 3
           #   a tag read as a plain value                     1 -> 1
-          #   a one-line list or map read as plain            25 -> 25
+          #   a one-line list or map read as plain            25 -> 27
           #   a one-line list holding nothing counts          5 -> 5
           #   brackets inside a one-line list not noticed     1 -> 1
           #   a one-line directories list not read            2 -> 2
@@ -1385,7 +1411,7 @@ jobs:
           #   a second document read as part of the first     1 -> 1
           #   a file opening with --- not read                1 -> 1
           #   a second updates: read on                       1 -> 1
-          #   a one-line updates list read as empty           2 -> 2
+          #   a one-line updates list read as empty           1 -> 1
           #   updates: [] not followed                        1 -> 1
           #   a file indented as a whole read as empty        1 -> 1
           #   an entry's group not looked at                  15 -> 15
@@ -1402,14 +1428,14 @@ jobs:
           #   a merge no longer makes a gap UNKNOWN           3 -> 3
           #   a merge makes a complete file UNKNOWN           1 -> 1
           #   a merge beside no entry read as OFF             1 -> 1
-          #   what was not followed left out of verdict       67 -> 67
+          #   what was not followed left out of verdict       113 -> 113
           #   a map inside a one-line schedule not noticed    1 -> 1
           #   a byte-order mark not stepped over              1 -> 1
           #   the mark stepped over on any line               1 -> 1
           #   the mark stepped over anywhere in line one      1 -> 1
           #   a list element that is not a value passed over  2 -> 2
           #   an empty list element not followed              1 -> 1
-          #   an unread directories list taken as a list      3 -> 3
+          #   an unread directories list taken as a list      2 -> 2
           #   an unread patterns list taken as a list         1 -> 1
           #   an unread one-line schedule taken as one        2 -> 2
           #   an alias in a one-line schedule read on         1 -> 1
@@ -1446,21 +1472,56 @@ jobs:
           #   spaces after the end mark not allowed           1 -> 1
           #   a whole number starting with 0 is a version     1 -> 1
           #   a whole number other than 2 not read            2 -> 2
-          #   an open quote or bracket not counted            17 -> 17
-          #   a quote left open not looked for                12 -> 12
-          #   a [list] or {map} left open not looked for      5 -> 5
-          #   a backslashed quote closes the quotes           1 -> 1
-          #   a doubled single quote closes the quotes        1 -> 1
-          #   a backslash skips in single quotes too          1 -> 1
-          #   a # inside a word starts a comment              1 -> 1
-          #   a comment after an open bracket read on         1 -> 1
-          #   quotes inside a [list] or {map} not followed    1 -> 1
-          #   any closing bracket closes the whole value      1 -> 1
-          #   a tag or an anchor in front not stepped over    2 -> 2
-          #   a list item's dashes not stepped over           2 -> 2
-          #   the key not stepped over                        16 -> 16
           #   version: written twice not noticed              3 -> 3
           #   a version of two digits not read                1 -> 1
+          #   a line in a form not followed is not counted    54 -> 54
+          #   the last such line is named, not the first      1 -> 1
+          #   a backslash in double quotes not looked for     2 -> 2
+          #   a backslash refused in single quotes too        1 -> 1
+          #   a doubled single quote ends the quotes          1 -> 1
+          #   a quote that never closes taken as closed       12 -> 12
+          #   either closing bracket closes a list or map     1 -> 1
+          #   a comma with nothing before it passed           1 -> 1
+          #   a colon passed wherever it stands               1 -> 1
+          #   a value straight after a value passed           1 -> 1
+          #   a value straight after a pair's value passed    1 -> 1
+          #   a pair's value taken for a key                  1 -> 1
+          #   the start of a plain value in a list not read   3 -> 3
+          #   a bracket inside a plain value passed           1 -> 1
+          #   a colon inside a plain value passed             1 -> 1
+          #   a comment inside a list read on                 1 -> 1
+          #   a # inside a word in a list is a comment        1 -> 1
+          #   a list that never closes taken as closed        3 -> 3
+          #   an anchor not noted                             2 -> 2
+          #   an anchor on an alias passed                    1 -> 1
+          #   an alias followed to any name                   2 -> 2
+          #   a comment after an alias kept in its name       1 -> 1
+          #   an anchor not stepped over                      2 -> 3
+          #   what follows a key in quotes not looked at      1 -> 1
+          #   a second key after a value in quotes passed     1 -> 1
+          #   what follows a closing quote not looked at      2 -> 2
+          #   what follows a closing bracket not looked at    1 -> 1
+          #   a value may start with !                        2 -> 2
+          #   a value may start with |                        1 -> 1
+          #   a value may start with >                        1 -> 1
+          #   a value may start with %                        1 -> 1
+          #   a value may start with @                        2 -> 2
+          #   a value may start with a comma                  1 -> 1
+          #   a value may start with ]                        1 -> 1
+          #   a value may start with }                        1 -> 1
+          #   a value may start with a bare &                 1 -> 1
+          #   a value may start with a backtick               1 -> 1
+          #   a dash and a space may start a value            1 -> 1
+          #   a ? and a space may start a line                1 -> 1
+          #   a colon and a space may start a value           1 -> 1
+          #   a dash, ? or colon may never start a value      1 -> 1
+          #   a comment does not end a plain value            1 -> 1
+          #   a second key on a line passed                   2 -> 2
+          #   a colon at a line's end is not a key's colon    1 -> 1
+          #   only the first dash of a line stepped over      1 -> 1
+          #   a version line does not hold what is under it   1 -> 1
+          #   a line set under version passed                 1 -> 1
+          #   a line under another top-level key refused      4 -> 4
           bash bin/tests/test-check-repo-settings.sh
 
       - name: Suite - brain refresh (optional project memory)
