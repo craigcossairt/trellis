@@ -430,7 +430,7 @@ healthy; dep 'version: 2' 'multi-ecosystem-groups:' '  infra:' '    schedule:' '
 run --porcelain
 expect "an entry in a multi-ecosystem group takes the group's schedule -> ON" 0 dependabot-config ON
 
-# The script reads the file as text and does not follow a YAML anchor, so an
+# The script reads the file as text and does not follow a YAML merge, so an
 # entry that may get its schedule from one is neither on nor off.
 healthy; dep 'version: 2' 'x-defaults: &defaults' '  schedule:' '    interval: weekly' \
   'updates:' '  - package-ecosystem: "npm"' '    directory: "/"' '    <<: *defaults'
@@ -441,7 +441,10 @@ healthy; dep 'version: 2' 'x-defaults: &defaults' '  open-pull-requests-limit: 5
   'updates:' '  - package-ecosystem: "npm"' '    directory: "/"' '    schedule:' '      interval: weekly' \
   '    <<: *defaults'
 run --porcelain
-expect "a complete entry in a file that uses an anchor -> ON" 0 dependabot-config ON
+# Neither is an entry that looks complete: what is merged in can be something
+# that cannot be merged, which is an error to a parser, and this script does
+# not look at what the alias names.
+expect "a complete entry in a file that uses a YAML merge -> UNKNOWN" 2 dependabot-config UNKNOWN
 
 healthy; dep 'version: 2' 'updates:' '  - directory: "/"' '    package-ecosystem: npm' \
   '    schedule:' '      interval: weekly'
@@ -687,9 +690,13 @@ esac
 healthy; dep 'version: 2' 'x-weekly: &weekly' '  interval: weekly' 'updates:' "$E" '    directory: /' '    schedule: {<<: *weekly}'; run --porcelain
 expect "a one-line schedule that takes its keys from a YAML merge -> UNKNOWN" 2 dependabot-config UNKNOWN
 case "$(note dependabot-config)" in
-  *"a one-line schedule it cannot follow"*) ok "and the line says the merge is in a one-line schedule" ;;
-  *) bad "and the line says the merge is in a one-line schedule" "$(note dependabot-config)" ;;
+  *"a line that holds <<"*) ok "and the line says it is the merge in the one-line schedule" ;;
+  *) bad "and the line says it is the merge in the one-line schedule" "$(note dependabot-config)" ;;
 esac
+# An alias as a value in a one-line schedule: the schedule is not followed,
+# whatever key the alias stands after.
+healthy; dep 'version: 2' 'x-w: &w a' 'updates:' "$E" '    directory: /' '    schedule: {x: *w, interval: weekly}'; run --porcelain
+expect "an alias beside the interval of a one-line schedule -> UNKNOWN" 2 dependabot-config UNKNOWN
 
 # `...` ends a document. At the end of the only one it changes nothing.
 healthy; dep 'version: 2' 'updates:' "$E" '    directory: /' "$W" "$I" '...'; run --porcelain
@@ -752,6 +759,27 @@ healthy; dep 'version: 2' 'updates:' "$E" '    directories: [[]]' "$W" "$I"; unr
 healthy; dep 'version: 2' 'updates:' "$E" '    directories: /a' "$W" "$I"; unread "directories written as one value, not a list"
 healthy; dep 'version: 2' 'updates:' "$E" '    directory: /' "$W" '      every:' '        interval: weekly'; unread "an interval nested deeper inside schedule"
 healthy; dep 'version: 2' 'x-weekly: &weekly' '  interval: weekly' 'updates:' "$E" '    directory: /' "$W" '      <<: *weekly'; unread "a schedule that takes its interval from a YAML merge"
+# A merge of something that cannot be merged is an error to a YAML parser,
+# wherever it stands, and one that can be merged can add keys or stand over
+# them. The script follows neither: any line that holds << is UNKNOWN, also
+# in an entry that has every key it needs.
+healthy; dep 'version: 2' 'updates:' "$E" '    directory: /' '    <<: word' "$W" "$I"; unread "a merge of a word in a complete entry"
+case "$(note dependabot-config)" in
+  *"a line that holds <<"*) ok "and the line says it is a merge" ;;
+  *) bad "and the line says it is a merge" "$(note dependabot-config)" ;;
+esac
+healthy; dep 'version: 2' 'x: &a word' 'updates:' "$E" '    directory: /' '    <<: *a' "$W" "$I"; unread "a merge of an alias to a word"
+healthy; dep 'version: 2' 'x: &a' '  - b' 'updates:' "$E" '    directory: /' '    <<: *a' "$W" "$I"; unread "a merge of an alias to a list of words"
+healthy; dep 'version: 2' 'updates:' "$E" '    directory: /' '    <<:' "$W" "$I"; unread "a merge of nothing"
+healthy; dep 'version: 2' 'updates:' "$E" '    directory: /' "$W" "$I" '      <<: word'; unread "a merge of a word in a schedule"
+healthy; dep 'version: 2' 'multi-ecosystem-groups:' '  infra:' '    <<: word' '    schedule:' '      interval: weekly' 'updates:' '  - package-ecosystem: docker' '    directory: /' "    patterns: ['*']" '    multi-ecosystem-group: infra'; unread "a merge of a word in a group"
+healthy; dep 'version: 2' 'updates:' "$E" '    directory: /' '    commit-message:' '      <<: word' '      prefix: x' "$W" "$I"; unread "a merge of a word under a key the script does not read"
+healthy; dep 'version: 2' '<<: word' 'updates:' "$E" '    directory: /' "$W" "$I"; unread "a merge of a word at the top of the file"
+healthy; dep 'version: 2' 'updates:' '  - <<: word' '    package-ecosystem: npm' '    directory: /' "$W" "$I"; unread "a merge of a word as the first key of an entry"
+healthy; dep 'version: 2' 'updates:' "$E" '    directory: /' '    x: <<' "$W" "$I"; unread "<< as a value"
+# A comment line is not part of the file, whatever it holds.
+healthy; dep 'version: 2' 'updates:' "$E" '    directory: /' '    # <<: *defaults' "$W" "$I"; run --porcelain
+expect "a comment line that holds << -> ON" 0 dependabot-config ON
 healthy; dep 'version: "2"' 'updates:' "$E" '    directory: /' "$W" "$I"; unread "a version in quotes"
 healthy; dep 'version: 2.0' 'updates:' "$E" '    directory: /' "$W" "$I"; unread "a version written 2.0"
 healthy; dep 'version: 2.' 'updates:' "$E" '    directory: /' "$W" "$I"; unread "a version written 2."
@@ -999,14 +1027,14 @@ healthy; depb "${HD}${DL}    x: a\360\200\200\200b\n${TL}"; unread "four bytes f
 healthy; depb "${HD}${DL}    x: a\364\220\200\200b\n${TL}"; unread "a character past the end of Unicode (F4 90 80 80)"
 healthy; depb "${HD}${DL}    x: a\365\200\200\200b\n${TL}"; unread "a first byte no character has (F5)"
 
-# A key longer than 1024 characters is not one YAML reads: libyaml refuses
-# the file. No line of 1024 bytes or fewer can hold one, so a longer line
-# is not read at all, whatever it holds.
+# A key in front of a colon on its own line may not be longer than 1024
+# characters: libyaml refuses the file. No line of 1024 bytes or fewer can
+# hold one, so a longer line is not read at all, whatever it holds.
 LK="$(printf '%1025s' '' | tr ' ' a)"
 LV="$(printf '%1017s' '' | tr ' ' a)"
 healthy; dep 'version: 2' 'updates:' "$E" "$DR" "    $LK: b" "$W" "$I"; unread "a key of 1025 characters"
 case "$(note dependabot-config)" in
-  *"line 5 "*"1024"*) ok "and the line is named, with the length it may have" ;;
+  *"has a line longer than 1024 bytes (line 5)"*) ok "and the line is named, with the length it may have" ;;
   *) bad "and the line is named, with the length it may have" "$(note dependabot-config)" ;;
 esac
 healthy; dep 'version: 2' 'updates:' "$E" "$DR" "    x: a$LV" "$W" "$I"; unread "a line of 1025 bytes"
@@ -1071,6 +1099,73 @@ expect "a one-line group with nothing under it, then the group in use -> ON" 0 d
 # The longest line that is read: 1024 bytes.
 healthy; dep 'version: 2' 'updates:' "$E" "$DR" "    x: $LV" "$W" "$I"; run --porcelain
 expect "a line of 1024 bytes -> ON" 0 dependabot-config ON
+
+# A name YAML may not read as text. Written without quotes, yes and true are
+# one key to a YAML parser, and so are 1 and 01: the second group takes the
+# place of the first, and the schedule the script read there is gone. And 1
+# is not the name '1'. The script compares names as text, so a group name,
+# or the group an entry names, that starts like a number or is one of the
+# words YAML has for true, false or nothing is UNKNOWN unless it is in quotes.
+NS='    labels: [deps]'
+healthy; dep 'version: 2' "$GW" '  yes:' "$GS" "$GV" '  true:' "$NS" 'updates:' "$D" "$DR" "$PT" '    multi-ecosystem-group: yes'; unread "two groups named yes and true, one key to a YAML parser"
+case "$(note dependabot-config)" in
+  *"a group whose name YAML may not read as text"*) ok "and the line says it is the name of a group" ;;
+  *) bad "and the line says it is the name of a group" "$(note dependabot-config)" ;;
+esac
+healthy; dep 'version: 2' "$GW" '  1:' "$GS" "$GV" '  01:' "$NS" 'updates:' "$D" "$DR" "$PT" '    multi-ecosystem-group: 1'; unread "two groups named 1 and 01"
+healthy; dep 'version: 2' "$GW" '  1:' "$GS" "$GV" 'updates:' "$D" "$DR" "$PT" "    multi-ecosystem-group: '1'"; unread "a group named 1 and an entry in '1'"
+healthy; dep '"version": 2' "$GW" '  1:' "$GS" "$GV" 'updates:' "$D" "$DR" "$PT" "    multi-ecosystem-group: '1'"; unread "a key in quotes, then a group named 1 and an entry in '1'"
+healthy; dep 'version: 2' "$GW" '  Off:' "$GS" "$GV" 'updates:' "$D" "$DR" "$PT" "    multi-ecosystem-group: 'Off'"; unread "a group named Off and an entry in 'Off'"
+for word in yes no true false on off y n null; do
+  healthy; dep 'version: 2' "$GW" "  $word:" "$GS" "$GV" 'updates:' "$D" "$DR" "$PT" "    multi-ecosystem-group: '$word'"; unread "a group named $word and an entry in '$word'"
+done
+healthy; dep 'version: 2' "$GW" "  '1':" "$GS" "$GV" 'updates:' "$D" "$DR" "$PT" '    multi-ecosystem-group: 1'; unread "a group named '1' and an entry in 1"
+case "$(note dependabot-config)" in
+  *"a multi-ecosystem-group that YAML may not read as text"*) ok "and the line says it is the group the entry names" ;;
+  *) bad "and the line says it is the group the entry names" "$(note dependabot-config)" ;;
+esac
+healthy; dep 'version: 2' "$GW" "  'Yes':" "$GS" "$GV" 'updates:' "$D" "$DR" "$PT" '    multi-ecosystem-group: Yes'; unread "a group named 'Yes' and an entry in Yes"
+healthy; dep 'version: 2' "$GW" "  '+1':" "$GS" "$GV" 'updates:' "$D" "$DR" "$PT" '    multi-ecosystem-group: +1'; unread "a group named '+1' and an entry in +1"
+healthy; dep 'version: 2' "$GW" "  '-1':" "$GS" "$GV" 'updates:' "$D" "$DR" "$PT" '    multi-ecosystem-group: -1'; unread "a group named '-1' and an entry in -1"
+healthy; dep 'version: 2' "$GW" "  '.5':" "$GS" "$GV" 'updates:' "$D" "$DR" "$PT" '    multi-ecosystem-group: .5'; unread "a group named '.5' and an entry in .5"
+healthy; dep 'version: 2' "$GW" "  '=':" "$GS" "$GV" 'updates:' "$D" "$DR" "$PT" '    multi-ecosystem-group: ='; unread "a group named '=' and an entry in ="
+# In quotes they are text. So is a name that only starts with one of the
+# words (no), ends with one (on), and has a digit, a dash and a dot that are
+# not in front.
+healthy; dep 'version: 2' "$GW" "  '1':" "$GS" "$GV" '  "yes":' "$GS" '      interval: daily' 'updates:' "$D" "$DR" "$PT" "    multi-ecosystem-group: '1'" \
+  '  - package-ecosystem: pip' '    directory: /api' "$PT" '    multi-ecosystem-group: "yes"'
+run --porcelain
+expect "groups named '1' and \"yes\", in quotes, and an entry in each -> ON" 0 dependabot-config ON
+healthy; dep 'version: 2' "$GW" '  node-18.x-python:' "$GS" "$GV" 'updates:' "$D" "$DR" "$PT" '    multi-ecosystem-group: node-18.x-python'; run --porcelain
+expect "a group named node-18.x-python -> ON" 0 dependabot-config ON
+
+# The reader is not a YAML parser, and it is not a reader of any text but
+# bytes either: it has awk work in the C locale. In a locale with two-byte
+# characters (GBK, Big5) awk can take the last byte of a UTF-8 character and
+# the backslash after it for one character, and a backslash inside double
+# quotes is what says the quote may not end where it seems to. The shim
+# stands in front of awk and writes down the locale each call was given;
+# POSIX is the same locale under another name, so a call that only inherits
+# it shows.
+REAL_AWK="$(command -v awk)"
+mkdir -p "$TMP/awkbin"
+cat > "$TMP/awkbin/awk" <<'SHIM'
+#!/usr/bin/env bash
+printf '%s\n' "${LC_ALL-unset}" >> "$AWK_LOG"
+exec "$REAL_AWK" "$@"
+SHIM
+chmod +x "$TMP/awkbin/awk"
+healthy; : > "$TMP/awklog"
+RC=0; OUT=$(GH_FIX="$FIX" AWK_LOG="$TMP/awklog" REAL_AWK="$REAL_AWK" LC_ALL=POSIX PATH="$TMP/awkbin:$TMP/bin:$PATH" bash "$SCRIPT" --root "$PROJ" --porcelain 2>&1) || RC=$?
+expect "a healthy file read through the awk shim -> ON" 0 dependabot-config ON
+if [ "$(tr '\n' ' ' < "$TMP/awklog")" = "C C " ]; then ok "both passes over the file run awk in the C locale"
+else bad "both passes over the file run awk in the C locale" "$(tr '\n' ' ' < "$TMP/awklog")"; fi
+# The file that showed it. Only a platform that has the locale can fail this
+# case (Git for Windows has it); where the locale is missing awk falls back
+# to C by itself. stderr is dropped: a shell that lacks the locale says so.
+healthy; depb "${HD}${DL}    x: \"\344\270\255\\\\\"\n${TL}    y: \" #\"\n"
+RC=0; OUT=$(GH_FIX="$FIX" LC_ALL=zh_CN.GBK PATH="$TMP/bin:$PATH" bash "$SCRIPT" --root "$PROJ" --porcelain 2>/dev/null) || RC=$?
+expect "a backslash after a UTF-8 character, read in a GBK locale -> UNKNOWN" 2 dependabot-config UNKNOWN
 
 # The same key in two entries, in two groups and in two schedules is not a
 # key written twice.

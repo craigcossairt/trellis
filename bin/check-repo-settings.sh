@@ -574,7 +574,10 @@ elif [ -f "$ROOT/.github/dependabot.yml" ] || [ -f "$ROOT/.github/dependabot.yam
   # What makes it UNKNOWN: a byte the check in front of the reader does not
   # take as text (a control character, a line break that is not a line feed,
   # text that is not UTF-8), a line longer than 1024 bytes, a line in a
-  # multi-ecosystem-groups block that is not a plain key where one is due,
+  # multi-ecosystem-groups block that is not a plain key where one is due
+  # (a list item at the depth of a group's keys is one),
+  # a group name, or the group an entry names, written without quotes that
+  # YAML may not read as text (a number, yes, no, null and the like),
   # lines under a key that has a value on its own line (at the top level,
   # in an entry, in a group, and under the name of a group; `updates: []`
   # with entries under it is one),
@@ -598,11 +601,13 @@ elif [ -f "$ROOT/.github/dependabot.yml" ] || [ -f "$ROOT/.github/dependabot.yam
   # two GitHub goes by was not established), an entry in a group the file does not
   # define, or one that needs its group's schedule when the group shows none
   # (GitHub's rule for those two was not established), and any line under
-  # `updates:` it cannot place. A merge (<<) is not followed either, so a
-  # file that uses one and looks incomplete is UNKNOWN, since the merge may
-  # supply what is missing. What a merge adds to an entry that looks
-  # complete is not seen: one that puts the entry in a group leaves the
-  # group and its `patterns` unasked for.
+  # `updates:` it cannot place. A merge (<<) is not followed either: any
+  # line that holds << makes the file UNKNOWN, wherever it stands. A merge
+  # can supply a key that looks missing, put an entry in a group, and be
+  # an error to a parser when what it names cannot be merged (a word, a
+  # list of words), and the reader does not look at what it names. The
+  # price: << in a quoted value, or in a comment after a key, is UNKNOWN
+  # too. A line that is only a comment is not read at all.
   # What it does not check: whether a value is one GitHub accepts, and
   # whether the lines are nested in a way YAML allows. It reads one line at a
   # time, so a file GitHub refuses for its indentation can still read ON. It
@@ -610,9 +615,9 @@ elif [ -f "$ROOT/.github/dependabot.yml" ] || [ -f "$ROOT/.github/dependabot.yam
   # place there. Under any other key that has nothing after it on its own
   # line (commit-message, labels, a key of a group that is not its schedule)
   # the lines of the block are not placed at all.
-  # awk prints four lines: the ecosystems, what is missing, 0 or 1 for a
-  # merge, and what it could not follow. Anything else on the third line means
-  # the file was not read at all.
+  # awk prints four lines: the ecosystems, what is missing, the word end,
+  # and what it could not follow. Anything else on the third line means the
+  # reader did not run to its end.
   DEP_FILE="$ROOT/.github/dependabot.yml"
   [ -f "$DEP_FILE" ] || DEP_FILE="$ROOT/.github/dependabot.yaml"
   # Bytes first. awk splits the file at line feeds and nowhere else. YAML
@@ -623,14 +628,20 @@ elif [ -f "$ROOT/.github/dependabot.yml" ] || [ -f "$ROOT/.github/dependabot.yam
   # parser reads at all. So the file is read only when every line of it is
   # made of tabs, printable ASCII and well-formed UTF-8 above U+009F, less
   # U+2028, U+2029, U+FFFE and U+FFFF. A carriage return may be the last
-  # byte of a line and nothing else. LC_ALL=C has awk count in bytes. It
+  # byte of a line and nothing else. LC_ALL=C has awk count in bytes, in
+  # this pass and in the reader after it: in a locale with two-byte
+  # characters (GBK, Big5) GNU awk takes the last byte of a UTF-8 character
+  # and a backslash after it for one character, and the reader would not see
+  # the backslash. The pass
   # prints "text", or the number of the first line that is not. An awk that
   # cuts a line short at a NUL byte would not see what stands after it; GNU
   # awk and mawk do not, and no other awk was tried.
-  # A line longer than 1024 bytes is not read either. YAML takes no key
-  # longer than 1024 characters (libyaml refuses the file), and no line of
-  # 1024 bytes or fewer can hold one. For such a line the pass prints "long"
-  # and the number of the line.
+  # A line longer than 1024 bytes is not read either. A key in front of a
+  # colon on its own line may not be longer than 1024 characters (libyaml
+  # refuses the file; a key written out after a question mark may be
+  # longer, and the reader follows no such key), and no line of 1024 bytes
+  # or fewer can hold one. For such a line the pass prints "long" and the
+  # number of the line.
   DEP_BYTES="$(LC_ALL=C awk '
     {
       line = $0; sub(/\r$/, "", line)
@@ -640,12 +651,23 @@ elif [ -f "$ROOT/.github/dependabot.yml" ] || [ -f "$ROOT/.github/dependabot.yam
     }
     END { print (bad ? bad : "text") }
   ' "$DEP_FILE" 2>/dev/null)"
-  DEP_READ="$(awk -v q="'" '
+  DEP_READ="$(LC_ALL=C awk -v q="'" '
     function lacks(what) { problems = problems (problems == "" ? "" : "; ") what }
     function odd(what) { if (unsure == "") unsure = what }
     function isnull(v) { return (v == "" || v == "~" || v == "null" || v == "Null" || v == "NULL") }
     function usable(v) { return (KIND == "quoted" && v != "") || (KIND == "plain" && !isnull(v)) }
     function plainish() { return (KIND == "empty" || KIND == "plain" || KIND == "quoted") }
+    # notext: 1 when v, written without quotes, is something YAML may read
+    # as other than text: anything that starts with a digit, a sign, a dot
+    # or = (a number, a date; = alone is a value of its own), and the words
+    # for true, false and nothing, in any case. YAML 1.1 and 1.2 do not
+    # agree on which of these are text, and this takes them all. It is asked
+    # of the names of groups, which are compared: two such names can be one
+    # key to a parser (yes and true, 1 and 01), and neither is the name that
+    # stands in quotes.
+    function notext(v) {
+      return (v ~ /^[0-9+.=-]/ || tolower(v) ~ /^(yes|no|true|false|on|off|y|n|null)$/)
+    }
     # val: v is what scalar() just returned. 1 when it is a value, 0 when it
     # is empty or null. In any other form it is not followed, and says so.
     function val(v, what) {
@@ -654,15 +676,16 @@ elif [ -f "$ROOT/.github/dependabot.yml" ] || [ -f "$ROOT/.github/dependabot.yam
       return 0
     }
     # keyval: t starts with a key and a colon -> K and V, and 1. Otherwise 0.
+    # KQ is 1 when the key was in quotes.
     function keyval(t,    c, e, rest) {
       c = substr(t, 1, 1)
       if (c == "\"" || c == q) {
         e = index(substr(t, 2), c)
         if (e == 0) return 0
-        K = substr(t, 2, e - 1); rest = substr(t, e + 2)
+        K = substr(t, 2, e - 1); rest = substr(t, e + 2); KQ = 1
       } else {
         if (!match(t, /^[A-Za-z0-9_<][A-Za-z0-9_.<-]*/)) return 0
-        K = substr(t, 1, RLENGTH); rest = substr(t, RLENGTH + 1)
+        K = substr(t, 1, RLENGTH); rest = substr(t, RLENGTH + 1); KQ = 0
       }
       if (!match(rest, /^[ \t]*:([ \t]|$)/)) return 0
       V = substr(rest, RLENGTH + 1)
@@ -814,7 +837,7 @@ elif [ -f "$ROOT/.github/dependabot.yml" ] || [ -f "$ROOT/.github/dependabot.yam
     # flowinterval: 1 for a one-line {map} holding interval with a value, 0
     # for one without, -1 for anything else: a map or list inside it, or a
     # value of any key that is not empty, plain or in quotes that close. An
-    # alias is such a value, which is also what a merge (<<) has. So is a
+    # alias is such a value. So is a
     # value in quotes with a comma inside: the map is split at every comma,
     # the piece in front of that comma starts with a quote that does not
     # close, and what stands after it can look like an interval of its own.
@@ -866,8 +889,7 @@ elif [ -f "$ROOT/.github/dependabot.yml" ] || [ -f "$ROOT/.github/dependabot.yam
       if (K in ekeys) odd("a key written twice in one entry")
       ekeys[K] = 1
       curkey = K; v = scalar(V); curempty = (KIND == "empty"); nestind = -1
-      if (K == "<<") anchor = 1
-      else if (K == "package-ecosystem") { if (val(v, "a package-ecosystem that is not a plain value")) eco = v }
+      if (K == "package-ecosystem") { if (val(v, "a package-ecosystem that is not a plain value")) eco = v }
       else if (K == "directory") { if (val(v, "a directory that is not a plain value")) dir = 1 }
       else if (K == "directories") {
         if (KIND == "flow") { r = flowlist(v); if (r < 0) odd("a directories list it cannot follow"); else if (r) dir = 1 }
@@ -881,7 +903,12 @@ elif [ -f "$ROOT/.github/dependabot.yml" ] || [ -f "$ROOT/.github/dependabot.yam
           if (r < 0) odd("a one-line schedule it cannot follow")
           else if (r) { sched = 1; ival = FIV; cj = FCJ }
         } else if (!plainish()) odd("a schedule that is not written out")
-      } else if (K == "multi-ecosystem-group") { if (val(v, "a multi-ecosystem-group that is not a plain value")) grp = v }
+      } else if (K == "multi-ecosystem-group") {
+        if (val(v, "a multi-ecosystem-group that is not a plain value")) {
+          grp = v
+          if (KIND == "plain" && notext(v)) odd("a multi-ecosystem-group that YAML may not read as text (a number, or a word like yes or no); in quotes it is text")
+        }
+      }
     }
     # A line that belongs to the key above it.
     function nested(    v) {
@@ -899,7 +926,6 @@ elif [ -f "$ROOT/.github/dependabot.yml" ] || [ -f "$ROOT/.github/dependabot.yam
       if (curkey == "schedule") {
         if (nestind < 0) nestind = ind
         if (!curempty || ind != nestind || !keyval(text)) { odd("a schedule it cannot follow"); return }
-        if (K == "<<") { anchor = 1; return }
         if (K in skeys) odd("a key written twice in one schedule")
         skeys[K] = 1
         v = scalar(V)
@@ -942,6 +968,7 @@ elif [ -f "$ROOT/.github/dependabot.yml" ] || [ -f "$ROOT/.github/dependabot.yam
       if (ind <= g1) {
         if (ind < g1 || !keyval(text)) { odd("a multi-ecosystem-groups: block that is not a block of named groups"); cg = ""; return }
         if (K in gdef) odd("a group written twice")
+        if (!KQ && notext(K)) odd("a group whose name YAML may not read as text (a number, or a word like yes, no or null); in quotes it is text")
         cg = K; gdef[cg] = 1; g2 = -1; gkey = ""
         scalar(V); cgval = (KIND != "empty")
         return
@@ -972,6 +999,7 @@ elif [ -f "$ROOT/.github/dependabot.yml" ] || [ -f "$ROOT/.github/dependabot.yam
       sub(/\r$/, "", line)
       if (NR == 1) sub(/^\357\273\277/, "", line)
       if (line ~ /^ *(#|$)/) next
+      if (index(line, "<<")) odd("a line that holds << (a YAML merge), which it does not follow")
       if (ended) { odd("more than one YAML document"); next }
       if (line ~ /^\.\.\.([ \t]+#.*|[ \t]*)$/) { ended = 1; next }
       if (line ~ /^---([ \t]|$)/) {
@@ -987,8 +1015,7 @@ elif [ -f "$ROOT/.github/dependabot.yml" ] || [ -f "$ROOT/.github/dependabot.yam
       if (ind == 0 && !(dash && top == "updates")) {
         if (!keyval(text)) { odd("a top-level line that is not a plain key"); top = "other"; next }
         v = scalar(V); topval = (KIND != "empty")
-        if (K == "<<") { anchor = 1; top = "other" }
-        else if (K == "updates") {
+        if (K == "updates") {
           if (seenup++) odd("updates: written twice")
           if (KIND != "empty" && v != "[]") odd("the updates: list written on one line")
           top = "updates"; itemind = -1
@@ -1023,24 +1050,22 @@ elif [ -f "$ROOT/.github/dependabot.yml" ] || [ -f "$ROOT/.github/dependabot.yam
       }
       if (runs) odd("line " runs ", written in a form it does not follow: a quote, a [list] or a {map} that is not closed on its own line, or a value it has no rule for")
       if (ver != "2") lacks("the file has no version: 2 line")
-      print names; print problems; print anchor + 0; print unsure
+      print names; print problems; print "end"; print unsure
     }
   ' "$DEP_FILE" 2>/dev/null)"
-  WATCHES=""; DEP_LACKS=""; DEP_ANCHOR=""; DEP_ODD=""
-  { IFS= read -r WATCHES; IFS= read -r DEP_LACKS; IFS= read -r DEP_ANCHOR; IFS= read -r DEP_ODD; } <<DEP
+  WATCHES=""; DEP_LACKS=""; DEP_END=""; DEP_ODD=""
+  { IFS= read -r WATCHES; IFS= read -r DEP_LACKS; IFS= read -r DEP_END; IFS= read -r DEP_ODD; } <<DEP
 $DEP_READ
 DEP
   case "$DEP_BYTES" in
     text) ;;
-    long\ *) DEP_ODD="line ${DEP_BYTES#long } is longer than 1024 bytes, more than it reads (YAML takes no key longer than 1024 characters)" ;;
+    long\ *) DEP_ODD="a line longer than 1024 bytes (line ${DEP_BYTES#long }), more than it reads" ;;
     *) DEP_ODD="on line $DEP_BYTES a byte it does not take as text (a control character, a line break that is not a line feed, or text that is not UTF-8)" ;;
   esac
-  case "$DEP_ANCHOR" in
-    0|1)
+  case "$DEP_END" in
+    end)
       if [ -n "$DEP_ODD" ]; then
         record dependabot-config UNKNOWN "this script reads only a plainly laid out file, and $DEP_FILE has $DEP_ODD. That is neither on nor off. On GitHub, Insights > Dependency graph > Dependabot lists the update jobs GitHub runs from the file"
-      elif [ "$DEP_ANCHOR" = 1 ] && { [ -n "$DEP_LACKS" ] || [ -z "$WATCHES" ]; }; then
-        record dependabot-config UNKNOWN "${DEP_LACKS:-no entry was found}, as far as this script reads the file - but the file uses a YAML merge (<<), which it does not follow, so the file may be complete"
       elif [ -n "$DEP_LACKS" ]; then
         record dependabot-config OFF "$DEP_FILE: $DEP_LACKS. GitHub requires each of these - add what is missing (the template's file shows a whole entry)"
       elif [ -n "$WATCHES" ]; then
