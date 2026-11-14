@@ -7,7 +7,7 @@ rather than skip them: each one is cheap today and easy to forget later.
 ## Two ways to do this
 
 **Let your AI do it.** Open your AI coding tool in this folder and say *"walk me through
-SETUP.md"* - or use `/setup` in Claude Code or `$setup` in Codex. It asks you each question in plain conversation,
+SETUP.md"* - or use `/setup` in Claude Code or Grok Build, or `$setup` in Codex. It asks you each question in plain conversation,
 makes the edits for you, and shows you every change before saving it. You will not have to edit
 a config file by hand. It starts by asking how much you have built before, and explains more or
 less depending on your answer. This is the recommended path if you are new to this.
@@ -73,7 +73,8 @@ anything committed to git is very hard to truly delete.
 - [ ] Only if you use MCP servers (extensions that give your AI access to outside tools like a
       database or your issue tracker): make a copy of `.mcp.json.example` named `.mcp.json` and
       fill it in. Also ignored by git, so it is set up once per computer. If you do not know
-      what this means, skip it - you can come back when you need one.
+      what this means, skip it - you can come back when you need one. (Cursor keeps its own
+      copy at `.cursor/mcp.json`, ignored by git the same way.)
 
 ## 4. Turn on the safety rails (3 min)
 
@@ -89,9 +90,32 @@ fit your project. `docs/harness-support.md` lists the coverage and limits.
       Trust this project in Codex, then use `/hooks` in Codex CLI to review and trust
       `.codex/hooks.json`. New or changed definitions need review again. See
       `.codex/README.md` for Windows paths and the `TRELLIS_BASH` override.
-- [ ] **Other tools:** Claude uses `.claude/settings.json`; Cursor requires a
-      trusted workspace; Grok Build requires `/hooks-trust`. Gemini CLI and
-      Copilot have no in-session hook adapter here; the Git push gate still works.
+- [ ] **Claude Code:** nothing to do. It reads `.claude/settings.json` on its own.
+- [ ] **Cursor:** trust the workspace when it asks. **On Windows, before your first edit**,
+      point it at Git Bash. In `.cursor/hooks.json`, each of the four `command` values starts
+      with the word `bash`. Swap that one word for `C:\\PROGRA~1\\Git\\bin\\bash.exe`, so
+      the first one reads
+      `"command": "C:\\PROGRA~1\\Git\\bin\\bash.exe bin/run-claude-hook.sh cursor session-start",`
+      and leave the long comment at the top of the file alone. Left as `bash`, the hooks run
+      inside WSL if you have it and cannot start at all if you do not, and the secrets check
+      is set to refuse an edit it could not check. That looks like every edit failing. If
+      people on macOS or Linux share this repository, do not commit that edit: the Windows
+      section of `docs/harness-support.md` has the other way, and a line to paste that shows
+      whether the command works on your machine.
+- [ ] **Grok Build:** run `/hooks-trust` the first time you open the project. **On Windows**,
+      set the environment variable `GROK_SHELL=bash` so Grok runs the hooks under Git Bash:
+      run `setx GROK_SHELL bash` in PowerShell, then open a new terminal. There is no file to
+      edit. Grok also reads the Claude and Cursor hook files by default,
+      so expect four harmless "hook load error" lines for the Cursor file.
+      `docs/harness-support.md` has the details.
+- [ ] **Muse Code, Antigravity, Gemini CLI, Copilot:** no in-session hooks are shipped for
+      these. They get the rules, and all but Copilot can reach the skills; the Git push gate
+      and CI still work. If Antigravity is your tool, read its note in
+      `docs/harness-support.md` first: it loads only the first 24,000 bytes of `AGENTS.md`,
+      and `AGENTS.md` ships longer than that.
+- [ ] One limit, in every tool: the secrets rail checks the file an **edit tool** names. A
+      shell command that writes a file does not pass through it. It stops the common accident;
+      it is not a wall.
 
 - [ ] Open `.claude/hooks/format-on-edit.sh`. This one tidies the layout of your code every time
       a file is saved. Check that the list covers the languages you are using, and add yours if
@@ -149,10 +173,14 @@ what protects you; the check only catches the common case.
       Those files are pointers, and the automated checks fail if a pointer aims
       at something that no longer exists.
 - [ ] **Adapters for AI tools nobody here uses**: `.cursor/` (Cursor), `.grok/` (Grok Build),
-      `.agents/` (Codex skills), `.codex/` (Codex hooks),
-      `GEMINI.md` (Gemini CLI), `.github/copilot-instructions.md` (GitHub Copilot). If you keep
-      `.cursor/` or `.grok/`, also keep `bin/run-claude-hook.sh`, which is how those two run the
-      same safety rails.
+      `.codex/` (Codex hooks), `GEMINI.md` (Gemini CLI),
+      `.github/copilot-instructions.md` (GitHub Copilot). `.agents/` is shared: it holds the
+      skill pointers for Codex, Grok Build, Muse Code, Antigravity and Gemini CLI, so delete it
+      only if you use none of those. If you keep
+      `.cursor/` or `.grok/`, also keep `bin/run-claude-hook.sh` and `.claude/hooks/`: the
+      script is how those two run the safety rails, and the folder is where the rails are.
+      Without `.claude/hooks/block-sensitive-files.sh`, every edit in those two tools is
+      refused.
 - [ ] **The push gate** (`.githooks/`, `bin/verify-green.sh`, `bin/install-git-hooks.sh`) if you
       never want push-time checks. It does nothing until you configure it, so keeping it costs
       you nothing.
@@ -218,9 +246,9 @@ that rather than from how busy you feel.
       `brain/` when `docs/` has 15 files of mine"), because nothing else will remind you.
 - [ ] **Delete it** if you already use another memory tool, or neither case above will ever
       apply. Running two memories is worse than running one.
-- [ ] One limit to know before you choose: the automatic part works in Claude Code, Grok Build
-      and Codex. In Cursor, Gemini CLI and Copilot the index still builds and you (or your AI)
-      search it by hand. `docs/harness-support.md` has the table.
+- [ ] One limit to know before you choose: the automatic part works in Claude Code and Codex.
+      In every other tool the index still builds and you (or your AI) search it by hand.
+      `docs/harness-support.md` has the table.
 - [ ] **If you set it up, schedule its refresh.** The index only knows what it was last fed, so
       one built today and never refreshed is answering from today's project in three months.
       The whole job is one command, `bash brain/scripts/refresh.sh`, run once a day by your
@@ -297,6 +325,8 @@ working. The only way to tell them apart is to try to break something on purpose
 - [ ] In a disposable project with a dummy `.env`, request an edit and confirm
       the hook reports the blocked call. An agent declining in prose does not
       prove the hook ran. Do not use a real credentials file for this check.
+      In Codex, ask for the edit to be made with `apply_patch`, by name: that is the
+      one tool its check covers, and an edit made any other way proves nothing.
 - [ ] For Codex, run `python3 bin/validate-codex.py` and
       `python3 bin/tests/test_codex_hooks.py` (use `python` on Windows). The former
       checks static wiring; the latter tests payload handling in fixtures. Neither

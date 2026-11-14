@@ -27,6 +27,12 @@ Python must be available to the process running Codex. If the interpreter itself
 cannot start, Codex may report a non-blocking launch error; the adapter cannot
 produce a denial before it runs. Complete the live activation check in `SETUP.md`.
 
+These steps are for the Codex CLI. An app that embeds Codex (an editor extension,
+a desktop app, another agent's delegate) may load project hooks differently or not
+at all, and none has been checked here. Prove it in the client you use: in a
+disposable project, ask for an `apply_patch` edit to a dummy `.env` and see the
+block reported.
+
 The Windows command uses a small Python bootstrap to find the Git root and run
 the adapter. It returns a structured denial for failed file checks because an
 outer PowerShell can turn a native exit 2 into a non-blocking exit 1. The bootstrap

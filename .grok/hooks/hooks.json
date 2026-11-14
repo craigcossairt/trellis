@@ -1,5 +1,5 @@
 {
-  "$schema_comment": "Grok Build hooks. Canonical guardrail logic lives in .claude/hooks/ and brain/hooks/; bin/run-claude-hook.sh only adapts payload and verdict shapes - never fork hook logic into a Grok-only copy. WINDOWS: replace `bash` in each command with Git Bash's full path (e.g. \"C:/Program Files/Git/bin/bash.exe\") - a bare bash can resolve to WSL, where HOME and every path are wrong. If your harness does not run hooks from the project root, make the script path absolute too.",
+  "$schema_comment": "Grok Build hooks. Canonical guardrail logic lives in .claude/hooks/ and brain/hooks/; bin/run-claude-hook.sh only adapts payload and verdict shapes - never fork hook logic into a Grok-only copy. WINDOWS: a bare `bash` is WSL's or nothing. Set GROK_SHELL=bash in your environment so Grok runs these commands under Git Bash, with no edit to this file; the Windows section of docs/harness-support.md has the detail. If your harness does not run hooks from the project root, make the script path absolute too. The sensitive-file check sets failClosed: Grok lets a tool call through when a hook cannot run, and a check that cannot start should refuse the edit instead - so on a Windows machine with no WSL, settle `bash` before your first edit or every edit is refused. No UserPromptSubmit hook is wired: Grok discards an allowing prompt hook's output (CLI 1.0.77), so brain/ context cannot be injected here - ask the agent to search the brain.",
   "hooks": {
     "SessionStart": [
       {
@@ -12,17 +12,6 @@
         ]
       }
     ],
-    "UserPromptSubmit": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash bin/run-claude-hook.sh grok brain-enrich",
-            "timeout": 15
-          }
-        ]
-      }
-    ],
     "PreToolUse": [
       {
         "matcher": "Edit|Write|MultiEdit|search_replace",
@@ -30,7 +19,8 @@
           {
             "type": "command",
             "command": "bash bin/run-claude-hook.sh grok block-sensitive-files",
-            "timeout": 10
+            "timeout": 10,
+            "failClosed": true
           }
         ]
       }

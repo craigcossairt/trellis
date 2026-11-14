@@ -28,9 +28,19 @@
 #
 # Hermetic: temp git repos, no network, global git config neutralised.
 #
+# Needs jq: the adapter cases read each reply with a JSON parser, the way the
+# tool itself does. Without jq this stops here, before any case runs, rather
+# than two thirds of the way through with no totals.
+#
 # Run:  bash bin/tests/test-session-start.sh
 # =============================================================================
 set -uo pipefail
+
+command -v jq >/dev/null 2>&1 || {
+  echo "FIXTURE FAILED: jq is needed to parse the adapter's replies (sections I and J)." >&2
+  echo "  Skipping those cases would report replies nobody parsed as replies that parse." >&2
+  exit 1
+}
 
 HERE="$(CDPATH='' cd -- "$(dirname "${BASH_SOURCE[0]}")" >/dev/null && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
@@ -345,6 +355,263 @@ echo "2020-01-02 09:00 - the index step failed (exit 3)." > "$D/brain/.refresh-f
 run "$D"
 c_has "stale and failed: reports the failure" 'the last refresh FAILED'
 c_hasnot "stale and failed: not also the staleness line" 'Project brain is stale'
+
+echo "== I. through the Cursor and Grok adapter =="
+# Neither tool reads this hook's plain stdout. Cursor takes the text from an
+# `additional_context` field; Grok reads only a top-level `systemMessage` from
+# a SessionStart hook's reply and ignores anything else. Printed raw, the block
+# reaches nobody and nothing says so: the hook ran, exited 0, and the session
+# opened without it. The adapter derives its root from its own location, so it
+# is copied into a throwaway repo beside a copy of the hook.
+ADAPTER="$ROOT/bin/run-claude-hook.sh"
+[ -f "$ADAPTER" ] || { echo "missing $ADAPTER" >&2; exit 1; }
+ADP="$TMP/adapter"; new_repo "$ADP"
+must mkdir -p "$ADP/bin" "$ADP/.claude/hooks"
+must cp "$ADAPTER" "$ADP/bin/run-claude-hook.sh"
+must cp "$HOOK" "$ADP/.claude/hooks/session-start.sh"
+# A commit subject holding the two characters a JSON string must escape. The
+# hook prints recent subjects, so they land inside the reply.
+must git -C "$ADP" commit -q --allow-empty -m 'say "hi" to C:\dir'
+AOUT=""; ARC=0
+adapter() { # $1 harness, $2 optional repo (default: the real hook's)
+  AOUT="$(cd "${2:-$ADP}" && printf '{}' | bash bin/run-claude-hook.sh "$1" session-start 2>/dev/null)"
+  ARC=$?
+}
+one_line() { [ "$(printf '%s\n' "$AOUT" | wc -l | tr -d ' ')" = 1 ]; }
+# The reply is read by a JSON parser in the tool, so one reads it here (jq,
+# checked for at the top of this file). A match on how the text starts and
+# ends passes a reply no parser accepts.
+parses() { printf '%s' "$AOUT" | jq -e "$1" >/dev/null 2>&1; } # $1 a jq test that must hold
+c_parses() { if parses "$2"; then ok "$1"; else bad "$1" "$AOUT"; fi; }
+HELD='contains("=== END SESSION CONTEXT ===") and contains("say \"hi\" to C:\\dir")'
+
+adapter grok
+c_eq "grok: the adapter exits 0" "$ARC" 0
+case "$AOUT" in
+  '{"systemMessage":"'*'"}') ok "grok: the reply is one object with a top-level systemMessage" ;;
+  *) bad "grok: the reply is one object with a top-level systemMessage" "$AOUT" ;;
+esac
+case "$AOUT" in
+  *'=== SESSION CONTEXT ==='*'=== END SESSION CONTEXT ==='*) ok "grok: the whole block is inside it, both markers" ;;
+  *) bad "grok: the whole block is inside it, both markers" "$AOUT" ;;
+esac
+if one_line; then ok "grok: newlines are escaped (one line of JSON)"
+else bad "grok: newlines are escaped (one line of JSON)" "$AOUT"; fi
+c_parses "grok: the reply parses, and systemMessage holds the block and a quoted subject" \
+  ".systemMessage | $HELD"
+
+adapter cursor
+c_eq "cursor: the adapter exits 0" "$ARC" 0
+case "$AOUT" in
+  '{"additional_context":"'*'"}') ok "cursor: the reply carries additional_context" ;;
+  *) bad "cursor: the reply carries additional_context" "$AOUT" ;;
+esac
+if one_line; then ok "cursor: newlines are escaped (one line of JSON)"
+else bad "cursor: newlines are escaped (one line of JSON)" "$AOUT"; fi
+c_parses "cursor: the reply parses, and additional_context holds the block and a quoted subject" \
+  ".additional_context | $HELD"
+
+# The same adapter over a stub hook whose text is known to the byte: a tab, a
+# carriage return, a line break, a quote and a backslash. With jq the text must
+# come back exactly. Without jq the adapter flattens it by hand, and there a
+# tab or a carriage return left in place is a raw control character inside a
+# JSON string - a reply no parser accepts, on exactly the machines (a bare
+# Windows, a minimal container) where nobody would think to look.
+STUB="$TMP/stub"
+must mkdir -p "$STUB/bin" "$STUB/.claude/hooks"
+must cp "$ADAPTER" "$STUB/bin/run-claude-hook.sh"
+cat > "$STUB/.claude/hooks/session-start.sh" <<'STUBHOOK'
+#!/bin/bash
+printf 'one\ttab\r\nq"uote back\\slash\n'
+STUBHOOK
+
+adapter grok "$STUB"
+# The carriage return is left out of the comparison: a native Windows jq reads
+# its input as text and drops the CR of a CR-LF pair before the adapter's
+# filter sees it. Everything else must come back to the byte.
+c_parses "grok, with jq: the text comes back as written (tab, line break, quote, backslash)" \
+  '(.systemMessage | gsub("\r"; "")) == "one\ttab\nq\"uote back\\slash"'
+
+# The prompt hook through the same adapter. Cursor's schema for it is
+# {"continue": bool} and carries no context, so the adapter always answers
+# with that. Grok discards whatever an allowing prompt hook prints, so nothing
+# is printed for it.
+must mkdir -p "$STUB/brain/hooks"
+cat > "$STUB/brain/hooks/context-enrichment.sh" <<'STUBHOOK'
+#!/bin/bash
+printf 'context from the brain\n'
+STUBHOOK
+AOUT="$(cd "$STUB" && printf '{}' | bash bin/run-claude-hook.sh cursor brain-enrich 2>/dev/null)"; ARC=$?
+c_eq "cursor prompt hook: the reply is exactly the continue object" "$AOUT" '{"continue":true}'
+c_eq "cursor prompt hook: exit 0" "$ARC" 0
+# Exit 2 from a prompt hook blocks the prompt in Grok, and an empty reply looks
+# the same whether the adapter ran and stayed silent or never ran. The Cursor
+# case above proves the stub was reached; the exit status proves this one
+# ended as an allow.
+AOUT="$(cd "$STUB" && printf '{}' | bash bin/run-claude-hook.sh grok brain-enrich 2>/dev/null)"; ARC=$?
+c_eq "grok prompt hook: nothing is printed" "$AOUT" ''
+c_eq "grok prompt hook: exit 0" "$ARC" 0
+
+# A PATH with jq gone and the adapter's other tools still there, built the way
+# test-block-sensitive-files.sh builds its own and verified before use: first
+# by dropping jq's directory, then by a directory of links to just these tools.
+ADAPTER_TOOLS="bash cat mktemp rm tr sed dirname"
+nojq_usable() { # $1 candidate PATH -> jq absent and every tool present
+  PATH="$1" command -v jq >/dev/null 2>&1 && return 1
+  local t
+  for t in $ADAPTER_TOOLS; do
+    PATH="$1" command -v "$t" >/dev/null 2>&1 || return 1
+  done
+  return 0
+}
+NOJQ_PATH=""; cand="$PATH"
+for _ in 1 2 3 4 5; do
+  PATH="$cand" command -v jq >/dev/null 2>&1 || break
+  d="$(CDPATH='' cd -- "$(dirname "$(PATH="$cand" command -v jq)")" >/dev/null && pwd)"
+  cand="$(printf '%s' "$cand" | tr ':' '\n' | grep -vxF "$d" | paste -sd: -)"
+done
+nojq_usable "$cand" && NOJQ_PATH="$cand"
+if [ -z "$NOJQ_PATH" ]; then
+  must mkdir -p "$TMP/nojq-bin"
+  for t in $ADAPTER_TOOLS; do
+    src="$(command -v "$t" 2>/dev/null)" || continue
+    ln -sf "$src" "$TMP/nojq-bin/$t" 2>/dev/null || cp "$src" "$TMP/nojq-bin/$t" 2>/dev/null || true
+  done
+  nojq_usable "$TMP/nojq-bin" && NOJQ_PATH="$TMP/nojq-bin"
+fi
+[ -n "$NOJQ_PATH" ] || {
+  echo "FIXTURE FAILED: could not build a PATH with jq absent and the adapter's tools present." >&2
+  echo "  The no-jq case would have run through jq and passed for the wrong reason." >&2
+  exit 1
+}
+AOUT="$(cd "$STUB" && printf '{}' | PATH="$NOJQ_PATH" bash bin/run-claude-hook.sh cursor session-start 2>/dev/null)"
+c_parses "cursor, without jq: the flattened text is still JSON (each control character a space)" \
+  '.additional_context == "one tab  q\"uote back\\slash"'
+
+echo "== J. the adapter and a sensitive-file check that did not run =="
+# Both tools' hook files mark the sensitive-file check failClosed. That setting
+# covers the adapter failing to start. Once the adapter is running, what it
+# prints IS the answer, so an adapter that printed "allow" for a check that
+# crashed would undo the setting from the inside. It allows an edit only when
+# the check finished and said yes (exit 0). A check that is missing, or that
+# ends any other way than 0 or 2, comes back as a refusal that says so.
+# The other hooks stay open: a session must still start.
+check_stub() { # $1 the body of a stand-in for the sensitive-file check
+  printf '#!/bin/bash\ncat >/dev/null\n%s\n' "$1" > "$STUB/.claude/hooks/block-sensitive-files.sh"
+}
+AERR=""
+guard() { # $1 harness -> AOUT, ARC, AERR for one edit sent through the check
+  AOUT="$(cd "$STUB" && printf '{"file_path":"src/a.ts"}' | bash bin/run-claude-hook.sh "$1" block-sensitive-files 2>"$TMP/guard.err")"
+  ARC=$?
+  AERR="$(cat "$TMP/guard.err")"
+}
+
+check_stub 'exit 0'
+guard cursor
+c_parses "cursor: a check that says yes -> allow" '.permission == "allow"'
+c_eq "cursor: and the adapter exits 0" "$ARC" 0
+guard grok
+c_parses "grok: a check that says yes -> allow" '.decision == "allow"'
+
+check_stub 'echo "no: that is a secret" >&2; exit 2'
+guard cursor
+c_parses "cursor: a check that says no -> deny, with the check's own reason" \
+  '.permission == "deny" and (.user_message | contains("that is a secret"))'
+c_eq "cursor: and the adapter exits 2" "$ARC" 2
+c_parses "cursor: and a refusal by the check is not reported as a check that failed to run"   '.user_message | contains("did not finish") | not'
+
+for rc in 1 127; do
+  check_stub "exit $rc"
+  guard cursor
+  c_parses "cursor: a check that ends with exit $rc -> deny, and the reply says it did not finish" \
+    ".permission == \"deny\" and (.user_message | contains(\"did not finish (exit $rc)\"))"
+  c_eq "cursor: exit $rc from the check -> the adapter exits 2" "$ARC" 2
+done
+check_stub 'echo "jq: command not found" >&2; exit 1'
+guard grok
+c_parses "grok: a check that ends with exit 1 -> deny, with what the check printed" \
+  '.decision == "deny" and (.reason | contains("did not finish (exit 1)")) and (.reason | contains("jq: command not found"))'
+c_eq "grok: and the adapter exits 2" "$ARC" 2
+
+check_stub 'kill -9 $$'
+guard cursor
+c_parses "cursor: a check that is killed -> deny" '.permission == "deny"'
+
+# Any exit but 0 and 2 is a check that did not finish, not only the ones a
+# crash usually gives.
+check_stub 'exit 3'
+guard cursor
+c_parses "cursor: a check that ends with an exit nobody listed (3) -> deny" \
+  '.permission == "deny" and (.user_message | contains("did not finish (exit 3)"))'
+
+check_stub 'exit 2'
+guard grok
+c_parses "grok: a check that says no and gives no reason -> deny, with a reason all the same" \
+  '.decision == "deny" and (.reason | contains("Blocked by hook"))'
+
+check_stub 'echo "note from the check" >&2; exit 0'
+guard cursor
+c_parses "cursor: a check that says yes and writes a note -> allow" '.permission == "allow"'
+case "$AERR" in
+  *"note from the check"*) ok "cursor: and the note is passed on, on stderr" ;;
+  *) bad "cursor: and the note is passed on, on stderr" "$AERR" ;;
+esac
+
+# A check that answers before it has read its input. The adapter feeds the
+# payload through a pipe, and with a payload larger than the pipe holds the
+# feeding side is cut off (exit 141). That is not the check's answer.
+printf '#!/bin/bash\nexit 0\n' > "$STUB/.claude/hooks/block-sensitive-files.sh"
+BIG="$(head -c 300000 /dev/zero | tr '\0' 'a')"
+AOUT="$(cd "$STUB" && printf '{"file_path":"src/a.ts","content":"%s"}' "$BIG" | bash bin/run-claude-hook.sh cursor block-sensitive-files 2>"$TMP/guard.err")"
+ARC=$?
+c_parses "cursor: a check that says yes before reading a large payload -> allow" '.permission == "allow"'
+
+must rm -f "$STUB/.claude/hooks/block-sensitive-files.sh"
+guard cursor
+c_parses "cursor: the check's file is missing -> deny, and the reply says it is missing" \
+  '.permission == "deny" and (.user_message | contains("is missing"))'
+c_eq "cursor: and the adapter exits 2" "$ARC" 2
+case "$AERR" in
+  *"was refused"*) ok "cursor: and the reason is on stderr as well" ;;
+  *) bad "cursor: and the reason is on stderr as well" "$AERR" ;;
+esac
+guard grok
+c_parses "grok: the check's file is missing -> deny" '.decision == "deny"'
+
+# What stays open. A session hook that crashes, or is not there, must not stop
+# the session from starting, and a format hook that is not there formats
+# nothing.
+cat > "$STUB/.claude/hooks/session-start.sh" <<'STUBHOOK'
+#!/bin/bash
+exit 3
+STUBHOOK
+adapter cursor "$STUB"
+c_eq "cursor: a session hook that crashes -> the adapter still exits 0" "$ARC" 0
+c_eq "cursor: and nothing is printed" "$AOUT" ''
+# A hook that prints and then crashes. What it printed is passed on for the
+# session and format hooks, and never for the prompt hook.
+cat > "$STUB/.claude/hooks/session-start.sh" <<'STUBHOOK'
+#!/bin/bash
+echo "half a block"
+exit 3
+STUBHOOK
+adapter cursor "$STUB"
+c_eq "cursor: a session hook that prints and then crashes -> exit 0, and what it printed" \
+  "$ARC|$AOUT" '0|{"additional_context":"half a block"}'
+printf '#!/bin/bash\necho "half formatted"\nexit 3\n' > "$STUB/.claude/hooks/format-on-edit.sh"
+AOUT="$(cd "$STUB" && printf '{}' | bash bin/run-claude-hook.sh cursor format-on-edit 2>/dev/null)"; ARC=$?
+c_eq "cursor: a format hook that prints and then crashes -> exit 0, and what it printed" "$ARC|$AOUT" '0|half formatted'
+must rm -f "$STUB/.claude/hooks/format-on-edit.sh"
+printf '#!/bin/bash\necho "half a context"\necho "and a complaint" >&2\nexit 3\n' > "$STUB/brain/hooks/context-enrichment.sh"
+AOUT="$(cd "$STUB" && printf '{}' | bash bin/run-claude-hook.sh cursor brain-enrich 2>"$TMP/prompt.err")"; ARC=$?
+c_eq "cursor: a prompt hook that prints and then crashes -> exit 0, the continue object, and nothing it printed" \
+  "$ARC|$AOUT|$(cat "$TMP/prompt.err")" '0|{"continue":true}|'
+must rm -f "$STUB/.claude/hooks/session-start.sh"
+adapter grok "$STUB"
+c_eq "grok: a session hook that is missing -> the adapter exits 0" "$ARC" 0
+c_eq "grok: and nothing is printed" "$AOUT" ''
+AOUT="$(cd "$STUB" && printf '{}' | bash bin/run-claude-hook.sh cursor format-on-edit 2>/dev/null)"; ARC=$?
+c_eq "cursor: a format hook that is missing -> exit 0, nothing printed" "$ARC|$AOUT" '0|'
 
 echo
 echo "passed: $PASS   failed: $FAIL"
