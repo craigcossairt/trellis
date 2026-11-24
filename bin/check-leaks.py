@@ -21,6 +21,12 @@ Exit codes (a check that could not run must never read as a pass):
 With no list the check says so on stdout and exits 0. Pass --require to make a
 missing list exit 2, which is what a local run before publishing should use.
 
+Commit messages are published too, and the file scan never sees them. Pass
+--commits RANGE (any revision range `git log` accepts: BASE..HEAD, or a single
+commit for everything reachable from it) to also scan the message of every
+commit in the range. CI passes the range of the push or pull request. A range
+git cannot read is exit 2, never a clean pass.
+
 The output names the file, the line and the list entry NUMBER, never the matched
 text or the pattern, because CI logs on a public repo are public. A matching path
 is printed with every listed match masked (each entry matched against the
@@ -165,6 +171,41 @@ def scan(root, entries, show):
     return findings, scanned, symlinks, skipped_binary, skipped_missing
 
 
+def commit_messages(root, revision_range):
+    """Return [(sha, message)] for every commit in the range, newest first.
+
+    One `git log -z` call: -z ends each record with a NUL, which a commit
+    message cannot hold, so a message containing the format's own text cannot
+    split a record. --end-of-options keeps a range that starts with `-` from
+    being read as an option (git 2.24 and later).
+    """
+    proc = subprocess.run(["git", "-C", str(root), "log", "-z", "--format=%H%n%B", "--end-of-options",
+                           revision_range, "--"], capture_output=True, check=False)
+    if proc.returncode != 0:
+        raise RuntimeError("git log over the commit range failed: "
+                           + proc.stderr.decode("utf-8", "replace").strip())
+    commits = []
+    for record in proc.stdout.decode("utf-8", "replace").split("\0"):
+        if not record:
+            continue
+        sha, _, message = record.partition("\n")
+        commits.append((sha, message))
+    return commits
+
+
+def scan_messages(root, entries, revision_range, show):
+    """Return (findings, commits_scanned). Names the commit by sha, never the text."""
+    findings = []
+    commits = commit_messages(root, revision_range)
+    for sha, message in commits:
+        for line_no, line in enumerate(message.splitlines(), 1):
+            for number, pattern in entries:
+                match = pattern.search(line)
+                if match:
+                    findings.append(_finding(f"commit {sha[:12]}", f"message line {line_no}", number, match, show))
+    return findings, len(commits)
+
+
 def _mask(text, entries):
     """Replace every listed match with ***, each one found in the ORIGINAL text.
 
@@ -194,7 +235,8 @@ def _mask(text, entries):
 
 
 def _finding(rel, where, number, match, show):
-    where = "path" if where == "path" else f"line {where}"
+    if isinstance(where, int):
+        where = f"line {where}"
     text = f"{rel}: {where} matches list entry {number}"
     return text + (f" ({match.group(0)!r})" if show else "")
 
@@ -205,6 +247,8 @@ def main(argv=None):
     parser.add_argument("--list", dest="list_path", help="path to the pattern list")
     parser.add_argument("--require", action="store_true", help="exit 2 instead of skipping when no list exists")
     parser.add_argument("--show", action="store_true", help="print the matched text (never in public CI logs)")
+    parser.add_argument("--commits", metavar="RANGE",
+                        help="also scan the message of every commit in this git revision range (BASE..HEAD)")
     args = parser.parse_args(argv)
     root = Path(args.root).resolve()
 
@@ -222,6 +266,12 @@ def main(argv=None):
             print(f"check-leaks: could not run: {source} has no entries.", file=sys.stderr)
             return 2
         findings, scanned, symlinks, skipped_binary, skipped_missing = scan(root, entries, args.show)
+        commits_scanned = None
+        if args.commits is not None:
+            if not args.commits.strip():
+                raise ValueError("--commits was given an empty range")
+            message_findings, commits_scanned = scan_messages(root, entries, args.commits, args.show)
+            findings += message_findings
     except PatternError as exc:
         detail = f": {exc.detail}" if args.show else " (rerun with --show on your own machine for the detail)"
         print(f"check-leaks: could not run: {exc}{detail}", file=sys.stderr)
@@ -235,6 +285,8 @@ def main(argv=None):
     print(f"check-leaks: {len(entries)} entries from {source}; {scanned} files scanned "
           f"({symlinks} of them symlink targets), "
           f"{skipped_binary} binary and {skipped_missing} deleted or non-file skipped.")
+    if commits_scanned is not None:
+        print(f"check-leaks: {commits_scanned} commit message(s) scanned in {args.commits}.")
     if findings:
         print(f"check-leaks: FAILED with {len(findings)} match(es).")
         return 1

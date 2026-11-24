@@ -2235,9 +2235,17 @@ jobs:
         with:
           python-version: '3.13'
 
-      - name: Leak check (private names in tracked files)
+      - name: Leak check (private names in tracked files and commit messages)
         if: hashFiles('bin/check-leaks.py') != ''
         # Only this step sees the secret. Keep the list to names, never credentials.
+        #
+        # Commit messages are published with the history, so the script also
+        # scans the message of every commit this push or pull request adds
+        # (--commits). The range is the one the gitleaks history scan uses: the
+        # PR's base to its head, or the push's before to after. With no usable
+        # base (a new branch pushes before=000..0; a force push can leave it
+        # unreachable) it is every commit reachable from head, with a warning,
+        # never head alone. The SHAs come in through env, never spliced in.
         #
         # Which copy of the script runs:
         #   push (main only)        the checked-out copy: main is already merged.
@@ -2265,6 +2273,9 @@ jobs:
           LEAKS_LIST: ${{ secrets.LEAKS_LIST }}
           EVENT: ${{ github.event_name }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          PUSH_AFTER: ${{ github.sha }}
           FORK_PR: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
         run: |
           # Three outcomes, kept apart: 0 clean or announced skip, 1 a match,
@@ -2286,9 +2297,30 @@ jobs:
               unset LEAKS_LIST
               echo "the base branch has no bin/check-leaks.py and no list is configured: running this pull request's copy, which is handed nothing"
             fi
+            base=$BASE_SHA; head=$PR_HEAD
+          else
+            base=$PUSH_BEFORE; head=$PUSH_AFTER
           fi
+          git cat-file -e "$head^{commit}" 2>/dev/null || {
+            echo "::error::head commit '$head' is not in this checkout - the leak check could not run"; exit 1; }
+          if [ -n "$base" ] && git cat-file -e "$base^{commit}" 2>/dev/null; then
+            range="$base..$head"
+          else
+            echo "::warning title=Commit message scan widened::no usable base commit ('$base'), so the message of every commit reachable from $head is scanned"
+            range="$head"
+          fi
+          # A copy of the script from before --commits existed would refuse the
+          # option (exit 2). That is only ever the base copy on the pull request
+          # that adds it, so say the messages went unscanned and check the files.
+          # A failing --help ends the step under bash -e: could not run.
+          help=$(python -I "$script" --help)
+          args=()
+          case "$help" in
+            *--commits*) args=(--commits "$range") ;;
+            *) echo "::warning title=Commit messages not scanned::this copy of bin/check-leaks.py has no --commits option, so only tracked files were checked; the push to main after merge scans the messages" ;;
+          esac
           rc=0
-          out=$(python -I "$script") || rc=$?
+          out=$(python -I "$script" "${args[@]}") || rc=$?
           printf '%s\n' "$out"
           case "$out" in
             *"skipped: no list"*)
