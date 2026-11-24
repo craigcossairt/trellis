@@ -24,7 +24,7 @@ import unittest
 REPO = Path(__file__).resolve().parents[2]
 WORKFLOW = REPO / ".github" / "workflows" / "hooks-ci.yml"
 CHECKER = REPO / "bin" / "check-leaks.py"
-STEP = "Leak check (private names in tracked files)"
+STEP = "Leak check (private names in tracked files and commit messages)"
 # A made-up term, assembled so this file does not contain it whole.
 TERM = "Acme" + "Widgets"
 
@@ -134,8 +134,10 @@ class LeakCheckStepTests(unittest.TestCase):
         script = self.runner_temp / "step.sh"
         script.write_text(self.script, encoding="utf-8")
         full = {k: v for k, v in os.environ.items() if k != "LEAKS_LIST"}
+        head = self.git("rev-parse", "HEAD")
         full.update({"RUNNER_TEMP": str(self.runner_temp), "MARKER": str(self.marker),
-                     "EVENT": "pull_request", "FORK_PR": "false", "BASE_SHA": ""})
+                     "EVENT": "pull_request", "FORK_PR": "false", "BASE_SHA": "",
+                     "PR_HEAD": head, "PUSH_BEFORE": "", "PUSH_AFTER": head})
         full.update(env)
         return subprocess.run([git_bash(), "--noprofile", "--norc", "-eo", "pipefail", str(script)],
                               cwd=self.root, capture_output=True, text=True, env=full, check=False)
@@ -212,6 +214,81 @@ class LeakCheckStepTests(unittest.TestCase):
         result = self.run_step(EVENT="push", LEAKS_LIST=TERM)
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("a.md: line 1 matches list entry 1", result.stdout)
+
+    # ---- commit messages ---------------------------------------------------
+
+    def clean_base(self):
+        """A base commit carrying the real script and a clean tree. Returns its sha."""
+        return self.commit({"a.md": "clean\n", "bin/check-leaks.py": CHECKER.read_text(encoding="utf-8")}, "base")
+
+    def test_a_pull_request_commit_message_naming_a_term_fails(self):
+        base = self.clean_base()
+        head = self.commit({"b.md": "clean\n"}, "add b, see " + TERM)
+        result = self.run_step(BASE_SHA=base, PR_HEAD=head, LEAKS_LIST=TERM)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn(f"commit {head[:12]}: message line 1 matches list entry 1", result.stdout)
+        self.assertIn(f"1 commit message(s) scanned in {base}..{head}", result.stdout)
+        self.assertNotIn(TERM.lower(), (result.stdout + result.stderr).lower())
+
+    def test_a_pull_request_scans_only_its_own_commits(self):
+        self.clean_base()
+        base = self.commit({"b.md": "clean\n"}, "already on the base branch: " + TERM)
+        head = self.commit({"c.md": "clean\n"}, "clean")
+        result = self.run_step(BASE_SHA=base, PR_HEAD=head, LEAKS_LIST=TERM)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("1 commit message(s) scanned", result.stdout)
+
+    def test_a_push_scans_the_messages_between_before_and_after(self):
+        self.clean_base()
+        before = self.commit({"b.md": "clean\n"}, "pushed earlier: " + TERM)
+        after = self.commit({"c.md": "clean\n"}, "clean")
+        clean = self.run_step(EVENT="push", PUSH_BEFORE=before, PUSH_AFTER=after, LEAKS_LIST=TERM)
+        self.assertEqual(clean.returncode, 0, clean.stdout + clean.stderr)
+        self.assertIn(f"1 commit message(s) scanned in {before}..{after}", clean.stdout)
+        leaked = self.commit({"d.md": "clean\n"}, "names " + TERM)
+        result = self.run_step(EVENT="push", PUSH_BEFORE=after, PUSH_AFTER=leaked, LEAKS_LIST=TERM)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn(f"commit {leaked[:12]}: message line 1", result.stdout)
+
+    def test_with_no_usable_base_every_commit_reachable_from_head_is_scanned(self):
+        # A new branch pushes before=000..0. Scanning head alone would miss a
+        # message earlier in the push.
+        self.clean_base()
+        earlier = self.commit({"b.md": "clean\n"}, "names " + TERM)
+        head = self.commit({"c.md": "clean\n"}, "clean")
+        for before in ("0" * 40, "", "1" * 40):
+            with self.subTest(before=before):
+                result = self.run_step(EVENT="push", PUSH_BEFORE=before, PUSH_AFTER=head, LEAKS_LIST=TERM)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn("::warning title=Commit message scan widened", result.stdout)
+                self.assertIn(f"commit {earlier[:12]}: message line 1", result.stdout)
+                self.assertIn("3 commit message(s) scanned", result.stdout)
+
+    def test_a_head_commit_missing_from_the_checkout_is_could_not_run(self):
+        base = self.clean_base()
+        result = self.run_step(BASE_SHA=base, PR_HEAD="2" * 40, LEAKS_LIST=TERM)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("could not run", result.stdout)
+        self.assertNotIn("check-leaks: ok", result.stdout)
+
+    def test_a_base_copy_without_commits_support_checks_files_and_says_messages_went_unscanned(self):
+        # The pull request that adds --commits runs the base branch's older copy,
+        # which would refuse the option. It must still check the files, and say so.
+        old_copy = ("import sys\n"
+                    "args = sys.argv[1:]\n"
+                    "if args == ['--help']:\n"
+                    "    print('usage: check-leaks.py [--list LIST] [--require] [--show]')\n"
+                    "    sys.exit(0)\n"
+                    "if args:\n"
+                    "    print('old copy got', args)\n"
+                    "    sys.exit(2)\n"
+                    "print('old copy: check-leaks: ok')\n")
+        base = self.commit({"a.md": "clean\n", "bin/check-leaks.py": old_copy}, "base")
+        head = self.commit({"b.md": "clean\n"}, "names " + TERM)
+        result = self.run_step(BASE_SHA=base, PR_HEAD=head, LEAKS_LIST=TERM)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("old copy: check-leaks: ok", result.stdout)
+        self.assertIn("::warning title=Commit messages not scanned", result.stdout)
 
 
 HISTORY_STEP = "Secret scan (gitleaks, commits in this push or pull request)"

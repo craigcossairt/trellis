@@ -295,6 +295,101 @@ class CheckLeaksTests(unittest.TestCase):
                                  check=False, capture_output=True)
         self.assertNotEqual(tracked.returncode, 0, "tools/leaks.local.txt must not be tracked")
 
+    # ---- commit messages (--commits) ---------------------------------------
+
+    def commit(self, message):
+        """An empty commit with this message; returns its full sha."""
+        self.git("commit", "-q", "--allow-empty", "-m", message)
+        return subprocess.run(["git", "-C", str(self.root), "rev-parse", "HEAD"], check=True,
+                              capture_output=True, text=True).stdout.strip()
+
+    def test_a_listed_term_in_a_commit_message_fails_and_names_commit_line_and_entry(self):
+        self.track("a.md", "clean\n")
+        base = self.commit("base")
+        head = self.commit("subject line\n\nthe body names " + TERM + " here")
+        self.write_list("other-name\n" + TERM + "\n")
+        result = self.run_check("--commits", f"{base}..{head}")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn(f"commit {head[:12]}: message line 3 matches list entry 2", result.stdout)
+        self.assertIn(f"1 commit message(s) scanned in {base}..{head}", result.stdout)
+        self.assertNotIn(TERM.lower(), (result.stdout + result.stderr).lower())
+        self.assertIn(TERM, self.run_check("--show", "--commits", f"{base}..{head}").stdout)
+
+    def test_a_commit_before_the_range_is_not_scanned(self):
+        self.track("a.md", "clean\n")
+        old = self.commit("old commit naming " + TERM)
+        head = self.commit("clean")
+        self.write_list(TERM + "\n")
+        result = self.run_check("--commits", f"{old}..{head}")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("1 commit message(s) scanned", result.stdout)
+
+    def test_a_single_commit_scans_every_commit_reachable_from_it(self):
+        self.track("a.md", "clean\n")
+        old = self.commit("old commit naming " + TERM)
+        head = self.commit("clean")
+        self.write_list(TERM + "\n")
+        result = self.run_check("--commits", head)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn(f"commit {old[:12]}: message line 1 matches list entry 1", result.stdout)
+        self.assertIn("2 commit message(s) scanned", result.stdout)
+
+    def test_without_commits_no_message_is_scanned(self):
+        self.track("a.md", "clean\n")
+        self.commit("names " + TERM)
+        self.write_list(TERM + "\n")
+        result = self.run_check()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("commit message", result.stdout)
+
+    def test_a_range_git_cannot_read_is_could_not_run(self):
+        self.track("a.md", "clean\n")
+        self.commit("clean")
+        self.write_list(TERM + "\n")
+        result = self.run_check("--commits", "no-such-ref..HEAD")
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("could not run: git log over the commit range failed", result.stderr)
+        self.assertNotIn("check-leaks: ok", result.stdout)
+
+    def test_a_range_naming_a_listed_term_is_masked_in_the_summary(self):
+        # A branch name can hold the term while every message is clean (CodeRabbit, PR 43).
+        self.track("a.md", "clean\n")
+        self.commit("clean")
+        self.git("branch", "notes-" + TERM)
+        self.write_list(TERM + "\n")
+        result = self.run_check("--commits", "notes-" + TERM)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("1 commit message(s) scanned in notes-***", result.stdout)
+        self.assertNotIn(TERM.lower(), (result.stdout + result.stderr).lower())
+        self.assertIn("scanned in notes-" + TERM, self.run_check("--show", "--commits", "notes-" + TERM).stdout)
+
+    def test_a_range_git_cannot_read_is_masked_in_the_error(self):
+        # git's error quotes the range it could not resolve.
+        self.track("a.md", "clean\n")
+        self.commit("clean")
+        self.write_list(TERM + "\n")
+        result = self.run_check("--commits", "missing-" + TERM + "..HEAD")
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("could not run: git log over the commit range failed", result.stderr)
+        self.assertNotIn(TERM.lower(), (result.stdout + result.stderr).lower())
+
+    def test_an_empty_range_is_could_not_run(self):
+        self.track("a.md", "clean\n")
+        self.commit("clean")
+        self.write_list(TERM + "\n")
+        result = self.run_check("--commits", " ")
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("empty range", result.stderr)
+
+    def test_a_range_that_looks_like_an_option_is_never_run_as_one(self):
+        self.track("a.md", "clean\n")
+        self.commit("clean")
+        self.write_list(TERM + "\n")
+        planted = Path(self.temp.name) / "planted.txt"
+        result = self.run_check(f"--commits=--output={planted}")
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertFalse(planted.exists(), "git took the range as an option")
+
 
 if __name__ == "__main__":
     unittest.main()
