@@ -450,7 +450,10 @@ jobs:
           # Second review round, 27 cases:
           #   list read as plain utf-8 (BOM kept)  -> BOM list, 1
           #   zero-length match not masking all    -> lookahead entry, 1
-          # Commit messages (--commits), measured 2026-11-24 over 34 cases:
+          # Commit messages (--commits), measured 2026-11-24 over 34 cases
+          # (the two masking rows after review, over 36):
+          #   range shown unmasked in the summary  -> branch-name range, 1
+          #   git's error text shown unmasked      -> unreadable named range, 1
           #   message matches never recorded       -> message in range, single
           #     commit reaches history, 2
           #   --end-of-options dropped             -> option-shaped range, 1
