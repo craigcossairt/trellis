@@ -450,6 +450,12 @@ jobs:
           # Second review round, 27 cases:
           #   list read as plain utf-8 (BOM kept)  -> BOM list, 1
           #   zero-length match not masking all    -> lookahead entry, 1
+          # Commit messages (--commits), measured 2026-11-24 over 34 cases:
+          #   message matches never recorded       -> message in range, single
+          #     commit reaches history, 2
+          #   --end-of-options dropped             -> option-shaped range, 1
+          #   git log failure returns no commits   -> unreadable range,
+          #     option-shaped range, 2
           python -m unittest discover -s bin/tests -p test_check_leaks.py -v
 
       - name: Skills catalog is current
@@ -608,6 +614,15 @@ jobs:
           #   secret also on a lint step                -> only-the-leak-step, 1
           #   history fallback scans head alone         -> key removed before
           #     head, 1
+          # Commit messages, measured 2026-11-24 over 20 cases (the 4 gitleaks
+          # history cases skipped locally, no binary; they do not read messages):
+          #   script records no message match           -> PR message, push
+          #     range, no usable base, 3
+          #   message fallback scans head alone         -> no usable base, 1
+          #   --commits never passed to the script      -> PR message, PR scans
+          #     only its own commits, push range, no usable base, 4
+          #   head-commit existence check removed       -> missing head, 1
+          #   --commits passed to a copy without it     -> old base copy, 1
           # The history cases need the gitleaks binary, installed above; a skip
           # here means they did not run, so it fails the step. A copy that pruned
           # .gitleaks.toml never installs gitleaks, so there the skip is by design.
