@@ -194,9 +194,16 @@ def commit_messages(root, revision_range):
 
 
 def scan_messages(root, entries, revision_range, show):
-    """Return (findings, commits_scanned). Names the commit by sha, never the text."""
+    """Return (findings, commits_scanned). Names the commit by sha, never the text.
+
+    git's error text quotes the range it could not read, and a range can be a
+    branch name holding a listed term, so without --show that text is masked.
+    """
     findings = []
-    commits = commit_messages(root, revision_range)
+    try:
+        commits = commit_messages(root, revision_range)
+    except RuntimeError as exc:
+        raise RuntimeError(str(exc) if show else _mask(str(exc), entries)) from None
     for sha, message in commits:
         for line_no, line in enumerate(message.splitlines(), 1):
             for number, pattern in entries:
@@ -286,7 +293,9 @@ def main(argv=None):
           f"({symlinks} of them symlink targets), "
           f"{skipped_binary} binary and {skipped_missing} deleted or non-file skipped.")
     if commits_scanned is not None:
-        print(f"check-leaks: {commits_scanned} commit message(s) scanned in {args.commits}.")
+        # The range itself may be a branch name holding a listed term.
+        shown_range = args.commits if args.show else _mask(args.commits, entries)
+        print(f"check-leaks: {commits_scanned} commit message(s) scanned in {shown_range}.")
     if findings:
         print(f"check-leaks: FAILED with {len(findings)} match(es).")
         return 1

@@ -351,6 +351,28 @@ class CheckLeaksTests(unittest.TestCase):
         self.assertIn("could not run: git log over the commit range failed", result.stderr)
         self.assertNotIn("check-leaks: ok", result.stdout)
 
+    def test_a_range_naming_a_listed_term_is_masked_in_the_summary(self):
+        # A branch name can hold the term while every message is clean (CodeRabbit, PR 43).
+        self.track("a.md", "clean\n")
+        self.commit("clean")
+        self.git("branch", "notes-" + TERM)
+        self.write_list(TERM + "\n")
+        result = self.run_check("--commits", "notes-" + TERM)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("1 commit message(s) scanned in notes-***", result.stdout)
+        self.assertNotIn(TERM.lower(), (result.stdout + result.stderr).lower())
+        self.assertIn("scanned in notes-" + TERM, self.run_check("--show", "--commits", "notes-" + TERM).stdout)
+
+    def test_a_range_git_cannot_read_is_masked_in_the_error(self):
+        # git's error quotes the range it could not resolve.
+        self.track("a.md", "clean\n")
+        self.commit("clean")
+        self.write_list(TERM + "\n")
+        result = self.run_check("--commits", "missing-" + TERM + "..HEAD")
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("could not run: git log over the commit range failed", result.stderr)
+        self.assertNotIn(TERM.lower(), (result.stdout + result.stderr).lower())
+
     def test_an_empty_range_is_could_not_run(self):
         self.track("a.md", "clean\n")
         self.commit("clean")
